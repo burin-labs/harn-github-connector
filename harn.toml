@@ -1,0 +1,13 @@
+[package]
+name = "harn-github-connector"
+version = "0.0.0"
+description = "Pure-Harn GitHub App connector: webhooks, installation token rotation, REST/GraphQL dispatch."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/burin-labs/harn-github-connector"
+
+[exports]
+default = "src/lib.harn"
+
+# Until package management v0 (harn#345) lands, dependencies will be
+# declared here as path imports. v0 has no sibling SDK dependency yet.
+[dependencies]
