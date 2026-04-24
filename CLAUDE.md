@@ -1,10 +1,5 @@
 # CLAUDE.md — harn-github-connector
 
-**Read [SESSION_PROMPT.md](./SESSION_PROMPT.md) first.** It contains the
-pivot context, the connector interface contract, what's blocked on
-upstream tickets (especially the JWT signing question), and the v0
-milestones.
-
 ## Quick repo conventions
 
 - File extension: `.harn`. Use `snake_case` for filenames.
@@ -43,8 +38,7 @@ is the **behavior spec**. Port semantics from there.
 ## Sibling future repo
 
 A typed `github-sdk-harn` (REST + GraphQL) is plausible future work,
-modeled after `notion-sdk-harn`. Out of scope for this repo's v0; flagged
-in `SESSION_PROMPT.md`.
+modeled after `notion-sdk-harn`. Out of scope for this repo's v0.
 
 ## Upstream conventions
 
