@@ -50,6 +50,45 @@ trigger pr_review on github {
 }
 ```
 
+## GitHub App setup
+
+Create a GitHub App and install it into the target account or repository set.
+Record the App ID and Installation ID, then store the private key PEM in a Harn
+SecretProvider. Do not commit real GitHub App private keys to this repository or
+to consumer repos.
+
+Example binding configuration:
+
+```harn
+github_connector.call("issues.create_comment", {
+  app_id: env("GITHUB_APP_ID"),
+  installation_id: env("GITHUB_INSTALLATION_ID"),
+  private_key_secret: "github/app-private-key",
+  owner: "octo-org",
+  repo: "demo",
+  issue_number: 123,
+  body: "Thanks for the PR!",
+})
+```
+
+For local fixture tests only, `private_key_pem` can be passed inline. Production
+setup should use `private_key_secret` so the PEM is resolved through
+`secret_get`.
+
+Required GitHub App permissions depend on the outbound method:
+
+- `issues.create_comment`, `issues.update`: Issues read/write, or Pull requests
+  read/write when commenting on pull requests.
+- `pulls.create_review_comment`, `pulls.list_files`: Pull requests read/write.
+- `repos.get_content`: Contents read.
+- `check_runs.create`, `check_runs.update`: Checks read/write.
+- `graphql`: the installed app must have the permissions required by the query
+  or mutation.
+
+The connector signs a GitHub App JWT with Harn `jwt_sign`, exchanges it for an
+installation access token, caches that token until its refresh window, and
+invalidates the cache after a `401` response before retrying once.
+
 ## Development
 
 Install the pinned Harn CLI from crates.io:
