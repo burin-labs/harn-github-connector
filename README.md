@@ -15,14 +15,11 @@ interface defined in
 
 ## Install
 
-Once Harn package management v0
-([harn#345](https://github.com/burin-labs/harn/issues/345)) lands:
-
 ```sh
-harn add github.com/burin-labs/harn-github-connector@v0.1.0
+harn add github.com/burin-labs/harn-github-connector@main
 ```
 
-Until then, depend on this repo via a path import:
+For local multi-repo development, a path dependency is still useful:
 
 ```toml
 [dependencies]
@@ -32,7 +29,7 @@ harn-github-connector = { path = "../harn-github-connector" }
 ## Usage
 
 ```harn
-import github_connector from "harn-github-connector"
+import github_connector from "harn-github-connector/default"
 
 trigger pr_review on github {
   source = {

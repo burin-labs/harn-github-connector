@@ -15,15 +15,16 @@ milestones.
 
 ## How to test
 
-Until `harn add` ships
-([harn#345](https://github.com/burin-labs/harn/issues/345)):
+Install the pinned Harn CLI from crates.io and run the local gate:
 
 ```sh
-cd /Users/ksinder/projects/harn
-cargo run --quiet --bin harn -- run /Users/ksinder/projects/harn-github-connector/tests/normalize_smoke.harn
-cargo run --quiet --bin harn -- check /Users/ksinder/projects/harn-github-connector/src/lib.harn
-cargo run --quiet --bin harn -- lint  /Users/ksinder/projects/harn-github-connector/src/lib.harn
-cargo run --quiet --bin harn -- fmt --check /Users/ksinder/projects/harn-github-connector/src/lib.harn
+cargo install harn-cli --version "$(cat .harn-version)" --locked
+harn check src
+harn lint src
+harn fmt --check src tests
+for test in tests/*.harn; do
+  harn run "$test" || exit 1
+done
 ```
 
 ## Reference Rust impl

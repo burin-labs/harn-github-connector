@@ -1,0 +1,60 @@
+let GITHUB_PROVIDER_ID = "github"
+
+/** Return this connector's Harn provider id. */
+pub fn provider_id() {
+  return GITHUB_PROVIDER_ID
+}
+
+/** Return trigger kinds supported by this connector package. */
+pub fn kinds() {
+  return ["webhook"]
+}
+
+/** Return the canonical normalized GitHub event payload schema. */
+pub fn payload_schema() {
+  return {
+    name: "GitHubEventPayload",
+    type: "object",
+    required: ["provider", "event", "raw"],
+    properties: {
+    provider: {type: "string"},
+    event: {type: "string"},
+    action: {type: ["string", "null"]},
+    raw: {type: "object"},
+  },
+  }
+}
+
+/** Initialize connector state with orchestrator context. */
+pub fn init(ctx = nil) {
+  return {provider: GITHUB_PROVIDER_ID, initialized: true, ctx: ctx ?? {}}
+}
+
+/** Activate webhook bindings. */
+pub fn activate(bindings = []) {
+  return {provider: GITHUB_PROVIDER_ID, kind: "webhook", bindings: len(bindings ?? [])}
+}
+
+/** Shut down connector state. */
+pub fn shutdown() {
+  return {provider: GITHUB_PROVIDER_ID, shutdown: true}
+}
+
+/** Normalize a raw GitHub webhook envelope into the connector event shape. */
+pub fn normalize_inbound(raw) {
+  let payload = raw?.payload ?? {}
+  return {provider: GITHUB_PROVIDER_ID, event: raw?.event ?? "unknown", action: payload?.action, raw: raw}
+}
+
+/**
+ * Dispatch outbound GitHub calls. Full REST/GraphQL dispatch is implemented after auth wiring lands.
+ */
+pub fn call(method, args = {}) {
+  return {
+    ok: false,
+    code: "not_implemented",
+    message: "harn-github-connector outbound method `" + method + "` is not implemented yet",
+    method: method,
+    args: args ?? {},
+  }
+}
