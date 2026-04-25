@@ -52,9 +52,6 @@ trigger pr_review on github {
 
 ## Development
 
-This repo is being built out by Claude Code sessions following a structured
-prompt. **Read [SESSION_PROMPT.md](./SESSION_PROMPT.md) before making changes.**
-
 Install the pinned Harn CLI from crates.io:
 
 ```sh
@@ -81,6 +78,7 @@ does not expose a JWT signing builtin
 `installation_token`/`GITHUB_INSTALLATION_TOKEN` for outbound calls. Token
 minting and refresh are intentionally deferred until the upstream JWT builtin
 lands.
+
 
 ## License
 
