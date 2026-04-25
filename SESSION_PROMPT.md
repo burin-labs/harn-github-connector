@@ -186,12 +186,12 @@ escape hatch for v0.
 - Mock all live HTTP for v0 tests.
 - Run before committing:
   ```sh
-  cd /Users/ksinder/projects/harn
-  cargo run --quiet --bin harn -- check /Users/ksinder/projects/harn-github-connector/src/lib.harn
-  cargo run --quiet --bin harn -- lint  /Users/ksinder/projects/harn-github-connector/src/lib.harn
-  cargo run --quiet --bin harn -- fmt --check /Users/ksinder/projects/harn-github-connector/src/lib.harn
-  for t in /Users/ksinder/projects/harn-github-connector/tests/*.harn; do
-    cargo run --quiet --bin harn -- run "$t" || exit 1
+  cargo install harn-cli --version "$(cat .harn-version)" --locked
+  harn check src/lib.harn
+  harn lint  src/lib.harn
+  harn fmt --check src/lib.harn tests/*.harn
+  for t in tests/*.harn; do
+    harn run "$t" || exit 1
   done
   ```
 

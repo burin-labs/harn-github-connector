@@ -1,60 +1,615 @@
 let GITHUB_PROVIDER_ID = "github"
 
+let GITHUB_API_BASE_URL = "https://api.github.com"
+
+let GITHUB_API_VERSION = "2022-11-28"
+
+let GITHUB_OUTBOUND_METHODS = [
+  "issues.create_comment",
+  "issues.update",
+  "pulls.create_review_comment",
+  "pulls.list_files",
+  "repos.get_content",
+  "check_runs.create",
+  "check_runs.update",
+  "graphql",
+]
+
+var GITHUB_STATE = {initialized: false, active: false, bindings: {}, ctx: {}}
+
 /** Return this connector's Harn provider id. */
 pub fn provider_id() {
   return GITHUB_PROVIDER_ID
 }
 
-/** Return trigger kinds supported by this connector package. */
+/** Return the trigger kinds supported by this connector. */
 pub fn kinds() {
   return ["webhook"]
 }
 
-/** Return the canonical normalized GitHub event payload schema. */
+/** Return the canonical normalized GitHub webhook payload schema. */
 pub fn payload_schema() {
   return {
-    name: "GitHubEventPayload",
+    harn_schema_name: "GitHubEventPayload",
+    json_schema: {
     type: "object",
-    required: ["provider", "event", "raw"],
+    required: ["event_type", "resource_id", "actor", "occurred_at", "repo", "raw"],
+    additionalProperties: true,
     properties: {
-    provider: {type: "string"},
-    event: {type: "string"},
+    event_type: {type: "string"},
+    resource_id: {type: "string"},
+    actor: {
+    type: "object",
+    required: ["id", "login", "type"],
+    properties: {id: {}, login: {type: "string"}, type: {type: "string"}},
+  },
+    occurred_at: {type: ["string", "integer", "number", "null"]},
+    repo: {
+    type: "object",
+    required: ["owner", "name", "full_name"],
+    properties: {owner: {type: "string"}, name: {type: "string"}, full_name: {type: "string"}},
+  },
     action: {type: ["string", "null"]},
+    delivery_id: {type: ["string", "null"]},
+    installation_id: {type: ["integer", "null"]},
     raw: {type: "object"},
+  },
   },
   }
 }
 
 /** Initialize connector state with orchestrator context. */
 pub fn init(ctx = nil) {
-  return {provider: GITHUB_PROVIDER_ID, initialized: true, ctx: ctx ?? {}}
+  let next = __state() + {initialized: true, ctx: ctx ?? {}}
+  __set_state(next)
+  return next
 }
 
-/** Activate webhook bindings. */
+/** Activate webhook bindings and reject duplicate configured paths. */
 pub fn activate(bindings = []) {
-  return {provider: GITHUB_PROVIDER_ID, kind: "webhook", bindings: len(bindings ?? [])}
-}
-
-/** Shut down connector state. */
-pub fn shutdown() {
-  return {provider: GITHUB_PROVIDER_ID, shutdown: true}
-}
-
-/** Normalize a raw GitHub webhook envelope into the connector event shape. */
-pub fn normalize_inbound(raw) {
-  let payload = raw?.payload ?? {}
-  return {provider: GITHUB_PROVIDER_ID, event: raw?.event ?? "unknown", action: payload?.action, raw: raw}
-}
-
-/**
- * Dispatch outbound GitHub calls. Full REST/GraphQL dispatch is implemented after auth wiring lands.
- */
-pub fn call(method, args = {}) {
-  return {
-    ok: false,
-    code: "not_implemented",
-    message: "harn-github-connector outbound method `" + method + "` is not implemented yet",
-    method: method,
-    args: args ?? {},
+  var by_id = {}
+  var seen_paths = {}
+  for binding in bindings ?? [] {
+    let binding_id = binding?.binding_id ?? binding?.id ?? "binding-" + to_string(len(by_id.keys()))
+    let path = binding?.path ?? binding?.match?.path
+    if path != nil && path != "" {
+      if seen_paths.get(path) {
+        return __err("activation", "github connector path `" + path + "` is configured by multiple bindings")
+      }
+      seen_paths[path] = true
+    }
+    by_id[binding_id] = binding + {binding_id: binding_id}
   }
+  let next = __state() + {bindings: by_id, active: true}
+  __set_state(next)
+  return {provider: GITHUB_PROVIDER_ID, kind: "webhook", bindings: len(by_id.keys())}
+}
+
+/** Clear connector lifecycle state. */
+pub fn shutdown() {
+  GITHUB_STATE = {initialized: false, active: false, bindings: {}, ctx: {}}
+  return {provider: GITHUB_PROVIDER_ID, active: false}
+}
+
+@complexity(allow)
+/** Verify and normalize a raw GitHub webhook request into NormalizeResult v1. */
+pub fn normalize_inbound(raw) {
+  let body_text = raw?.body_text ?? raw?.body ?? ""
+  let headers = raw?.headers ?? {}
+  let verified = __verify_github_signature(raw, headers, body_text)
+  if is_err(verified) {
+    return __reject_err(unwrap_err(verified))
+  }
+  let parsed = try {
+    json_parse(body_text)
+  }
+  if is_err(parsed) {
+    return __reject(400, "invalid_json", "github payload body is not valid JSON")
+  }
+  let payload = unwrap(parsed)
+  let event_kind = __event_kind(raw, headers)
+  if event_kind == nil || event_kind == "" {
+    return __reject(400, "missing_event", "missing x-github-event header")
+  }
+  if !contains(["pull_request", "push", "issues", "issue_comment", "check_run"], event_kind) {
+    return __reject(400, "unsupported_event", "unsupported GitHub event type `" + to_string(event_kind) + "`")
+  }
+  let event = __build_event(event_kind, payload, raw, headers)
+  return {type: "event", event: event}
+}
+
+@complexity(allow)
+/** Dispatch a supported GitHub REST or GraphQL API call. */
+pub fn call(method, args = {}) {
+  if !contains(GITHUB_OUTBOUND_METHODS, method) {
+    return __err("method_not_found", "github connector does not implement outbound method `" + method + "`")
+  }
+  let config = __outbound_config(args ?? {})
+  if is_err(config) {
+    return config
+  }
+  let cfg = unwrap(config)
+  if method == "issues.create_comment" {
+    return __github_json(
+      "POST",
+      __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/issues/" + to_string(args.issue_number)
+      + "/comments",
+    ),
+      {body: args.body},
+      cfg,
+    )
+  }
+  if method == "issues.update" {
+    return __github_json(
+      "PATCH",
+      __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/issues/" + to_string(args.issue_number),
+    ),
+      __body_without(args, __config_keys() + ["owner", "repo", "issue_number"]),
+      cfg,
+    )
+  }
+  if method == "pulls.create_review_comment" {
+    return __github_json(
+      "POST",
+      __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/pulls/" + to_string(args.pull_number) + "/comments",
+    ),
+      __body_without(args, __config_keys() + ["owner", "repo", "pull_number"]),
+      cfg,
+    )
+  }
+  if method == "pulls.list_files" {
+    return __github_json(
+      "GET",
+      __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/pulls/" + to_string(args.pull_number) + "/files"
+      + __pagination_query(args),
+    ),
+      nil,
+      cfg,
+    )
+  }
+  if method == "repos.get_content" {
+    return __github_json(
+      "GET",
+      __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/contents/" + __trim_leading_slash(args.path ?? "")
+      + __ref_query(args),
+    ),
+      nil,
+      cfg,
+    )
+  }
+  if method == "check_runs.create" {
+    return __github_json(
+      "POST",
+      __github_api_url(cfg.api_base_url, "/repos/" + args.owner + "/" + args.repo + "/check-runs"),
+      __body_without(args, __config_keys() + ["owner", "repo"]),
+      cfg,
+    )
+  }
+  if method == "check_runs.update" {
+    return __github_json(
+      "PATCH",
+      __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/check-runs/" + to_string(args.check_run_id),
+    ),
+      __body_without(args, __config_keys() + ["owner", "repo", "check_run_id"]),
+      cfg,
+    )
+  }
+  return __github_json(
+    "POST",
+    __github_api_url(cfg.api_base_url, "/graphql"),
+    {query: args.query, variables: args.variables ?? {}},
+    cfg,
+  )
+}
+
+fn __state() {
+  return GITHUB_STATE
+}
+
+fn __set_state(state) {
+  GITHUB_STATE = state
+  return state
+}
+
+fn __err(code, message) {
+  return Err({code: code, message: message})
+}
+
+fn __reject(status, code, message) {
+  return {
+    type: "reject",
+    reject: {
+    status: status,
+    body: json_stringify({error: code, message: message}),
+    content_type: "application/json",
+  },
+  }
+}
+
+fn __reject_err(err) {
+  let code = err?.code ?? "rejected"
+  let message = err?.message ?? "request rejected"
+  let status = if code == "missing_signature" || code == "invalid_signature" || code == "missing_secret" {
+    401
+  } else {
+    400
+  }
+  return __reject(status, code, message)
+}
+
+fn __header(headers, name) {
+  let wanted = lowercase(name)
+  for entry in (headers ?? {}).entries() {
+    if lowercase(trim(to_string(entry.key))) == wanted {
+      return trim(to_string(entry.value))
+    }
+  }
+  return nil
+}
+
+fn __event_kind(raw, headers) {
+  return __header(headers, "x-github-event") ?? raw?.kind ?? raw?.event
+}
+
+fn __signing_secret(raw) {
+  let direct = raw?.signing_secret ?? raw?.secret ?? raw?.webhook_secret
+    ?? raw?.config?.signing_secret
+    ?? raw?.secrets?.signing_secret
+  if direct != nil && trim(to_string(direct)) != "" {
+    return to_string(direct)
+  }
+  let state = __state()
+  let ctx_secret = state?.ctx?.signing_secret ?? state?.ctx?.secrets?.signing_secret
+  if ctx_secret != nil && trim(to_string(ctx_secret)) != "" {
+    return to_string(ctx_secret)
+  }
+  let bindings = state?.bindings ?? {}
+  let binding_id = raw?.metadata?.binding_id ?? raw?.binding_id
+  if binding_id != nil {
+    let binding = bindings.get(binding_id)
+    return binding?.signing_secret ?? binding?.secrets?.signing_secret ?? binding?.config?.signing_secret
+  }
+  let values = bindings.values()
+  if len(values) == 1 {
+    let binding = values[0]
+    return binding?.signing_secret ?? binding?.secrets?.signing_secret ?? binding?.config?.signing_secret
+  }
+  return nil
+}
+
+fn __verify_github_signature(raw, headers, body_text) {
+  let signature = __header(headers, "x-hub-signature-256")
+  if signature == nil || signature == "" {
+    return __err("missing_signature", "missing x-hub-signature-256 header")
+  }
+  if !starts_with(signature, "sha256=") {
+    return __err("invalid_signature", "x-hub-signature-256 must start with sha256=")
+  }
+  let secret = __signing_secret(raw)
+  if secret == nil || trim(to_string(secret)) == "" {
+    return __err("missing_secret", "github signing_secret is required")
+  }
+  let actual = signature[7:len(signature)]
+  let expected = hmac_sha256(to_string(secret), body_text)
+  if !constant_time_eq(expected, actual) {
+    return __err("invalid_signature", "x-hub-signature-256 did not match the request body")
+  }
+  return Ok(true)
+}
+
+@complexity(allow)
+fn __build_event(event_kind, payload, raw, headers) {
+  let action = payload?.action
+  let event_type = if action == nil || action == "" {
+    event_kind
+  } else {
+    event_kind + "." + action
+  }
+  let repo = __repo(payload)
+  let actor = __actor(payload)
+  let occurred_at = __occurred_at(event_kind, payload, raw)
+  let delivery_id = __header(headers, "x-github-delivery")
+  let installation_id = payload?.installation?.id
+  let common = {
+    event_type: event_type,
+    resource_id: "",
+    actor: actor,
+    occurred_at: occurred_at,
+    repo: repo,
+    action: action,
+    delivery_id: delivery_id,
+    installation_id: installation_id,
+    raw: payload,
+  }
+  let event_payload = if event_kind == "pull_request" {
+    let pr = payload?.pull_request ?? {}
+    common
+    + {
+    resource_id: repo.full_name + "/" + to_string(pr?.number ?? ""),
+    pull_request: pr,
+    number: pr?.number,
+    title: pr?.title,
+    state: pr?.state,
+    html_url: pr?.html_url,
+  }
+  } else {
+    if event_kind == "push" {
+      common
+    + {
+    resource_id: repo.full_name + "/" + to_string(payload?.ref ?? ""),
+    ref: payload?.ref,
+    before: payload?.before,
+    after: payload?.after,
+    head_commit: payload?.head_commit,
+    commits: payload?.commits ?? [],
+    distinct_size: payload?.distinct_size ?? len(payload?.commits ?? []),
+    pusher: payload?.pusher,
+  }
+    } else {
+      if event_kind == "issues" {
+        let issue = payload?.issue ?? {}
+        common
+    + {
+    resource_id: repo.full_name + "/" + to_string(issue?.number ?? ""),
+    issue: issue,
+    number: issue?.number,
+    title: issue?.title,
+    state: issue?.state,
+    html_url: issue?.html_url,
+  }
+      } else {
+        if event_kind == "issue_comment" {
+          let issue = payload?.issue ?? {}
+          let comment = payload?.comment ?? {}
+          common
+    + {
+    resource_id: repo.full_name + "/" + to_string(issue?.number ?? "") + "#comment-"
+    + to_string(comment?.id ?? ""),
+    issue: issue,
+    comment: comment,
+    number: issue?.number,
+    html_url: comment?.html_url,
+  }
+        } else {
+          let check_run = payload?.check_run ?? {}
+          common
+    + {
+    resource_id: repo.full_name + "/check-runs/" + to_string(check_run?.id ?? ""),
+    check_run: check_run,
+    name: check_run?.name,
+    status: check_run?.status,
+    conclusion: check_run?.conclusion,
+    html_url: check_run?.html_url,
+  }
+        }
+      }
+    }
+  }
+  return {
+    kind: event_type,
+    occurred_at: occurred_at,
+    dedupe_key: __dedupe_key(event_kind, payload, repo, delivery_id),
+    signature_status: "verified",
+    payload: event_payload,
+    headers: {["x-github-event"]: event_kind, ["x-github-delivery"]: delivery_id},
+  }
+}
+
+fn __dedupe_key(event_kind, payload, repo, delivery_id) {
+  if delivery_id != nil && delivery_id != "" {
+    return "github:delivery:" + to_string(delivery_id)
+  }
+  let repo_part = if repo?.full_name != nil && repo.full_name != "" {
+    repo.full_name
+  } else {
+    "unknown"
+  }
+  if event_kind == "push" {
+    return "github:push:" + repo_part + ":" + to_string(payload?.after ?? "")
+  }
+  let action = payload?.action ?? ""
+  let resource_id = to_string(
+    payload?.pull_request?.id ?? payload?.issue?.id ?? payload?.comment?.id ?? payload?.check_run?.id
+    ?? "",
+  )
+  return "github:" + event_kind + ":" + repo_part + ":" + to_string(action) + ":" + resource_id
+}
+
+fn __repo(payload) {
+  let repo = payload?.repository ?? {}
+  let owner = repo?.owner ?? {}
+  return {
+    owner: owner?.login ?? owner?.name ?? "",
+    name: repo?.name ?? "",
+    full_name: repo?.full_name ?? (owner?.login ?? owner?.name ?? "" + "/" + repo?.name ?? ""),
+  }
+}
+
+fn __actor(payload) {
+  let sender = payload?.sender ?? {}
+  return {id: sender?.id, login: sender?.login ?? "", type: sender?.type ?? ""}
+}
+
+fn __occurred_at(event_kind, payload, raw) {
+  if raw?.occurred_at != nil {
+    return raw.occurred_at
+  }
+  if event_kind == "push" {
+    return payload?.head_commit?.timestamp ?? payload?.repository?.pushed_at
+  }
+  if event_kind == "pull_request" {
+    return payload?.pull_request?.updated_at ?? payload?.pull_request?.created_at
+  }
+  if event_kind == "issues" {
+    return payload?.issue?.updated_at ?? payload?.issue?.created_at
+  }
+  if event_kind == "issue_comment" {
+    return payload?.comment?.updated_at ?? payload?.comment?.created_at
+  }
+  return payload?.check_run?.completed_at ?? payload?.check_run?.started_at
+    ?? payload?.check_run?.created_at
+}
+
+fn __outbound_config(args) {
+  let api_base_url = args?.api_base_url ?? env_or("GITHUB_API_BASE_URL", GITHUB_API_BASE_URL)
+  let installation_token = args?.installation_token ?? args?.token ?? args?.bindings?.installation_token
+    ?? args?.secrets?.installation_token
+    ?? env("GITHUB_INSTALLATION_TOKEN")
+  if installation_token == nil || trim(to_string(installation_token)) == "" {
+    return __err(
+      "missing_installation_token",
+      "github connector requires installation_token until JWT signing lands",
+    )
+  }
+  return Ok({api_base_url: to_string(api_base_url), installation_token: to_string(installation_token)})
+}
+
+fn __config_keys() {
+  return ["api_base_url", "installation_token", "token", "bindings", "secrets"]
+}
+
+fn __body_without(args, keys) {
+  let body = args ?? {} + {}
+  for key in keys {
+    body.remove(key)
+  }
+  return body
+}
+
+fn __github_api_url(api_base_url, path) {
+  let base = trim(to_string(api_base_url))
+  let prefix = if ends_with(base, "/") {
+    base[0:len(base) - 1]
+  } else {
+    base
+  }
+  if starts_with(path, "/") {
+    return prefix + path
+  }
+  return prefix + "/" + path
+}
+
+fn __trim_leading_slash(path) {
+  let text = to_string(path)
+  if starts_with(text, "/") {
+    return text[1:len(text)]
+  }
+  return text
+}
+
+fn __pagination_query(args) {
+  var parts = []
+  if args?.per_page != nil {
+    parts = parts + ["per_page=" + url_encode(to_string(args.per_page))]
+  }
+  if args?.page != nil {
+    parts = parts + ["page=" + url_encode(to_string(args.page))]
+  }
+  if len(parts) == 0 {
+    return ""
+  }
+  return "?" + join(parts, "&")
+}
+
+fn __ref_query(args) {
+  if args?.ref == nil || trim(to_string(args.ref)) == "" {
+    return ""
+  }
+  return "?ref=" + url_encode(to_string(args.ref))
+}
+
+@complexity(allow)
+fn __github_json(method, url, body, cfg) {
+  var options = {
+    headers: {
+    Accept: "application/vnd.github+json",
+    ["X-GitHub-Api-Version"]: GITHUB_API_VERSION,
+    Authorization: "Bearer " + cfg.installation_token,
+  },
+    retry: {max: 0, backoff_ms: 0},
+  }
+  if body != nil {
+    options["body"] = json_stringify(body)
+    options.headers["Content-Type"] = "application/json"
+  }
+  var retried_rate_limit = false
+  while true {
+    let response_result = try {
+      http_request(method, url, options)
+    }
+    if is_err(response_result) {
+      return __err("transport", to_string(unwrap_err(response_result)))
+    }
+    let response = unwrap(response_result)
+    let limited = __maybe_wait_for_rate_limit(response)
+    if is_err(limited) {
+      return limited
+    }
+    if (response.status == 403 || response.status == 429) && unwrap(limited) && !retried_rate_limit {
+      retried_rate_limit = true
+      continue
+    }
+    if response.status < 200 || response.status >= 300 {
+      let code = if response.status == 403 || response.status == 429 {
+        "rate_limited"
+      } else {
+        "transport"
+      }
+      return __err(
+        code,
+        "github API request failed with status " + to_string(response.status) + ": " + response.body,
+      )
+    }
+    if trim(response.body ?? "") == "" {
+      return {status: response.status, headers: response.headers, body: ""}
+    }
+    let parsed = try {
+      json_parse(response.body)
+    }
+    if is_err(parsed) {
+      return __err("invalid_response", "GitHub API returned invalid JSON")
+    }
+    return unwrap(parsed)
+  }
+}
+
+fn __maybe_wait_for_rate_limit(response) {
+  let remaining = __response_header(response.headers ?? {}, "x-ratelimit-remaining")
+  if remaining == nil || trim(to_string(remaining)) != "0" {
+    return Ok(false)
+  }
+  let reset = __response_header(response.headers ?? {}, "x-ratelimit-reset")
+  if reset == nil || trim(to_string(reset)) == "" {
+    return Ok(true)
+  }
+  let parsed_reset = try {
+    to_int(reset)
+  }
+  if is_err(parsed_reset) {
+    return Ok(true)
+  }
+  let wait_seconds = unwrap(parsed_reset) - to_int(timestamp())
+  if wait_seconds > 60 {
+    return __err("rate_limited", "github API rate limit reset is more than 60 seconds away")
+  }
+  if wait_seconds > 0 {
+    sleep(wait_seconds * 1000)
+  }
+  return Ok(true)
+}
+
+fn __response_header(headers, name) {
+  return __header(headers, name)
 }

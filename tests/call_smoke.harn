@@ -1,0 +1,188 @@
+import { call } from "../src/lib"
+
+pipeline default() {
+  http_mock_clear()
+  let base = "https://github-api.test"
+  let token = "github-installation-token"
+  http_mock(
+    "POST",
+    base + "/repos/octo-org/octo-repo/issues/7/comments",
+    {status: 201, body: "{\"id\":101,\"body\":\"hello\"}", headers: {["x-ratelimit-remaining"]: "10"}},
+  )
+  let comment = call(
+    "issues.create_comment",
+    {
+    api_base_url: base,
+    installation_token: token,
+    owner: "octo-org",
+    repo: "octo-repo",
+    issue_number: 7,
+    body: "hello",
+  },
+  )
+  assert_eq(comment.id, 101, "comment id")
+  http_mock(
+    "POST",
+    base + "/graphql",
+    {
+    status: 200,
+    body: "{\"data\":{\"viewer\":{\"login\":\"octocat\"}}}",
+    headers: {["x-ratelimit-remaining"]: "9"},
+  },
+  )
+  let graph = call(
+    "graphql",
+    {api_base_url: base, installation_token: token, query: "query { viewer { login } }", variables: {}},
+  )
+  assert_eq(graph.data.viewer.login, "octocat", "graphql viewer")
+  http_mock(
+    "PATCH",
+    base + "/repos/octo-org/octo-repo/issues/7",
+    {
+    status: 200,
+    body: "{\"number\":7,\"state\":\"closed\"}",
+    headers: {["x-ratelimit-remaining"]: "8"},
+  },
+  )
+  call(
+    "issues.update",
+    {
+    api_base_url: base,
+    installation_token: token,
+    owner: "octo-org",
+    repo: "octo-repo",
+    issue_number: 7,
+    state: "closed",
+  },
+  )
+  http_mock(
+    "POST",
+    base + "/repos/octo-org/octo-repo/pulls/42/comments",
+    {status: 201, body: "{\"id\":202}", headers: {["x-ratelimit-remaining"]: "7"}},
+  )
+  call(
+    "pulls.create_review_comment",
+    {
+    api_base_url: base,
+    installation_token: token,
+    owner: "octo-org",
+    repo: "octo-repo",
+    pull_number: 42,
+    body: "line note",
+    commit_id: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    path: "src/lib.rs",
+    line: 12,
+    side: "RIGHT",
+  },
+  )
+  http_mock(
+    "POST",
+    base + "/repos/octo-org/octo-repo/check-runs",
+    {status: 201, body: "{\"id\":8001}", headers: {["x-ratelimit-remaining"]: "6"}},
+  )
+  call(
+    "check_runs.create",
+    {
+    api_base_url: base,
+    installation_token: token,
+    owner: "octo-org",
+    repo: "octo-repo",
+    name: "Harn CI",
+    head_sha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    status: "queued",
+  },
+  )
+  http_mock(
+    "PATCH",
+    base + "/repos/octo-org/octo-repo/check-runs/8001",
+    {
+    status: 200,
+    body: "{\"id\":8001,\"status\":\"completed\"}",
+    headers: {["x-ratelimit-remaining"]: "5"},
+  },
+  )
+  call(
+    "check_runs.update",
+    {
+    api_base_url: base,
+    installation_token: token,
+    owner: "octo-org",
+    repo: "octo-repo",
+    check_run_id: 8001,
+    status: "completed",
+    conclusion: "success",
+  },
+  )
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/pulls/42/files?per_page=2",
+    {
+    responses: [
+    {
+    status: 403,
+    body: "{\"message\":\"rate limited\"}",
+    headers: {["x-ratelimit-remaining"]: "0", ["x-ratelimit-reset"]: to_string(to_int(timestamp()) - 1)},
+  },
+    {status: 200, body: "[{\"filename\":\"src/lib.rs\"}]", headers: {["x-ratelimit-remaining"]: "8"}},
+  ],
+  },
+  )
+  let files = call(
+    "pulls.list_files",
+    {
+    api_base_url: base,
+    installation_token: token,
+    owner: "octo-org",
+    repo: "octo-repo",
+    pull_number: 42,
+    per_page: 2,
+  },
+  )
+  assert_eq(files[0].filename, "src/lib.rs", "list files response")
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/contents/README.md",
+    {
+    status: 403,
+    body: "{\"message\":\"rate limited\"}",
+    headers: {["x-ratelimit-remaining"]: "0", ["x-ratelimit-reset"]: to_string(to_int(timestamp()) + 120)},
+  },
+  )
+  let capped = call(
+    "repos.get_content",
+    {
+    api_base_url: base,
+    installation_token: token,
+    owner: "octo-org",
+    repo: "octo-repo",
+    path: "README.md",
+  },
+  )
+  assert(is_err(capped), "rate-limit cap rejects")
+  assert_eq(unwrap_err(capped).code, "rate_limited", "rate-limit cap code")
+  let calls = http_mock_calls()
+  assert_eq(calls[0].method, "POST", "create comment method")
+  assert_eq(calls[0].headers.Authorization, "Bearer " + token, "authorization header")
+  assert_eq(calls[0].headers["X-GitHub-Api-Version"], "2022-11-28", "api version header")
+  assert_eq(json_parse(calls[0].body).body, "hello", "comment body")
+  assert_eq(calls[1].url, base + "/graphql", "graphql URL")
+  assert_eq(json_parse(calls[1].body).query, "query { viewer { login } }", "graphql query body")
+  assert_eq(calls[2].method, "PATCH", "issues.update method")
+  assert_eq(json_parse(calls[2].body).state, "closed", "issues.update body")
+  assert_eq(calls[3].url, base + "/repos/octo-org/octo-repo/pulls/42/comments", "review comment URL")
+  assert_eq(json_parse(calls[3].body).path, "src/lib.rs", "review comment body")
+  assert_eq(calls[4].url, base + "/repos/octo-org/octo-repo/check-runs", "check run create URL")
+  assert_eq(json_parse(calls[4].body).name, "Harn CI", "check run create body")
+  assert_eq(calls[5].url, base + "/repos/octo-org/octo-repo/check-runs/8001", "check run update URL")
+  assert_eq(json_parse(calls[5].body).conclusion, "success", "check run update body")
+  assert_eq(
+    calls[6].url,
+    base + "/repos/octo-org/octo-repo/pulls/42/files?per_page=2",
+    "list files URL",
+  )
+  assert_eq(calls[7].url, calls[6].url, "rate-limit retry URL")
+  let unsupported = call("issues.lock", {api_base_url: base, installation_token: token})
+  assert(is_err(unsupported), "unsupported method rejected")
+  assert_eq(unwrap_err(unsupported).code, "method_not_found", "unsupported method code")
+  http_mock_clear()
+}

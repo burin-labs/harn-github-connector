@@ -1,0 +1,50 @@
+import {
+  activate,
+  call,
+  init,
+  kinds,
+  normalize_inbound,
+  payload_schema,
+  provider_id,
+  shutdown,
+} from "../src/lib"
+
+pub fn github_headers(secret, body, event, delivery = "delivery-1") {
+  return {
+    ["x-github-event"]: event,
+    ["x-github-delivery"]: delivery,
+    ["x-hub-signature-256"]: "sha256=" + hmac_sha256(secret, body),
+  }
+}
+
+pub fn signed_raw(secret, body, event, extra = nil) {
+  return extra ?? {}
+    + {signing_secret: secret, body_text: body, headers: github_headers(secret, body, event)}
+}
+
+pub fn fixture_body(name) {
+  return read_file(source_dir() + "/fixtures/webhooks/" + name + ".json")
+}
+
+pub fn fixture_raw(name, secret, event, extra = nil) {
+  return signed_raw(secret, fixture_body(name), event, extra)
+}
+
+pub fn assert_github_interface() {
+  shutdown()
+  assert_eq(provider_id(), "github", "provider id")
+  assert_eq(kinds()[0], "webhook", "webhook kind")
+  assert_eq(payload_schema().harn_schema_name, "GitHubEventPayload", "payload schema name")
+  let initialized = init({signing_secret: "test-secret"})
+  assert(initialized.initialized == true, "init stores state")
+  let activated = activate([{id: "primary", path: "/github/events", secrets: {signing_secret: "test-secret"}}])
+  assert_eq(activated.bindings, 1, "activate counts bindings")
+}
+
+pub fn github_call(method, args) {
+  return call(method, args)
+}
+
+pub fn github_normalize(raw) {
+  return normalize_inbound(raw)
+}

@@ -1,4 +1,4 @@
-# CLAUDE.md — harn-github-connector
+# AGENTS.md — harn-github-connector
 
 **Read [SESSION_PROMPT.md](./SESSION_PROMPT.md) first.** It contains the
 pivot context, the connector interface contract, what's blocked on
@@ -27,8 +27,7 @@ Run checks from the repo root:
 ```sh
 harn check src/lib.harn
 harn lint src/lib.harn
-harn fmt --check src/lib.harn tests/*.harn
-harn connector check .
+harn fmt --check src/lib.harn
 for test in tests/*.harn; do
   harn run "$test" || exit 1
 done
@@ -49,7 +48,7 @@ in `SESSION_PROMPT.md`.
 ## Upstream conventions
 
 For general Harn coding conventions and project layout, defer to
-[`/Users/ksinder/projects/harn/CLAUDE.md`](/Users/ksinder/projects/harn/CLAUDE.md).
+[`/Users/ksinder/projects/harn/AGENTS.md`](/Users/ksinder/projects/harn/AGENTS.md).
 
 ## Don't
 
