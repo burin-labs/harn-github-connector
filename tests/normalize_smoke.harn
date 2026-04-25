@@ -1,0 +1,46 @@
+import { shutdown } from "../src/lib"
+import {
+  assert_github_interface,
+  fixture_body,
+  fixture_raw,
+  github_headers,
+  github_normalize,
+} from "./helpers"
+
+pipeline default() {
+  let secret = "test-signing-secret"
+  assert_github_interface()
+  let pr = github_normalize(fixture_raw("pull_request_opened", secret, "pull_request"))
+  assert_eq(pr.type, "event", "pull request envelope type")
+  assert_eq(pr.event.kind, "pull_request.opened", "pull request event kind")
+  assert_eq(pr.event.signature_status, "verified", "pr signed")
+  assert_eq(pr.event.payload.event_type, "pull_request.opened", "pull request event type")
+  assert_eq(pr.event.payload.resource_id, "octo-org/octo-repo/42", "pull request resource")
+  assert_eq(pr.event.payload.actor.login, "octocat", "pull request actor")
+  assert(pr.event.dedupe_key != "" && pr.event.dedupe_key != nil, "pr dedupe key populated")
+  let push = github_normalize(fixture_raw("push", secret, "push"))
+  assert_eq(push.event.kind, "push", "push event kind")
+  assert_eq(push.event.payload.after, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "push after")
+  let issues = github_normalize(fixture_raw("issues_opened", secret, "issues"))
+  assert_eq(issues.event.kind, "issues.opened", "issues event kind")
+  assert_eq(issues.event.payload.number, 7, "issue number")
+  let comment = github_normalize(fixture_raw("issue_comment_created", secret, "issue_comment"))
+  assert_eq(comment.event.kind, "issue_comment.created", "comment event kind")
+  assert_eq(comment.event.payload.comment.body, "Looks good from the fixture.", "comment body")
+  let check = github_normalize(fixture_raw("check_run_completed", secret, "check_run"))
+  assert_eq(check.event.kind, "check_run.completed", "check run event kind")
+  assert_eq(check.event.payload.conclusion, "success", "check conclusion")
+  let body = fixture_body("issues_opened")
+  let tampered = github_normalize(
+    {signing_secret: secret, body_text: body + " ", headers: github_headers(secret, body, "issues")},
+  )
+  assert_eq(tampered.type, "reject", "tampered body rejects")
+  assert_eq(tampered.reject.status, 401, "tampered body status")
+  let missing_signature = github_normalize({signing_secret: secret, body_text: body, headers: {["x-github-event"]: "issues"}})
+  assert_eq(missing_signature.type, "reject", "missing signature rejects")
+  let wrong_secret = github_normalize(
+    {signing_secret: "wrong-secret", body_text: body, headers: github_headers(secret, body, "issues")},
+  )
+  assert_eq(wrong_secret.type, "reject", "wrong secret rejects")
+  shutdown()
+}

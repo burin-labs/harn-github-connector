@@ -1,0 +1,27 @@
+{
+  "ref": "refs/heads/main",
+  "before": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "after": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "head_commit": {
+    "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "message": "Update fixture",
+    "timestamp": "2026-04-20T13:00:00Z"
+  },
+  "commits": [
+    {
+      "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "message": "Update fixture",
+      "timestamp": "2026-04-20T13:00:00Z"
+    }
+  ],
+  "distinct_size": 1,
+  "pusher": {"name": "octocat", "email": "octocat@example.test"},
+  "repository": {
+    "name": "octo-repo",
+    "full_name": "octo-org/octo-repo",
+    "owner": {"id": 2001, "login": "octo-org", "type": "Organization"},
+    "pushed_at": "2026-04-20T13:00:00Z"
+  },
+  "sender": {"id": 1001, "login": "octocat", "type": "User"},
+  "installation": {"id": 3001}
+}

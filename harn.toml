@@ -8,5 +8,9 @@ repository = "https://github.com/burin-labs/harn-github-connector"
 [exports]
 default = "src/lib.harn"
 
+[[providers]]
+id = "github"
+connector = { harn = "src/lib.harn" }
+
 # Harn-side package dependencies live here. This package currently has none.
 [dependencies]

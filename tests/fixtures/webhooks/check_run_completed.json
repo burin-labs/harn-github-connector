@@ -1,0 +1,19 @@
+{
+  "action": "completed",
+  "check_run": {
+    "id": 8001,
+    "name": "Harn CI",
+    "status": "completed",
+    "conclusion": "success",
+    "html_url": "https://github.com/octo-org/octo-repo/runs/8001",
+    "started_at": "2026-04-20T16:00:00Z",
+    "completed_at": "2026-04-20T16:03:00Z"
+  },
+  "repository": {
+    "name": "octo-repo",
+    "full_name": "octo-org/octo-repo",
+    "owner": {"id": 2001, "login": "octo-org", "type": "Organization"}
+  },
+  "sender": {"id": 1001, "login": "octocat", "type": "User"},
+  "installation": {"id": 3001}
+}

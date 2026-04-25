@@ -1,9 +1,8 @@
 # harn-github-connector
 
 Pure-Harn GitHub App connector for the Harn orchestrator. Verifies inbound
-webhook signatures, rotates installation tokens, normalizes GitHub event
-payloads to the canonical `TriggerEvent` shape, and dispatches outbound
-REST/GraphQL calls.
+webhook signatures, normalizes GitHub event payloads to the canonical
+`TriggerEvent` shape, and dispatches outbound REST/GraphQL calls.
 
 > **Status: pre-alpha** — actively developed in tandem with
 > [burin-labs/harn](https://github.com/burin-labs/harn). See the
@@ -55,6 +54,33 @@ trigger pr_review on github {
 
 This repo is being built out by Claude Code sessions following a structured
 prompt. **Read [SESSION_PROMPT.md](./SESSION_PROMPT.md) before making changes.**
+
+Install the pinned Harn CLI from crates.io:
+
+```sh
+cargo install harn-cli --version "$(cat .harn-version)" --locked
+harn --version
+```
+
+Run the local CI equivalent from this repo:
+
+```sh
+harn check src/lib.harn
+harn lint src/lib.harn
+harn fmt --check src/lib.harn
+for test in tests/*.harn; do
+  harn run "$test" || exit 1
+done
+```
+
+## JWT signing gap
+
+GitHub App installation token rotation requires a signed app JWT. Harn v0.7.30
+does not expose a JWT signing builtin
+([harn#453](https://github.com/burin-labs/harn/issues/453)), so v0 requires
+`installation_token`/`GITHUB_INSTALLATION_TOKEN` for outbound calls. Token
+minting and refresh are intentionally deferred until the upstream JWT builtin
+lands.
 
 ## License
 
