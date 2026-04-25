@@ -95,9 +95,12 @@ pub fn activate(bindings = []) {
   return {provider: GITHUB_PROVIDER_ID, kind: "webhook", bindings: len(by_id.keys())}
 }
 
-/** Clear connector lifecycle state and any cached installation tokens. */
+/**
+ * Clear connector lifecycle state. Cached installation tokens persist
+ * across restarts so subsequent runs can refresh them lazily — call
+ * `reset_token_cache()` explicitly to invalidate the persistent cache.
+ */
 pub fn shutdown() {
-  reset_token_cache()
   GITHUB_STATE = {initialized: false, active: false, bindings: {}, ctx: {}}
   return {provider: GITHUB_PROVIDER_ID, active: false}
 }
