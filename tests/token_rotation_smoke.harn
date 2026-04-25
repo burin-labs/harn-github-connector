@@ -1,0 +1,85 @@
+import { installation_token, mint_app_jwt, reset_token_cache } from "../src/lib"
+
+fn fixture_key() {
+  return read_file(path_join(cwd(), "tests/fixtures/github_app_test_key.pem"))
+}
+
+fn base_config(now) {
+  return {
+    app_id: 12345,
+    installation_id: 77,
+    api_base_url: "https://api.github.test",
+    private_key_pem: fixture_key(),
+    now: now,
+  }
+}
+
+pipeline default() {
+  reset_token_cache()
+  http_mock_clear()
+  let config = base_config(1700000000)
+  let jwt = mint_app_jwt(config)
+  let parts = split(jwt, ".")
+  assert_eq(len(parts), 3)
+  let header = json_parse(base64url_decode(parts[0]))
+  let claims = json_parse(base64url_decode(parts[1]))
+  assert_eq(header.alg, "RS256")
+  assert_eq(header.typ, "JWT")
+  assert_eq(claims.iss, "12345")
+  assert_eq(claims.iat, 1699999940)
+  assert_eq(claims.exp, 1700000600)
+  http_mock(
+    "POST",
+    "https://api.github.test/app/installations/77/access_tokens",
+    {
+    responses: [
+    {
+    status: 201,
+    headers: {["x-ratelimit-remaining"]: "42"},
+    body: "{\"token\":\"install-token-a\",\"expires_at\":\"2023-11-14T23:13:20Z\"}",
+  },
+    {
+    status: 201,
+    headers: {["x-ratelimit-remaining"]: "42"},
+    body: "{\"token\":\"install-token-b\",\"expires_at\":\"2023-11-15T00:13:20Z\"}",
+  },
+  ],
+  },
+  )
+  assert_eq(installation_token(config), "install-token-a")
+  assert_eq(installation_token(config), "install-token-a")
+  var calls = http_mock_calls()
+  assert_eq(len(calls), 1)
+  assert(calls[0].headers.Authorization.starts_with("Bearer "))
+  assert_eq(calls[0].headers.Accept, "application/vnd.github+json")
+  assert_eq(installation_token(base_config(1700003700)), "install-token-b")
+  calls = http_mock_calls()
+  assert_eq(len(calls), 2)
+  http_mock_clear()
+  reset_token_cache()
+  http_mock(
+    "POST",
+    "https://api.github.test/app/installations/77/access_tokens",
+    {
+    status: 201,
+    headers: {["x-ratelimit-remaining"]: "42"},
+    body: "{\"token\":\"install-token-locked\",\"expires_at\":\"2023-11-14T23:13:20Z\"}",
+  },
+  )
+  let parallel_tokens = parallel 2 { _ ->
+    installation_token(config)
+  }
+  assert_eq(parallel_tokens, ["install-token-locked", "install-token-locked"])
+  assert_eq(len(http_mock_calls()), 1)
+  http_mock_clear()
+  reset_token_cache()
+  http_mock(
+    "POST",
+    "https://api.github.test/app/installations/77/access_tokens",
+    {status: 500, body: "{\"message\":\"boom\"}"},
+  )
+  let failed = installation_token(config)
+  assert(is_err(failed), "token endpoint errors should propagate")
+  assert_eq(unwrap_err(failed).code, "installation_token_failed", "token endpoint error code")
+  println("token_rotation_smoke_ok")
+}

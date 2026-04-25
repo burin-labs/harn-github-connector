@@ -1,0 +1,146 @@
+import { call, reset_token_cache } from "../src/lib"
+
+fn fixture_key() {
+  return read_file(path_join(cwd(), "tests/fixtures/github_app_test_key.pem"))
+}
+
+fn config(now) {
+  return {
+    app_id: 12345,
+    installation_id: 77,
+    api_base_url: "https://api.github.test",
+    private_key_pem: fixture_key(),
+    now: now,
+    rate_limit_max_sleep_seconds: 0,
+  }
+}
+
+pipeline default() {
+  reset_token_cache()
+  http_mock_clear()
+  http_mock(
+    "POST",
+    "https://api.github.test/app/installations/77/access_tokens",
+    {
+    responses: [
+    {
+    status: 201,
+    body: "{\"token\":\"token-a\",\"expires_at\":\"2023-11-14T23:13:20Z\"}",
+    headers: {["x-ratelimit-remaining"]: "42"},
+  },
+    {
+    status: 201,
+    body: "{\"token\":\"token-b\",\"expires_at\":\"2023-11-14T23:13:20Z\"}",
+    headers: {["x-ratelimit-remaining"]: "42"},
+  },
+  ],
+  },
+  )
+  http_mock(
+    "POST",
+    "https://api.github.test/repos/octo/demo/issues/123/comments",
+    {status: 201, body: "{\"id\":99,\"body\":\"hello\"}", headers: {["x-ratelimit-remaining"]: "42"}},
+  )
+  let comment = call(
+    "issues.create_comment",
+    config(1700000000) + {owner: "octo", repo: "demo", issue_number: 123, body: "hello"},
+  )
+  assert_eq(comment.id, 99, "issues.create_comment id")
+  http_mock(
+    "PATCH",
+    "https://api.github.test/repos/octo/demo/issues/123",
+    {
+    status: 200,
+    body: "{\"number\":123,\"state\":\"closed\"}",
+    headers: {["x-ratelimit-remaining"]: "42"},
+  },
+  )
+  let issue = call(
+    "issues.update",
+    config(1700000000) + {owner: "octo", repo: "demo", issue_number: 123, state: "closed"},
+  )
+  assert_eq(issue.state, "closed", "issues.update state")
+  http_mock(
+    "POST",
+    "https://api.github.test/repos/octo/demo/pulls/5/comments",
+    {status: 201, body: "{\"id\":55}", headers: {["x-ratelimit-remaining"]: "42"}},
+  )
+  let review_comment = call(
+    "pulls.create_review_comment",
+    config(1700000000)
+    + {
+    owner: "octo",
+    repo: "demo",
+    pull_number: 5,
+    body: "nit",
+    commit_id: "abc",
+    path: "src/lib.harn",
+    line: 1,
+    side: "RIGHT",
+  },
+  )
+  assert_eq(review_comment.id, 55, "review comment id")
+  http_mock(
+    "GET",
+    "https://api.github.test/repos/octo/demo/contents/README.md?ref=main",
+    {status: 200, body: "{\"name\":\"README.md\"}", headers: {["x-ratelimit-remaining"]: "42"}},
+  )
+  let content = call(
+    "repos.get_content",
+    config(1700000000) + {owner: "octo", repo: "demo", path: "README.md", ref: "main"},
+  )
+  assert_eq(content.name, "README.md", "repos.get_content name")
+  http_mock(
+    "POST",
+    "https://api.github.test/repos/octo/demo/check-runs",
+    {status: 201, body: "{\"id\":10,\"name\":\"ci\"}", headers: {["x-ratelimit-remaining"]: "42"}},
+  )
+  let check_run = call(
+    "check_runs.create",
+    config(1700000000) + {owner: "octo", repo: "demo", name: "ci", head_sha: "abc", status: "queued"},
+  )
+  assert_eq(check_run.id, 10, "check_runs.create id")
+  http_mock(
+    "PATCH",
+    "https://api.github.test/repos/octo/demo/check-runs/10",
+    {
+    status: 200,
+    body: "{\"id\":10,\"status\":\"completed\"}",
+    headers: {["x-ratelimit-remaining"]: "42"},
+  },
+  )
+  let updated_check = call(
+    "check_runs.update",
+    config(1700000000) + {owner: "octo", repo: "demo", check_run_id: 10, status: "completed"},
+  )
+  assert_eq(updated_check.status, "completed", "check_runs.update status")
+  http_mock(
+    "POST",
+    "https://api.github.test/graphql",
+    {
+    status: 200,
+    body: "{\"data\":{\"viewer\":{\"login\":\"octo\"}}}",
+    headers: {["x-ratelimit-remaining"]: "41"},
+  },
+  )
+  let graph = call("graphql", config(1700000000) + {query: "query { viewer { login } }", variables: {}})
+  assert_eq(graph.data.viewer.login, "octo", "graphql viewer login")
+  http_mock(
+    "GET",
+    "https://api.github.test/repos/octo/demo/pulls/5/files",
+    {
+    responses: [
+    {status: 401, body: "{\"message\":\"bad credentials\"}"},
+    {status: 200, body: "[{\"filename\":\"src/lib.harn\"}]", headers: {["x-ratelimit-remaining"]: "42"}},
+  ],
+  },
+  )
+  let files = call("pulls.list_files", config(1700000000) + {owner: "octo", repo: "demo", pull_number: 5})
+  assert_eq(files[0].filename, "src/lib.harn", "list files filename after 401 retry")
+  let calls = http_mock_calls()
+  assert_eq(calls[1].headers.Authorization, "Bearer token-a", "first request bearer token")
+  let comment_body = json_parse(calls[1].body)
+  assert_eq(comment_body.body, "hello", "issues.create_comment body")
+  reset_token_cache()
+  http_mock_clear()
+}

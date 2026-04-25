@@ -4,6 +4,8 @@ let GITHUB_API_BASE_URL = "https://api.github.com"
 
 let GITHUB_API_VERSION = "2022-11-28"
 
+let GITHUB_USER_AGENT = "harn-github-connector"
+
 let GITHUB_OUTBOUND_METHODS = [
   "issues.create_comment",
   "issues.update",
@@ -14,6 +16,14 @@ let GITHUB_OUTBOUND_METHODS = [
   "check_runs.update",
   "graphql",
 ]
+
+let TOKEN_CACHE_KEY = "harn-github-connector.token_cache"
+
+let DEFAULT_TOKEN_REFRESH_SKEW_SECONDS = 300
+
+let DEFAULT_JWT_BACKDATE_SECONDS = 60
+
+let DEFAULT_JWT_TTL_SECONDS = 600
 
 var GITHUB_STATE = {initialized: false, active: false, bindings: {}, ctx: {}}
 
@@ -85,7 +95,11 @@ pub fn activate(bindings = []) {
   return {provider: GITHUB_PROVIDER_ID, kind: "webhook", bindings: len(by_id.keys())}
 }
 
-/** Clear connector lifecycle state. */
+/**
+ * Clear connector lifecycle state. Cached installation tokens persist
+ * across restarts so subsequent runs can refresh them lazily — call
+ * `reset_token_cache()` explicitly to invalidate the persistent cache.
+ */
 pub fn shutdown() {
   GITHUB_STATE = {initialized: false, active: false, bindings: {}, ctx: {}}
   return {provider: GITHUB_PROVIDER_ID, active: false}
@@ -212,6 +226,73 @@ pub fn call(method, args = {}) {
     {query: args.query, variables: args.variables ?? {}},
     cfg,
   )
+}
+
+/** Mint a GitHub App JWT using Harn jwt_sign and the configured app private key. */
+pub fn mint_app_jwt(config) {
+  let app_id = config?.app_id
+  if app_id == nil {
+    return __err("missing_app_id", "github connector requires app_id to mint JWT")
+  }
+  let pem_result = __private_key_pem(config)
+  if is_err(pem_result) {
+    return pem_result
+  }
+  let now = __now_seconds(config)
+  let backdate = config?.jwt_backdate_seconds ?? DEFAULT_JWT_BACKDATE_SECONDS
+  let ttl = config?.jwt_ttl_seconds ?? DEFAULT_JWT_TTL_SECONDS
+  let claims = {iss: to_string(app_id), iat: now - backdate, exp: now + ttl}
+  return jwt_sign(config?.jwt_alg ?? "RS256", claims, unwrap(pem_result))
+}
+
+/** Return a cached installation token or refresh it when stale. */
+pub fn installation_token(config) {
+  let resolved_result = __resolve_token_config(config)
+  if is_err(resolved_result) {
+    return resolved_result
+  }
+  let resolved = unwrap(resolved_result)
+  let key = to_string(resolved.installation_id)
+  let now = __now_seconds(resolved)
+  let cached = __token_cache()[key]
+  if cached != nil && cached.refresh_at > now {
+    return cached.token
+  }
+  var token = nil
+  mutex {
+    var cache = __token_cache()
+    let again = cache[key]
+    if again != nil && again.refresh_at > __now_seconds(resolved) {
+      token = again.token
+    } else {
+      let exchanged = __exchange_installation_token(resolved)
+      if is_err(exchanged) {
+        token = exchanged
+      } else {
+        let response = unwrap(exchanged)
+        cache[key] = {
+          token: response.token,
+          refresh_at: __token_refresh_at(response?.expires_at, __now_seconds(resolved), resolved),
+        }
+        store_set(TOKEN_CACHE_KEY, cache)
+        token = response.token
+      }
+    }
+  }
+  return token
+}
+
+/** Clear all cached installation tokens. */
+pub fn reset_token_cache() {
+  store_delete(TOKEN_CACHE_KEY)
+}
+
+/** Invalidate one cached installation token by installation id. */
+pub fn invalidate_installation_token(installation_id) {
+  let key = to_string(installation_id)
+  var cache = __token_cache()
+  cache.remove(key)
+  store_set(TOKEN_CACHE_KEY, cache)
 }
 
 fn __state() {
@@ -464,20 +545,66 @@ fn __occurred_at(event_kind, payload, raw) {
 
 fn __outbound_config(args) {
   let api_base_url = args?.api_base_url ?? env_or("GITHUB_API_BASE_URL", GITHUB_API_BASE_URL)
-  let installation_token = args?.installation_token ?? args?.token ?? args?.bindings?.installation_token
+  let direct_token = args?.installation_token ?? args?.token ?? args?.bindings?.installation_token
     ?? args?.secrets?.installation_token
     ?? env("GITHUB_INSTALLATION_TOKEN")
-  if installation_token == nil || trim(to_string(installation_token)) == "" {
-    return __err(
-      "missing_installation_token",
-      "github connector requires installation_token until JWT signing lands",
+  if direct_token != nil && trim(to_string(direct_token)) != "" {
+    return Ok(
+      {
+      api_base_url: to_string(api_base_url),
+      installation_token: to_string(direct_token),
+      token_mode: "direct",
+      installation_id: args?.installation_id,
+    },
     )
   }
-  return Ok({api_base_url: to_string(api_base_url), installation_token: to_string(installation_token)})
+  let app_id = args?.app_id ?? env("GITHUB_APP_ID")
+  let installation_id = args?.installation_id ?? env("GITHUB_INSTALLATION_ID")
+  if app_id == nil || trim(to_string(app_id)) == "" || installation_id == nil
+    || trim(to_string(installation_id)) == "" {
+    return __err(
+      "missing_credentials",
+      "github connector requires installation_token, or app_id + installation_id + private_key",
+    )
+  }
+  let resolved = {
+    api_base_url: to_string(api_base_url),
+    app_id: app_id,
+    installation_id: installation_id,
+    private_key_pem: args?.private_key_pem,
+    private_key_secret: args?.private_key_secret ?? args?.secrets?.private_key,
+    jwt_alg: args?.jwt_alg ?? "RS256",
+    jwt_backdate_seconds: args?.jwt_backdate_seconds ?? DEFAULT_JWT_BACKDATE_SECONDS,
+    jwt_ttl_seconds: args?.jwt_ttl_seconds ?? DEFAULT_JWT_TTL_SECONDS,
+    token_refresh_skew_seconds: args?.token_refresh_skew_seconds ?? DEFAULT_TOKEN_REFRESH_SKEW_SECONDS,
+    now: args?.now,
+    timeout_ms: args?.timeout_ms,
+  }
+  let token_result = installation_token(resolved)
+  if is_err(token_result) {
+    return token_result
+  }
+  return Ok(resolved + {installation_token: to_string(token_result), token_mode: "jwt"})
 }
 
 fn __config_keys() {
-  return ["api_base_url", "installation_token", "token", "bindings", "secrets"]
+  return [
+    "api_base_url",
+    "installation_token",
+    "token",
+    "bindings",
+    "secrets",
+    "app_id",
+    "installation_id",
+    "private_key_pem",
+    "private_key_secret",
+    "jwt_alg",
+    "jwt_backdate_seconds",
+    "jwt_ttl_seconds",
+    "token_refresh_skew_seconds",
+    "now",
+    "timeout_ms",
+  ]
 }
 
 fn __body_without(args, keys) {
@@ -532,20 +659,23 @@ fn __ref_query(args) {
 
 @complexity(allow)
 fn __github_json(method, url, body, cfg) {
-  var options = {
-    headers: {
-    Accept: "application/vnd.github+json",
-    ["X-GitHub-Api-Version"]: GITHUB_API_VERSION,
-    Authorization: "Bearer " + cfg.installation_token,
-  },
-    retry: {max: 0, backoff_ms: 0},
-  }
-  if body != nil {
-    options["body"] = json_stringify(body)
-    options.headers["Content-Type"] = "application/json"
-  }
+  var current_token = cfg.installation_token
   var retried_rate_limit = false
+  var retried_auth = false
   while true {
+    var options = {
+      headers: {
+      Accept: "application/vnd.github+json",
+      ["X-GitHub-Api-Version"]: GITHUB_API_VERSION,
+      ["User-Agent"]: GITHUB_USER_AGENT,
+      Authorization: "Bearer " + current_token,
+    },
+      retry: {max: 0, backoff_ms: 0},
+    }
+    if body != nil {
+      options["body"] = json_stringify(body)
+      options.headers["Content-Type"] = "application/json"
+    }
     let response_result = try {
       http_request(method, url, options)
     }
@@ -553,6 +683,16 @@ fn __github_json(method, url, body, cfg) {
       return __err("transport", to_string(unwrap_err(response_result)))
     }
     let response = unwrap(response_result)
+    if response.status == 401 && cfg.token_mode == "jwt" && !retried_auth {
+      retried_auth = true
+      invalidate_installation_token(cfg.installation_id)
+      let refreshed = installation_token(cfg)
+      if is_err(refreshed) {
+        return refreshed
+      }
+      current_token = to_string(refreshed)
+      continue
+    }
     let limited = __maybe_wait_for_rate_limit(response)
     if is_err(limited) {
       return limited
@@ -562,10 +702,14 @@ fn __github_json(method, url, body, cfg) {
       continue
     }
     if response.status < 200 || response.status >= 300 {
-      let code = if response.status == 403 || response.status == 429 {
-        "rate_limited"
+      let code = if response.status == 401 {
+        "unauthorized"
       } else {
-        "transport"
+        if response.status == 403 || response.status == 429 {
+          "rate_limited"
+        } else {
+          "transport"
+        }
       }
       return __err(
         code,
@@ -612,4 +756,129 @@ fn __maybe_wait_for_rate_limit(response) {
 
 fn __response_header(headers, name) {
   return __header(headers, name)
+}
+
+fn __resolve_token_config(config) {
+  let api_base_url = config?.api_base_url ?? GITHUB_API_BASE_URL
+  let app_id = config?.app_id
+  let installation_id = config?.installation_id
+  if app_id == nil || installation_id == nil {
+    return __err("missing_credentials", "installation_token requires app_id and installation_id")
+  }
+  return Ok(
+    {
+    api_base_url: to_string(api_base_url),
+    app_id: app_id,
+    installation_id: installation_id,
+    private_key_pem: config?.private_key_pem,
+    private_key_secret: config?.private_key_secret,
+    jwt_alg: config?.jwt_alg ?? "RS256",
+    jwt_backdate_seconds: config?.jwt_backdate_seconds ?? DEFAULT_JWT_BACKDATE_SECONDS,
+    jwt_ttl_seconds: config?.jwt_ttl_seconds ?? DEFAULT_JWT_TTL_SECONDS,
+    token_refresh_skew_seconds: config?.token_refresh_skew_seconds ?? DEFAULT_TOKEN_REFRESH_SKEW_SECONDS,
+    now: config?.now,
+    timeout_ms: config?.timeout_ms,
+  },
+  )
+}
+
+fn __token_cache() {
+  return store_get(TOKEN_CACHE_KEY) ?? {}
+}
+
+fn __private_key_pem(config) {
+  if config?.private_key_secret != nil && trim(to_string(config.private_key_secret)) != "" {
+    let resolved = try {
+      secret_get(to_string(config.private_key_secret))
+    }
+    if is_err(resolved) {
+      return __err(
+        "missing_private_key",
+        "failed to resolve private_key_secret: " + to_string(unwrap_err(resolved)),
+      )
+    }
+    return Ok(to_string(unwrap(resolved)))
+  }
+  if config?.private_key_pem != nil && trim(to_string(config.private_key_pem)) != "" {
+    return Ok(to_string(config.private_key_pem))
+  }
+  return __err("missing_private_key", "github connector requires private_key_secret or private_key_pem")
+}
+
+@complexity(allow)
+fn __exchange_installation_token(config) {
+  let jwt_result = mint_app_jwt(config)
+  if is_err(jwt_result) {
+    return jwt_result
+  }
+  let jwt = unwrap(jwt_result)
+  let url = __github_api_url(
+    config.api_base_url,
+    "/app/installations/" + to_string(config.installation_id) + "/access_tokens",
+  )
+  let response_result = try {
+    http_request(
+    "POST",
+    url,
+    {
+    headers: {
+    Accept: "application/vnd.github+json",
+    ["X-GitHub-Api-Version"]: GITHUB_API_VERSION,
+    ["User-Agent"]: GITHUB_USER_AGENT,
+    Authorization: "Bearer " + jwt,
+    ["Content-Type"]: "application/json",
+  },
+    body: "",
+    timeout_ms: config?.timeout_ms ?? 30000,
+    retry: {max: 0, backoff_ms: 0},
+  },
+  )
+  }
+  if is_err(response_result) {
+    return __err("transport", to_string(unwrap_err(response_result)))
+  }
+  let response = unwrap(response_result)
+  if response.status < 200 || response.status >= 300 {
+    return __err(
+      "installation_token_failed",
+      "failed to create GitHub installation token (" + to_string(response.status) + "): "
+      + response.body ?? "",
+    )
+  }
+  let parsed = try {
+    json_parse(response.body)
+  }
+  if is_err(parsed) {
+    return __err("invalid_response", "GitHub installation token response was not valid JSON")
+  }
+  let payload = unwrap(parsed)
+  if payload?.token == nil {
+    return __err("invalid_response", "GitHub installation token response did not include token")
+  }
+  return Ok(payload)
+}
+
+fn __token_refresh_at(expires_at, now, config) {
+  let skew = config?.token_refresh_skew_seconds ?? DEFAULT_TOKEN_REFRESH_SKEW_SECONDS
+  if expires_at == nil || expires_at == "" {
+    return now + 3000
+  }
+  let parsed_result = try {
+    to_int(date_parse(to_string(expires_at)))
+  }
+  if is_err(parsed_result) {
+    return now + 3000
+  }
+  let refresh_at = unwrap(parsed_result) - skew
+  if refresh_at <= now {
+    return now
+  }
+  return refresh_at
+}
+
+fn __now_seconds(config) {
+  if config?.now != nil {
+    return to_int(config.now)
+  }
+  return to_int(timestamp())
 }
