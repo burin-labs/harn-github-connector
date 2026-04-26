@@ -12,5 +12,122 @@ default = "src/lib.harn"
 id = "github"
 connector = { harn = "src/lib.harn" }
 
+[connector_contract]
+version = 1
+
+[[connector_contract.fixtures]]
+provider = "github"
+name = "issues opened webhook"
+kind = "webhook"
+headers = { "X-GitHub-Event" = "issues", "X-GitHub-Delivery" = "delivery-contract-issues", "X-Hub-Signature-256" = "sha256=28d67d2d05e00e5cc1ac60de0f958c528d74ca6d597a4c7ef23c6591ac3cec86", "content-type" = "application/json" }
+metadata = { signing_secret = "test-signing-secret" }
+body = '''{"action":"opened","issue":{"number":7,"title":"Connector fixture issue","state":"open","html_url":"https://github.com/octo-org/octo-repo/issues/7","created_at":"2026-04-20T14:00:00Z","updated_at":"2026-04-20T14:00:00Z","user":{"id":1001,"login":"octocat","type":"User"}},"repository":{"name":"octo-repo","full_name":"octo-org/octo-repo","owner":{"id":2001,"login":"octo-org","type":"Organization"}},"sender":{"id":1001,"login":"octocat","type":"User"},"installation":{"id":3001}}'''
+expect_type = "event"
+expect_kind = "issues"
+expect_signature_state = "verified"
+expect_payload_contains = { provider = "github", event = "issues", action = "opened", installation_id = 3001, issue = { number = 7, title = "Connector fixture issue" } }
+expect_event_count = 1
+
+[[connector_contract.fixtures]]
+provider = "github"
+name = "pull request opened webhook"
+kind = "webhook"
+headers = { "X-GitHub-Event" = "pull_request", "X-GitHub-Delivery" = "delivery-contract-pr", "X-Hub-Signature-256" = "sha256=8eb23983613140177d886d50884e4ec3cda226b4fd9b2a9345ee6f1a17d354ae", "content-type" = "application/json" }
+metadata = { signing_secret = "test-signing-secret" }
+body = '''{"action":"opened","number":42,"pull_request":{"number":42,"title":"Add connector fixture","state":"open","html_url":"https://github.com/octo-org/octo-repo/pull/42","created_at":"2026-04-20T12:00:00Z","updated_at":"2026-04-20T12:05:00Z","user":{"id":1001,"login":"octocat","type":"User"}},"repository":{"name":"octo-repo","full_name":"octo-org/octo-repo","owner":{"id":2001,"login":"octo-org","type":"Organization"}},"sender":{"id":1001,"login":"octocat","type":"User"},"installation":{"id":3001}}'''
+expect_type = "event"
+expect_kind = "pull_request"
+expect_signature_state = "verified"
+expect_payload_contains = { provider = "github", event = "pull_request", action = "opened", pull_request = { number = 42, title = "Add connector fixture" } }
+expect_event_count = 1
+
+[[connector_contract.fixtures]]
+provider = "github"
+name = "issue comment created webhook"
+kind = "webhook"
+headers = { "X-GitHub-Event" = "issue_comment", "X-GitHub-Delivery" = "delivery-contract-comment", "X-Hub-Signature-256" = "sha256=86a06acb530d546e22016704a5f86d3b9fe941dedebb6c89df790c0c1486da6d", "content-type" = "application/json" }
+metadata = { signing_secret = "test-signing-secret" }
+body = '''{"action":"created","issue":{"number":7,"title":"Connector fixture issue","state":"open","html_url":"https://github.com/octo-org/octo-repo/issues/7","created_at":"2026-04-20T14:00:00Z","updated_at":"2026-04-20T15:00:00Z","user":{"id":1001,"login":"octocat","type":"User"}},"comment":{"id":9001,"body":"Looks good from the fixture.","html_url":"https://github.com/octo-org/octo-repo/issues/7#issuecomment-9001","created_at":"2026-04-20T15:00:00Z","updated_at":"2026-04-20T15:00:00Z","user":{"id":1002,"login":"reviewer","type":"User"}},"repository":{"name":"octo-repo","full_name":"octo-org/octo-repo","owner":{"id":2001,"login":"octo-org","type":"Organization"}},"sender":{"id":1002,"login":"reviewer","type":"User"},"installation":{"id":3001}}'''
+expect_type = "event"
+expect_kind = "issue_comment"
+expect_signature_state = "verified"
+expect_payload_contains = { provider = "github", event = "issue_comment", action = "created", issue = { number = 7 }, comment = { id = 9001, body = "Looks good from the fixture." } }
+expect_event_count = 1
+
+[[connector_contract.fixtures]]
+provider = "github"
+name = "pull request review submitted webhook"
+kind = "webhook"
+headers = { "X-GitHub-Event" = "pull_request_review", "X-GitHub-Delivery" = "delivery-contract-review", "X-Hub-Signature-256" = "sha256=c70b2329288fe92a7850da63e4b9d72abe76ee3725918b7e288f9121d8225167", "content-type" = "application/json" }
+metadata = { signing_secret = "test-signing-secret" }
+body = '''{"action":"submitted","pull_request":{"number":42,"title":"Add connector fixture","state":"open","html_url":"https://github.com/octo-org/octo-repo/pull/42","created_at":"2026-04-20T12:00:00Z","updated_at":"2026-04-20T12:10:00Z","user":{"id":1001,"login":"octocat","type":"User"}},"review":{"id":7001,"state":"approved","html_url":"https://github.com/octo-org/octo-repo/pull/42#pullrequestreview-7001","submitted_at":"2026-04-20T12:11:00Z","user":{"id":1002,"login":"reviewer","type":"User"}},"repository":{"name":"octo-repo","full_name":"octo-org/octo-repo","owner":{"id":2001,"login":"octo-org","type":"Organization"}},"sender":{"id":1002,"login":"reviewer","type":"User"},"installation":{"id":3001}}'''
+expect_type = "event"
+expect_kind = "pull_request_review"
+expect_signature_state = "verified"
+expect_payload_contains = { provider = "github", event = "pull_request_review", action = "submitted", pull_request = { number = 42 }, review = { id = 7001, state = "approved" } }
+expect_event_count = 1
+
+[[connector_contract.fixtures]]
+provider = "github"
+name = "push webhook"
+kind = "webhook"
+headers = { "X-GitHub-Event" = "push", "X-GitHub-Delivery" = "delivery-contract-push", "X-Hub-Signature-256" = "sha256=3b7ce87af63d0fd77a5b3a19f9cea4cbfc82794166fea17aa8ade634c0ed2108", "content-type" = "application/json" }
+metadata = { signing_secret = "test-signing-secret" }
+body = '''{"ref":"refs/heads/main","before":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","after":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","head_commit":{"id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","message":"Update fixture","timestamp":"2026-04-20T13:00:00Z"},"commits":[{"id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","message":"Update fixture","timestamp":"2026-04-20T13:00:00Z"}],"distinct_size":1,"pusher":{"name":"octocat","email":"octocat@example.test"},"repository":{"name":"octo-repo","full_name":"octo-org/octo-repo","owner":{"id":2001,"login":"octo-org","type":"Organization"},"pushed_at":"2026-04-20T13:00:00Z"},"sender":{"id":1001,"login":"octocat","type":"User"},"installation":{"id":3001}}'''
+expect_type = "event"
+expect_kind = "push"
+expect_signature_state = "verified"
+expect_payload_contains = { provider = "github", event = "push", distinct_size = 1 }
+expect_event_count = 1
+
+[[connector_contract.fixtures]]
+provider = "github"
+name = "workflow run completed webhook"
+kind = "webhook"
+headers = { "X-GitHub-Event" = "workflow_run", "X-GitHub-Delivery" = "delivery-contract-workflow", "X-Hub-Signature-256" = "sha256=24119c9f6faf40ae6802ce4efd0fb63d026d3eb871f63f4bac54fc2c4eb7696c", "content-type" = "application/json" }
+metadata = { signing_secret = "test-signing-secret" }
+body = '''{"action":"completed","workflow_run":{"id":6001,"name":"Harn CI","status":"completed","conclusion":"success","html_url":"https://github.com/octo-org/octo-repo/actions/runs/6001","run_started_at":"2026-04-20T16:00:00Z","created_at":"2026-04-20T16:00:00Z","updated_at":"2026-04-20T16:04:00Z"},"repository":{"name":"octo-repo","full_name":"octo-org/octo-repo","owner":{"id":2001,"login":"octo-org","type":"Organization"}},"sender":{"id":1001,"login":"octocat","type":"User"},"installation":{"id":3001}}'''
+expect_type = "event"
+expect_kind = "workflow_run"
+expect_signature_state = "verified"
+expect_payload_contains = { provider = "github", event = "workflow_run", action = "completed", workflow_run = { id = 6001, conclusion = "success" } }
+expect_event_count = 1
+
+[[connector_contract.fixtures]]
+provider = "github"
+name = "deployment status created webhook"
+kind = "webhook"
+headers = { "X-GitHub-Event" = "deployment_status", "X-GitHub-Delivery" = "delivery-contract-deployment", "X-Hub-Signature-256" = "sha256=1e3f77c1cc99c58bb4a94d95f9523d2efd43ba958b9f86fcfc34663d0b1bd560", "content-type" = "application/json" }
+metadata = { signing_secret = "test-signing-secret" }
+body = '''{"action":"created","deployment":{"id":5001,"environment":"staging","created_at":"2026-04-20T17:00:00Z"},"deployment_status":{"id":5002,"state":"in_progress","target_url":"https://deployments.example.test/octo-repo/5002","created_at":"2026-04-20T17:01:00Z","updated_at":"2026-04-20T17:01:00Z"},"repository":{"name":"octo-repo","full_name":"octo-org/octo-repo","owner":{"id":2001,"login":"octo-org","type":"Organization"}},"sender":{"id":1001,"login":"octocat","type":"User"},"installation":{"id":3001}}'''
+expect_type = "event"
+expect_kind = "deployment_status"
+expect_signature_state = "verified"
+expect_payload_contains = { provider = "github", event = "deployment_status", action = "created", deployment = { id = 5001, environment = "staging" }, deployment_status = { id = 5002, state = "in_progress" } }
+expect_event_count = 1
+
+[[connector_contract.fixtures]]
+provider = "github"
+name = "check run completed webhook"
+kind = "webhook"
+headers = { "X-GitHub-Event" = "check_run", "X-GitHub-Delivery" = "delivery-contract-check-run", "X-Hub-Signature-256" = "sha256=38924f1ae5997b3b06c5bfab26494a59df0472dce44711f273406d8abf7b5cca", "content-type" = "application/json" }
+metadata = { signing_secret = "test-signing-secret" }
+body = '''{"action":"completed","check_run":{"id":8001,"name":"Harn CI","status":"completed","conclusion":"success","html_url":"https://github.com/octo-org/octo-repo/runs/8001","started_at":"2026-04-20T16:00:00Z","completed_at":"2026-04-20T16:03:00Z"},"repository":{"name":"octo-repo","full_name":"octo-org/octo-repo","owner":{"id":2001,"login":"octo-org","type":"Organization"}},"sender":{"id":1001,"login":"octocat","type":"User"},"installation":{"id":3001}}'''
+expect_type = "event"
+expect_kind = "check_run"
+expect_signature_state = "verified"
+expect_payload_contains = { provider = "github", event = "check_run", action = "completed", check_run = { id = 8001, conclusion = "success" } }
+expect_event_count = 1
+
+[[connector_contract.fixtures]]
+provider = "github"
+name = "invalid signature reject"
+kind = "webhook"
+headers = { "X-GitHub-Event" = "issues", "X-GitHub-Delivery" = "delivery-contract-invalid", "X-Hub-Signature-256" = "sha256=0000000000000000000000000000000000000000000000000000000000000000", "content-type" = "application/json" }
+metadata = { signing_secret = "test-signing-secret" }
+body = '''{"action":"opened","issue":{"number":7,"title":"Connector fixture issue","state":"open","html_url":"https://github.com/octo-org/octo-repo/issues/7","created_at":"2026-04-20T14:00:00Z","updated_at":"2026-04-20T14:00:00Z","user":{"id":1001,"login":"octocat","type":"User"}},"repository":{"name":"octo-repo","full_name":"octo-org/octo-repo","owner":{"id":2001,"login":"octo-org","type":"Organization"}},"sender":{"id":1001,"login":"octocat","type":"User"},"installation":{"id":3001}}'''
+expect_type = "reject"
+expect_event_count = 0
+
 # Harn-side package dependencies live here. This package currently has none.
 [dependencies]

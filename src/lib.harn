@@ -17,6 +17,17 @@ let GITHUB_OUTBOUND_METHODS = [
   "graphql",
 ]
 
+let GITHUB_WEBHOOK_EVENTS = [
+  "issues",
+  "pull_request",
+  "issue_comment",
+  "pull_request_review",
+  "push",
+  "workflow_run",
+  "deployment_status",
+  "check_run",
+]
+
 let TOKEN_CACHE_KEY = "harn-github-connector.token_cache"
 
 let DEFAULT_TOKEN_REFRESH_SKEW_SECONDS = 300
@@ -43,26 +54,23 @@ pub fn payload_schema() {
     harn_schema_name: "GitHubEventPayload",
     json_schema: {
     type: "object",
-    required: ["event_type", "resource_id", "actor", "occurred_at", "repo", "raw"],
+    required: ["event", "raw"],
     additionalProperties: true,
     properties: {
-    event_type: {type: "string"},
-    resource_id: {type: "string"},
-    actor: {
-    type: "object",
-    required: ["id", "login", "type"],
-    properties: {id: {}, login: {type: "string"}, type: {type: "string"}},
-  },
-    occurred_at: {type: ["string", "integer", "number", "null"]},
-    repo: {
-    type: "object",
-    required: ["owner", "name", "full_name"],
-    properties: {owner: {type: "string"}, name: {type: "string"}, full_name: {type: "string"}},
-  },
+    event: {type: "string"},
     action: {type: ["string", "null"]},
     delivery_id: {type: ["string", "null"]},
     installation_id: {type: ["integer", "null"]},
     raw: {type: "object"},
+    issue: {type: ["object", "null"]},
+    pull_request: {type: ["object", "null"]},
+    comment: {type: ["object", "null"]},
+    review: {type: ["object", "null"]},
+    commits: {type: ["array", "null"]},
+    workflow_run: {type: ["object", "null"]},
+    deployment_status: {type: ["object", "null"]},
+    deployment: {type: ["object", "null"]},
+    check_run: {type: ["object", "null"]},
   },
   },
   }
@@ -125,7 +133,7 @@ pub fn normalize_inbound(raw) {
   if event_kind == nil || event_kind == "" {
     return __reject(400, "missing_event", "missing x-github-event header")
   }
-  if !contains(["pull_request", "push", "issues", "issue_comment", "check_run"], event_kind) {
+  if !contains(GITHUB_WEBHOOK_EVENTS, event_kind) {
     return __reject(400, "unsupported_event", "unsupported GitHub event type `" + to_string(event_kind) + "`")
   }
   let event = __build_event(event_kind, payload, raw, headers)
@@ -348,6 +356,9 @@ fn __signing_secret(raw) {
   let direct = raw?.signing_secret ?? raw?.secret ?? raw?.webhook_secret
     ?? raw?.config?.signing_secret
     ?? raw?.secrets?.signing_secret
+    ?? raw?.metadata?.signing_secret
+    ?? raw?.metadata?.secrets?.signing_secret
+    ?? raw?.metadata?.config?.signing_secret
   if direct != nil && trim(to_string(direct)) != "" {
     return to_string(direct)
   }
@@ -392,98 +403,15 @@ fn __verify_github_signature(raw, headers, body_text) {
 
 @complexity(allow)
 fn __build_event(event_kind, payload, raw, headers) {
-  let action = payload?.action
-  let event_type = if action == nil || action == "" {
-    event_kind
-  } else {
-    event_kind + "." + action
-  }
   let repo = __repo(payload)
-  let actor = __actor(payload)
   let occurred_at = __occurred_at(event_kind, payload, raw)
   let delivery_id = __header(headers, "x-github-delivery")
-  let installation_id = payload?.installation?.id
-  let common = {
-    event_type: event_type,
-    resource_id: "",
-    actor: actor,
-    occurred_at: occurred_at,
-    repo: repo,
-    action: action,
-    delivery_id: delivery_id,
-    installation_id: installation_id,
-    raw: payload,
-  }
-  let event_payload = if event_kind == "pull_request" {
-    let pr = payload?.pull_request ?? {}
-    common
-    + {
-    resource_id: repo.full_name + "/" + to_string(pr?.number ?? ""),
-    pull_request: pr,
-    number: pr?.number,
-    title: pr?.title,
-    state: pr?.state,
-    html_url: pr?.html_url,
-  }
-  } else {
-    if event_kind == "push" {
-      common
-    + {
-    resource_id: repo.full_name + "/" + to_string(payload?.ref ?? ""),
-    ref: payload?.ref,
-    before: payload?.before,
-    after: payload?.after,
-    head_commit: payload?.head_commit,
-    commits: payload?.commits ?? [],
-    distinct_size: payload?.distinct_size ?? len(payload?.commits ?? []),
-    pusher: payload?.pusher,
-  }
-    } else {
-      if event_kind == "issues" {
-        let issue = payload?.issue ?? {}
-        common
-    + {
-    resource_id: repo.full_name + "/" + to_string(issue?.number ?? ""),
-    issue: issue,
-    number: issue?.number,
-    title: issue?.title,
-    state: issue?.state,
-    html_url: issue?.html_url,
-  }
-      } else {
-        if event_kind == "issue_comment" {
-          let issue = payload?.issue ?? {}
-          let comment = payload?.comment ?? {}
-          common
-    + {
-    resource_id: repo.full_name + "/" + to_string(issue?.number ?? "") + "#comment-"
-    + to_string(comment?.id ?? ""),
-    issue: issue,
-    comment: comment,
-    number: issue?.number,
-    html_url: comment?.html_url,
-  }
-        } else {
-          let check_run = payload?.check_run ?? {}
-          common
-    + {
-    resource_id: repo.full_name + "/check-runs/" + to_string(check_run?.id ?? ""),
-    check_run: check_run,
-    name: check_run?.name,
-    status: check_run?.status,
-    conclusion: check_run?.conclusion,
-    html_url: check_run?.html_url,
-  }
-        }
-      }
-    }
-  }
   return {
-    kind: event_type,
+    kind: event_kind,
     occurred_at: occurred_at,
     dedupe_key: __dedupe_key(event_kind, payload, repo, delivery_id),
-    signature_status: "verified",
-    payload: event_payload,
+    signature_status: {state: "verified"},
+    payload: payload,
     headers: {["x-github-event"]: event_kind, ["x-github-delivery"]: delivery_id},
   }
 }
@@ -502,7 +430,10 @@ fn __dedupe_key(event_kind, payload, repo, delivery_id) {
   }
   let action = payload?.action ?? ""
   let resource_id = to_string(
-    payload?.pull_request?.id ?? payload?.issue?.id ?? payload?.comment?.id ?? payload?.check_run?.id
+    payload?.pull_request?.id ?? payload?.issue?.id ?? payload?.comment?.id ?? payload?.review?.id
+    ?? payload?.workflow_run?.id
+    ?? payload?.deployment_status?.id
+    ?? payload?.check_run?.id
     ?? "",
   )
   return "github:" + event_kind + ":" + repo_part + ":" + to_string(action) + ":" + resource_id
@@ -511,16 +442,9 @@ fn __dedupe_key(event_kind, payload, repo, delivery_id) {
 fn __repo(payload) {
   let repo = payload?.repository ?? {}
   let owner = repo?.owner ?? {}
-  return {
-    owner: owner?.login ?? owner?.name ?? "",
-    name: repo?.name ?? "",
-    full_name: repo?.full_name ?? (owner?.login ?? owner?.name ?? "" + "/" + repo?.name ?? ""),
-  }
-}
-
-fn __actor(payload) {
-  let sender = payload?.sender ?? {}
-  return {id: sender?.id, login: sender?.login ?? "", type: sender?.type ?? ""}
+  let owner_name = owner?.login ?? owner?.name ?? ""
+  let repo_name = repo?.name ?? ""
+  return {owner: owner_name, name: repo_name, full_name: repo?.full_name ?? owner_name + "/" + repo_name}
 }
 
 fn __occurred_at(event_kind, payload, raw) {
@@ -538,6 +462,19 @@ fn __occurred_at(event_kind, payload, raw) {
   }
   if event_kind == "issue_comment" {
     return payload?.comment?.updated_at ?? payload?.comment?.created_at
+  }
+  if event_kind == "pull_request_review" {
+    return payload?.review?.submitted_at ?? payload?.review?.updated_at
+      ?? payload?.pull_request?.updated_at
+      ?? payload?.pull_request?.created_at
+  }
+  if event_kind == "workflow_run" {
+    return payload?.workflow_run?.updated_at ?? payload?.workflow_run?.created_at
+      ?? payload?.workflow_run?.run_started_at
+  }
+  if event_kind == "deployment_status" {
+    return payload?.deployment_status?.created_at ?? payload?.deployment_status?.updated_at
+      ?? payload?.deployment?.created_at
   }
   return payload?.check_run?.completed_at ?? payload?.check_run?.started_at
     ?? payload?.check_run?.created_at
