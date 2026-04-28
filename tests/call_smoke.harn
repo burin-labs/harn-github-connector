@@ -12,23 +12,23 @@ pipeline default() {
   let comment = call(
     "issues.create_comment",
     {
-    api_base_url: base,
-    installation_token: token,
-    owner: "octo-org",
-    repo: "octo-repo",
-    issue_number: 7,
-    body: "hello",
-  },
+      api_base_url: base,
+      installation_token: token,
+      owner: "octo-org",
+      repo: "octo-repo",
+      issue_number: 7,
+      body: "hello",
+    },
   )
   assert_eq(comment.id, 101, "comment id")
   http_mock(
     "POST",
     base + "/graphql",
     {
-    status: 200,
-    body: "{\"data\":{\"viewer\":{\"login\":\"octocat\"}}}",
-    headers: {["x-ratelimit-remaining"]: "9"},
-  },
+      status: 200,
+      body: "{\"data\":{\"viewer\":{\"login\":\"octocat\"}}}",
+      headers: {["x-ratelimit-remaining"]: "9"},
+    },
   )
   let graph = call(
     "graphql",
@@ -39,21 +39,21 @@ pipeline default() {
     "PATCH",
     base + "/repos/octo-org/octo-repo/issues/7",
     {
-    status: 200,
-    body: "{\"number\":7,\"state\":\"closed\"}",
-    headers: {["x-ratelimit-remaining"]: "8"},
-  },
+      status: 200,
+      body: "{\"number\":7,\"state\":\"closed\"}",
+      headers: {["x-ratelimit-remaining"]: "8"},
+    },
   )
   call(
     "issues.update",
     {
-    api_base_url: base,
-    installation_token: token,
-    owner: "octo-org",
-    repo: "octo-repo",
-    issue_number: 7,
-    state: "closed",
-  },
+      api_base_url: base,
+      installation_token: token,
+      owner: "octo-org",
+      repo: "octo-repo",
+      issue_number: 7,
+      state: "closed",
+    },
   )
   http_mock(
     "POST",
@@ -63,18 +63,58 @@ pipeline default() {
   call(
     "pulls.create_review_comment",
     {
-    api_base_url: base,
-    installation_token: token,
-    owner: "octo-org",
-    repo: "octo-repo",
-    pull_number: 42,
-    body: "line note",
-    commit_id: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-    path: "src/lib.rs",
-    line: 12,
-    side: "RIGHT",
-  },
+      api_base_url: base,
+      installation_token: token,
+      owner: "octo-org",
+      repo: "octo-repo",
+      pull_number: 42,
+      body: "line note",
+      commit_id: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      path: "src/lib.rs",
+      line: 12,
+      side: "RIGHT",
+    },
   )
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/pulls/42",
+    {
+      status: 200,
+      body: "{\"number\":42,\"head\":{\"sha\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}}",
+      headers: {["x-ratelimit-remaining"]: "7"},
+    },
+  )
+  let pull = call(
+    "pulls.get",
+    {
+      api_base_url: base,
+      installation_token: token,
+      owner: "octo-org",
+      repo: "octo-repo",
+      pull_number: 42,
+    },
+  )
+  assert_eq(pull.number, 42, "pulls.get response")
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/pulls/42",
+    {
+      status: 200,
+      body: "diff --git a/src/lib.rs b/src/lib.rs\n+pub fn run() {}\n",
+      headers: {["x-ratelimit-remaining"]: "7"},
+    },
+  )
+  let diff = call(
+    "pulls.get_diff",
+    {
+      api_base_url: base,
+      installation_token: token,
+      owner: "octo-org",
+      repo: "octo-repo",
+      pull_number: 42,
+    },
+  )
+  assert(diff.contains("diff --git"), "pulls.get_diff should return raw diff text")
   http_mock(
     "POST",
     base + "/repos/octo-org/octo-repo/check-runs",
@@ -83,80 +123,80 @@ pipeline default() {
   call(
     "check_runs.create",
     {
-    api_base_url: base,
-    installation_token: token,
-    owner: "octo-org",
-    repo: "octo-repo",
-    name: "Harn CI",
-    head_sha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-    status: "queued",
-  },
+      api_base_url: base,
+      installation_token: token,
+      owner: "octo-org",
+      repo: "octo-repo",
+      name: "Harn CI",
+      head_sha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      status: "queued",
+    },
   )
   http_mock(
     "PATCH",
     base + "/repos/octo-org/octo-repo/check-runs/8001",
     {
-    status: 200,
-    body: "{\"id\":8001,\"status\":\"completed\"}",
-    headers: {["x-ratelimit-remaining"]: "5"},
-  },
+      status: 200,
+      body: "{\"id\":8001,\"status\":\"completed\"}",
+      headers: {["x-ratelimit-remaining"]: "5"},
+    },
   )
   call(
     "check_runs.update",
     {
-    api_base_url: base,
-    installation_token: token,
-    owner: "octo-org",
-    repo: "octo-repo",
-    check_run_id: 8001,
-    status: "completed",
-    conclusion: "success",
-  },
+      api_base_url: base,
+      installation_token: token,
+      owner: "octo-org",
+      repo: "octo-repo",
+      check_run_id: 8001,
+      status: "completed",
+      conclusion: "success",
+    },
   )
   http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/pulls/42/files?per_page=2",
     {
-    responses: [
-    {
-    status: 403,
-    body: "{\"message\":\"rate limited\"}",
-    headers: {["x-ratelimit-remaining"]: "0", ["x-ratelimit-reset"]: to_string(to_int(timestamp()) - 1)},
-  },
-    {status: 200, body: "[{\"filename\":\"src/lib.rs\"}]", headers: {["x-ratelimit-remaining"]: "8"}},
-  ],
-  },
+      responses: [
+        {
+          status: 403,
+          body: "{\"message\":\"rate limited\"}",
+          headers: {["x-ratelimit-remaining"]: "0", ["x-ratelimit-reset"]: to_string(to_int(timestamp()) - 1)},
+        },
+        {status: 200, body: "[{\"filename\":\"src/lib.rs\"}]", headers: {["x-ratelimit-remaining"]: "8"}},
+      ],
+    },
   )
   let files = call(
     "pulls.list_files",
     {
-    api_base_url: base,
-    installation_token: token,
-    owner: "octo-org",
-    repo: "octo-repo",
-    pull_number: 42,
-    per_page: 2,
-  },
+      api_base_url: base,
+      installation_token: token,
+      owner: "octo-org",
+      repo: "octo-repo",
+      pull_number: 42,
+      per_page: 2,
+    },
   )
   assert_eq(files[0].filename, "src/lib.rs", "list files response")
   http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/contents/README.md",
     {
-    status: 403,
-    body: "{\"message\":\"rate limited\"}",
-    headers: {["x-ratelimit-remaining"]: "0", ["x-ratelimit-reset"]: to_string(to_int(timestamp()) + 120)},
-  },
+      status: 403,
+      body: "{\"message\":\"rate limited\"}",
+      headers: {["x-ratelimit-remaining"]: "0", ["x-ratelimit-reset"]: to_string(to_int(timestamp()) + 120)},
+    },
   )
   let capped = call(
     "repos.get_content",
     {
-    api_base_url: base,
-    installation_token: token,
-    owner: "octo-org",
-    repo: "octo-repo",
-    path: "README.md",
-  },
+      api_base_url: base,
+      installation_token: token,
+      owner: "octo-org",
+      repo: "octo-repo",
+      path: "README.md",
+    },
   )
   assert(is_err(capped), "rate-limit cap rejects")
   assert_eq(unwrap_err(capped).code, "rate_limited", "rate-limit cap code")
@@ -171,16 +211,20 @@ pipeline default() {
   assert_eq(json_parse(calls[2].body).state, "closed", "issues.update body")
   assert_eq(calls[3].url, base + "/repos/octo-org/octo-repo/pulls/42/comments", "review comment URL")
   assert_eq(json_parse(calls[3].body).path, "src/lib.rs", "review comment body")
-  assert_eq(calls[4].url, base + "/repos/octo-org/octo-repo/check-runs", "check run create URL")
-  assert_eq(json_parse(calls[4].body).name, "Harn CI", "check run create body")
-  assert_eq(calls[5].url, base + "/repos/octo-org/octo-repo/check-runs/8001", "check run update URL")
-  assert_eq(json_parse(calls[5].body).conclusion, "success", "check run update body")
+  assert_eq(calls[4].url, base + "/repos/octo-org/octo-repo/pulls/42", "pulls.get URL")
+  assert_eq(calls[4].headers.Accept, "application/vnd.github+json", "pulls.get accept header")
+  assert_eq(calls[5].url, base + "/repos/octo-org/octo-repo/pulls/42", "pulls.get_diff URL")
+  assert_eq(calls[5].headers.Accept, "application/vnd.github.v3.diff", "pulls.get_diff accept header")
+  assert_eq(calls[6].url, base + "/repos/octo-org/octo-repo/check-runs", "check run create URL")
+  assert_eq(json_parse(calls[6].body).name, "Harn CI", "check run create body")
+  assert_eq(calls[7].url, base + "/repos/octo-org/octo-repo/check-runs/8001", "check run update URL")
+  assert_eq(json_parse(calls[7].body).conclusion, "success", "check run update body")
   assert_eq(
-    calls[6].url,
+    calls[8].url,
     base + "/repos/octo-org/octo-repo/pulls/42/files?per_page=2",
     "list files URL",
   )
-  assert_eq(calls[7].url, calls[6].url, "rate-limit retry URL")
+  assert_eq(calls[9].url, calls[8].url, "rate-limit retry URL")
   let unsupported = call("issues.lock", {api_base_url: base, installation_token: token})
   assert(is_err(unsupported), "unsupported method rejected")
   assert_eq(unwrap_err(unsupported).code, "method_not_found", "unsupported method code")

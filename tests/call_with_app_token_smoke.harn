@@ -22,19 +22,19 @@ pipeline default() {
     "POST",
     "https://api.github.test/app/installations/77/access_tokens",
     {
-    responses: [
-    {
-    status: 201,
-    body: "{\"token\":\"token-a\",\"expires_at\":\"2023-11-14T23:13:20Z\"}",
-    headers: {["x-ratelimit-remaining"]: "42"},
-  },
-    {
-    status: 201,
-    body: "{\"token\":\"token-b\",\"expires_at\":\"2023-11-14T23:13:20Z\"}",
-    headers: {["x-ratelimit-remaining"]: "42"},
-  },
-  ],
-  },
+      responses: [
+        {
+          status: 201,
+          body: "{\"token\":\"token-a\",\"expires_at\":\"2023-11-14T23:13:20Z\"}",
+          headers: {["x-ratelimit-remaining"]: "42"},
+        },
+        {
+          status: 201,
+          body: "{\"token\":\"token-b\",\"expires_at\":\"2023-11-14T23:13:20Z\"}",
+          headers: {["x-ratelimit-remaining"]: "42"},
+        },
+      ],
+    },
   )
   http_mock(
     "POST",
@@ -50,10 +50,10 @@ pipeline default() {
     "PATCH",
     "https://api.github.test/repos/octo/demo/issues/123",
     {
-    status: 200,
-    body: "{\"number\":123,\"state\":\"closed\"}",
-    headers: {["x-ratelimit-remaining"]: "42"},
-  },
+      status: 200,
+      body: "{\"number\":123,\"state\":\"closed\"}",
+      headers: {["x-ratelimit-remaining"]: "42"},
+    },
   )
   let issue = call(
     "issues.update",
@@ -68,18 +68,40 @@ pipeline default() {
   let review_comment = call(
     "pulls.create_review_comment",
     config(1700000000)
-    + {
-    owner: "octo",
-    repo: "demo",
-    pull_number: 5,
-    body: "nit",
-    commit_id: "abc",
-    path: "src/lib.harn",
-    line: 1,
-    side: "RIGHT",
-  },
+      + {
+      owner: "octo",
+      repo: "demo",
+      pull_number: 5,
+      body: "nit",
+      commit_id: "abc",
+      path: "src/lib.harn",
+      line: 1,
+      side: "RIGHT",
+    },
   )
   assert_eq(review_comment.id, 55, "review comment id")
+  http_mock(
+    "GET",
+    "https://api.github.test/repos/octo/demo/pulls/5",
+    {
+      status: 200,
+      body: "{\"number\":5,\"head\":{\"sha\":\"abc\"}}",
+      headers: {["x-ratelimit-remaining"]: "42"},
+    },
+  )
+  let pull = call("pulls.get", config(1700000000) + {owner: "octo", repo: "demo", pull_number: 5})
+  assert_eq(pull.head.sha, "abc", "pulls.get head sha")
+  http_mock(
+    "GET",
+    "https://api.github.test/repos/octo/demo/pulls/5",
+    {
+      status: 200,
+      body: "diff --git a/src/lib.harn b/src/lib.harn\n+let x = 1\n",
+      headers: {["x-ratelimit-remaining"]: "42"},
+    },
+  )
+  let diff = call("pulls.get_diff", config(1700000000) + {owner: "octo", repo: "demo", pull_number: 5})
+  assert(diff.contains("src/lib.harn"), "pulls.get_diff raw diff")
   http_mock(
     "GET",
     "https://api.github.test/repos/octo/demo/contents/README.md?ref=main",
@@ -97,17 +119,18 @@ pipeline default() {
   )
   let check_run = call(
     "check_runs.create",
-    config(1700000000) + {owner: "octo", repo: "demo", name: "ci", head_sha: "abc", status: "queued"},
+    config(1700000000)
+      + {owner: "octo", repo: "demo", name: "ci", head_sha: "abc", status: "queued"},
   )
   assert_eq(check_run.id, 10, "check_runs.create id")
   http_mock(
     "PATCH",
     "https://api.github.test/repos/octo/demo/check-runs/10",
     {
-    status: 200,
-    body: "{\"id\":10,\"status\":\"completed\"}",
-    headers: {["x-ratelimit-remaining"]: "42"},
-  },
+      status: 200,
+      body: "{\"id\":10,\"status\":\"completed\"}",
+      headers: {["x-ratelimit-remaining"]: "42"},
+    },
   )
   let updated_check = call(
     "check_runs.update",
@@ -118,10 +141,10 @@ pipeline default() {
     "POST",
     "https://api.github.test/graphql",
     {
-    status: 200,
-    body: "{\"data\":{\"viewer\":{\"login\":\"octo\"}}}",
-    headers: {["x-ratelimit-remaining"]: "41"},
-  },
+      status: 200,
+      body: "{\"data\":{\"viewer\":{\"login\":\"octo\"}}}",
+      headers: {["x-ratelimit-remaining"]: "41"},
+    },
   )
   let graph = call("graphql", config(1700000000) + {query: "query { viewer { login } }", variables: {}})
   assert_eq(graph.data.viewer.login, "octo", "graphql viewer login")
@@ -129,11 +152,11 @@ pipeline default() {
     "GET",
     "https://api.github.test/repos/octo/demo/pulls/5/files",
     {
-    responses: [
-    {status: 401, body: "{\"message\":\"bad credentials\"}"},
-    {status: 200, body: "[{\"filename\":\"src/lib.harn\"}]", headers: {["x-ratelimit-remaining"]: "42"}},
-  ],
-  },
+      responses: [
+        {status: 401, body: "{\"message\":\"bad credentials\"}"},
+        {status: 200, body: "[{\"filename\":\"src/lib.harn\"}]", headers: {["x-ratelimit-remaining"]: "42"}},
+      ],
+    },
   )
   let files = call("pulls.list_files", config(1700000000) + {owner: "octo", repo: "demo", pull_number: 5})
   assert_eq(files[0].filename, "src/lib.harn", "list files filename after 401 retry")
