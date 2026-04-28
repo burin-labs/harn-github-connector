@@ -42,13 +42,11 @@ jobs:
 
       - name: Install harn-cli
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          harn_root="${HOME}/.cargo-harn/${{ steps.harn-version.outputs.version }}"
-          if [[ ! -x "${harn_root}/bin/harn" ]]; then
-            cargo install harn-cli --version "${{ steps.harn-version.outputs.version }}" --locked --root "${harn_root}"
-          fi
-          echo "${harn_root}/bin" >> "${GITHUB_PATH}"
+          bash .github/scripts/install-harn.sh "${{ steps.harn-version.outputs.version }}"
 
       - name: Show Harn version
         run: harn --version
