@@ -32,19 +32,19 @@ pipeline default() {
     "POST",
     "https://api.github.test/app/installations/77/access_tokens",
     {
-    responses: [
-    {
-    status: 201,
-    headers: {["x-ratelimit-remaining"]: "42"},
-    body: "{\"token\":\"install-token-a\",\"expires_at\":\"2023-11-14T23:13:20Z\"}",
-  },
-    {
-    status: 201,
-    headers: {["x-ratelimit-remaining"]: "42"},
-    body: "{\"token\":\"install-token-b\",\"expires_at\":\"2023-11-15T00:13:20Z\"}",
-  },
-  ],
-  },
+      responses: [
+        {
+          status: 201,
+          headers: {["x-ratelimit-remaining"]: "42"},
+          body: "{\"token\":\"install-token-a\",\"expires_at\":\"2023-11-14T23:13:20Z\"}",
+        },
+        {
+          status: 201,
+          headers: {["x-ratelimit-remaining"]: "42"},
+          body: "{\"token\":\"install-token-b\",\"expires_at\":\"2023-11-15T00:13:20Z\"}",
+        },
+      ],
+    },
   )
   assert_eq(installation_token(config), "install-token-a")
   assert_eq(installation_token(config), "install-token-a")
@@ -61,10 +61,10 @@ pipeline default() {
     "POST",
     "https://api.github.test/app/installations/77/access_tokens",
     {
-    status: 201,
-    headers: {["x-ratelimit-remaining"]: "42"},
-    body: "{\"token\":\"install-token-locked\",\"expires_at\":\"2023-11-14T23:13:20Z\"}",
-  },
+      status: 201,
+      headers: {["x-ratelimit-remaining"]: "42"},
+      body: "{\"token\":\"install-token-locked\",\"expires_at\":\"2023-11-14T23:13:20Z\"}",
+    },
   )
   let parallel_tokens = parallel 2 { _ ->
     installation_token(config)
