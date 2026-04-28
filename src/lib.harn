@@ -9,7 +9,9 @@ let GITHUB_USER_AGENT = "harn-github-connector"
 let GITHUB_OUTBOUND_METHODS = [
   "issues.create_comment",
   "issues.update",
+  "pulls.get",
   "pulls.create_review_comment",
+  "pulls.get_diff",
   "pulls.list_files",
   "repos.get_content",
   "check_runs.create",
@@ -53,26 +55,26 @@ pub fn payload_schema() {
   return {
     harn_schema_name: "GitHubEventPayload",
     json_schema: {
-    type: "object",
-    required: ["event", "raw"],
-    additionalProperties: true,
-    properties: {
-    event: {type: "string"},
-    action: {type: ["string", "null"]},
-    delivery_id: {type: ["string", "null"]},
-    installation_id: {type: ["integer", "null"]},
-    raw: {type: "object"},
-    issue: {type: ["object", "null"]},
-    pull_request: {type: ["object", "null"]},
-    comment: {type: ["object", "null"]},
-    review: {type: ["object", "null"]},
-    commits: {type: ["array", "null"]},
-    workflow_run: {type: ["object", "null"]},
-    deployment_status: {type: ["object", "null"]},
-    deployment: {type: ["object", "null"]},
-    check_run: {type: ["object", "null"]},
-  },
-  },
+      type: "object",
+      required: ["event", "raw"],
+      additionalProperties: true,
+      properties: {
+        event: {type: "string"},
+        action: {type: ["string", "null"]},
+        delivery_id: {type: ["string", "null"]},
+        installation_id: {type: ["integer", "null"]},
+        raw: {type: "object"},
+        issue: {type: ["object", "null"]},
+        pull_request: {type: ["object", "null"]},
+        comment: {type: ["object", "null"]},
+        review: {type: ["object", "null"]},
+        commits: {type: ["array", "null"]},
+        workflow_run: {type: ["object", "null"]},
+        deployment_status: {type: ["object", "null"]},
+        deployment: {type: ["object", "null"]},
+        check_run: {type: ["object", "null"]},
+      },
+    },
   }
 }
 
@@ -155,10 +157,10 @@ pub fn call(method, args = {}) {
     return __github_json(
       "POST",
       __github_api_url(
-      cfg.api_base_url,
-      "/repos/" + args.owner + "/" + args.repo + "/issues/" + to_string(args.issue_number)
-      + "/comments",
-    ),
+        cfg.api_base_url,
+        "/repos/" + args.owner + "/" + args.repo + "/issues/" + to_string(args.issue_number)
+          + "/comments",
+      ),
       {body: args.body},
       cfg,
     )
@@ -167,10 +169,21 @@ pub fn call(method, args = {}) {
     return __github_json(
       "PATCH",
       __github_api_url(
-      cfg.api_base_url,
-      "/repos/" + args.owner + "/" + args.repo + "/issues/" + to_string(args.issue_number),
-    ),
+        cfg.api_base_url,
+        "/repos/" + args.owner + "/" + args.repo + "/issues/" + to_string(args.issue_number),
+      ),
       __body_without(args, __config_keys() + ["owner", "repo", "issue_number"]),
+      cfg,
+    )
+  }
+  if method == "pulls.get" {
+    return __github_json(
+      "GET",
+      __github_api_url(
+        cfg.api_base_url,
+        "/repos/" + args.owner + "/" + args.repo + "/pulls/" + to_string(args.pull_number),
+      ),
+      nil,
       cfg,
     )
   }
@@ -178,21 +191,34 @@ pub fn call(method, args = {}) {
     return __github_json(
       "POST",
       __github_api_url(
-      cfg.api_base_url,
-      "/repos/" + args.owner + "/" + args.repo + "/pulls/" + to_string(args.pull_number) + "/comments",
-    ),
+        cfg.api_base_url,
+        "/repos/" + args.owner + "/" + args.repo + "/pulls/" + to_string(args.pull_number)
+          + "/comments",
+      ),
       __body_without(args, __config_keys() + ["owner", "repo", "pull_number"]),
       cfg,
+    )
+  }
+  if method == "pulls.get_diff" {
+    return __github_text(
+      "GET",
+      __github_api_url(
+        cfg.api_base_url,
+        "/repos/" + args.owner + "/" + args.repo + "/pulls/" + to_string(args.pull_number),
+      ),
+      cfg,
+      "application/vnd.github.v3.diff",
     )
   }
   if method == "pulls.list_files" {
     return __github_json(
       "GET",
       __github_api_url(
-      cfg.api_base_url,
-      "/repos/" + args.owner + "/" + args.repo + "/pulls/" + to_string(args.pull_number) + "/files"
-      + __pagination_query(args),
-    ),
+        cfg.api_base_url,
+        "/repos/" + args.owner + "/" + args.repo + "/pulls/" + to_string(args.pull_number)
+          + "/files"
+          + __pagination_query(args),
+      ),
       nil,
       cfg,
     )
@@ -201,10 +227,11 @@ pub fn call(method, args = {}) {
     return __github_json(
       "GET",
       __github_api_url(
-      cfg.api_base_url,
-      "/repos/" + args.owner + "/" + args.repo + "/contents/" + __trim_leading_slash(args.path ?? "")
-      + __ref_query(args),
-    ),
+        cfg.api_base_url,
+        "/repos/" + args.owner + "/" + args.repo + "/contents/"
+          + __trim_leading_slash(args.path ?? "")
+          + __ref_query(args),
+      ),
       nil,
       cfg,
     )
@@ -221,9 +248,9 @@ pub fn call(method, args = {}) {
     return __github_json(
       "PATCH",
       __github_api_url(
-      cfg.api_base_url,
-      "/repos/" + args.owner + "/" + args.repo + "/check-runs/" + to_string(args.check_run_id),
-    ),
+        cfg.api_base_url,
+        "/repos/" + args.owner + "/" + args.repo + "/check-runs/" + to_string(args.check_run_id),
+      ),
       __body_without(args, __config_keys() + ["owner", "repo", "check_run_id"]),
       cfg,
     )
@@ -320,10 +347,10 @@ fn __reject(status, code, message) {
   return {
     type: "reject",
     reject: {
-    status: status,
-    body: json_stringify({error: code, message: message}),
-    content_type: "application/json",
-  },
+      status: status,
+      body: json_stringify({error: code, message: message}),
+      content_type: "application/json",
+    },
   }
 }
 
@@ -431,10 +458,10 @@ fn __dedupe_key(event_kind, payload, repo, delivery_id) {
   let action = payload?.action ?? ""
   let resource_id = to_string(
     payload?.pull_request?.id ?? payload?.issue?.id ?? payload?.comment?.id ?? payload?.review?.id
-    ?? payload?.workflow_run?.id
-    ?? payload?.deployment_status?.id
-    ?? payload?.check_run?.id
-    ?? "",
+      ?? payload?.workflow_run?.id
+      ?? payload?.deployment_status?.id
+      ?? payload?.check_run?.id
+      ?? "",
   )
   return "github:" + event_kind + ":" + repo_part + ":" + to_string(action) + ":" + resource_id
 }
@@ -488,11 +515,11 @@ fn __outbound_config(args) {
   if direct_token != nil && trim(to_string(direct_token)) != "" {
     return Ok(
       {
-      api_base_url: to_string(api_base_url),
-      installation_token: to_string(direct_token),
-      token_mode: "direct",
-      installation_id: args?.installation_id,
-    },
+        api_base_url: to_string(api_base_url),
+        installation_token: to_string(direct_token),
+        token_mode: "direct",
+        installation_id: args?.installation_id,
+      },
     )
   }
   let app_id = args?.app_id ?? env("GITHUB_APP_ID")
@@ -596,17 +623,26 @@ fn __ref_query(args) {
 
 @complexity(allow)
 fn __github_json(method, url, body, cfg) {
+  return __github_request(method, url, body, cfg, "application/vnd.github+json", true)
+}
+
+fn __github_text(method, url, cfg, accept) {
+  return __github_request(method, url, nil, cfg, accept, false)
+}
+
+@complexity(allow)
+fn __github_request(method, url, body, cfg, accept, parse_json) {
   var current_token = cfg.installation_token
   var retried_rate_limit = false
   var retried_auth = false
   while true {
     var options = {
       headers: {
-      Accept: "application/vnd.github+json",
-      ["X-GitHub-Api-Version"]: GITHUB_API_VERSION,
-      ["User-Agent"]: GITHUB_USER_AGENT,
-      Authorization: "Bearer " + current_token,
-    },
+        Accept: accept,
+        ["X-GitHub-Api-Version"]: GITHUB_API_VERSION,
+        ["User-Agent"]: GITHUB_USER_AGENT,
+        Authorization: "Bearer " + current_token,
+      },
       retry: {max: 0, backoff_ms: 0},
     }
     if body != nil {
@@ -656,6 +692,9 @@ fn __github_json(method, url, body, cfg) {
     if trim(response.body ?? "") == "" {
       return {status: response.status, headers: response.headers, body: ""}
     }
+    if !parse_json {
+      return response.body
+    }
     let parsed = try {
       json_parse(response.body)
     }
@@ -704,18 +743,18 @@ fn __resolve_token_config(config) {
   }
   return Ok(
     {
-    api_base_url: to_string(api_base_url),
-    app_id: app_id,
-    installation_id: installation_id,
-    private_key_pem: config?.private_key_pem,
-    private_key_secret: config?.private_key_secret,
-    jwt_alg: config?.jwt_alg ?? "RS256",
-    jwt_backdate_seconds: config?.jwt_backdate_seconds ?? DEFAULT_JWT_BACKDATE_SECONDS,
-    jwt_ttl_seconds: config?.jwt_ttl_seconds ?? DEFAULT_JWT_TTL_SECONDS,
-    token_refresh_skew_seconds: config?.token_refresh_skew_seconds ?? DEFAULT_TOKEN_REFRESH_SKEW_SECONDS,
-    now: config?.now,
-    timeout_ms: config?.timeout_ms,
-  },
+      api_base_url: to_string(api_base_url),
+      app_id: app_id,
+      installation_id: installation_id,
+      private_key_pem: config?.private_key_pem,
+      private_key_secret: config?.private_key_secret,
+      jwt_alg: config?.jwt_alg ?? "RS256",
+      jwt_backdate_seconds: config?.jwt_backdate_seconds ?? DEFAULT_JWT_BACKDATE_SECONDS,
+      jwt_ttl_seconds: config?.jwt_ttl_seconds ?? DEFAULT_JWT_TTL_SECONDS,
+      token_refresh_skew_seconds: config?.token_refresh_skew_seconds ?? DEFAULT_TOKEN_REFRESH_SKEW_SECONDS,
+      now: config?.now,
+      timeout_ms: config?.timeout_ms,
+    },
   )
 }
 
@@ -755,21 +794,21 @@ fn __exchange_installation_token(config) {
   )
   let response_result = try {
     http_request(
-    "POST",
-    url,
-    {
-    headers: {
-    Accept: "application/vnd.github+json",
-    ["X-GitHub-Api-Version"]: GITHUB_API_VERSION,
-    ["User-Agent"]: GITHUB_USER_AGENT,
-    Authorization: "Bearer " + jwt,
-    ["Content-Type"]: "application/json",
-  },
-    body: "",
-    timeout_ms: config?.timeout_ms ?? 30000,
-    retry: {max: 0, backoff_ms: 0},
-  },
-  )
+      "POST",
+      url,
+      {
+        headers: {
+          Accept: "application/vnd.github+json",
+          ["X-GitHub-Api-Version"]: GITHUB_API_VERSION,
+          ["User-Agent"]: GITHUB_USER_AGENT,
+          Authorization: "Bearer " + jwt,
+          ["Content-Type"]: "application/json",
+        },
+        body: "",
+        timeout_ms: config?.timeout_ms ?? 30000,
+        retry: {max: 0, backoff_ms: 0},
+      },
+    )
   }
   if is_err(response_result) {
     return __err("transport", to_string(unwrap_err(response_result)))
@@ -779,7 +818,7 @@ fn __exchange_installation_token(config) {
     return __err(
       "installation_token_failed",
       "failed to create GitHub installation token (" + to_string(response.status) + "): "
-      + response.body ?? "",
+        + response.body ?? "",
     )
   }
   let parsed = try {

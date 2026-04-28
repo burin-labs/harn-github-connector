@@ -84,7 +84,8 @@ Required GitHub App permissions depend on the outbound method:
 
 - `issues.create_comment`, `issues.update`: Issues read/write, or Pull requests
   read/write when commenting on pull requests.
-- `pulls.create_review_comment`, `pulls.list_files`: Pull requests read/write.
+- `pulls.get`, `pulls.get_diff`, `pulls.list_files`: Pull requests read.
+- `pulls.create_review_comment`: Pull requests write.
 - `repos.get_content`: Contents read.
 - `check_runs.create`, `check_runs.update`: Checks read/write.
 - `graphql`: the installed app must have the permissions required by the query
