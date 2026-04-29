@@ -1,8 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.1.0 - 2026-04-29
 
-- Implement the pure-Harn GitHub connector v0 surface for webhook normalization and outbound calls.
-- Pin local and CI verification to `harn-cli` 0.7.30 from crates.io.
-- Document the GitHub App JWT signing gap; token rotation remains gated on upstream issue
-  [harn#453](https://github.com/burin-labs/harn/issues/453).
+- Ship the first production-ready pure-Harn GitHub connector release.
+- Implement connector contract v1 exports, NormalizeResult v1 webhook
+  normalization, and deterministic connector fixtures for supported GitHub
+  webhook events.
+- Implement outbound GitHub REST/GraphQL methods with direct installation-token
+  support and GitHub App JWT installation-token rotation.
+- Support managed-ingress webhook secret aliases through Harn `secret_get`.
+- Pin local and CI verification to the published `harn-cli` 0.7.48 release.

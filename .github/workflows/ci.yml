@@ -69,7 +69,7 @@ jobs:
           done
 
       - name: Connector contract
-        run: harn connector check .
+        run: harn connector check . --provider github
 
       - name: Package install smoke
         shell: bash

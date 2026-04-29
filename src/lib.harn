@@ -398,14 +398,89 @@ fn __signing_secret(raw) {
   let binding_id = raw?.metadata?.binding_id ?? raw?.binding_id
   if binding_id != nil {
     let binding = bindings.get(binding_id)
-    return binding?.signing_secret ?? binding?.secrets?.signing_secret ?? binding?.config?.signing_secret
+    let binding_secret = binding?.signing_secret ?? binding?.secrets?.signing_secret ?? binding?.config?.signing_secret
+    if binding_secret != nil && trim(to_string(binding_secret)) != "" {
+      return to_string(binding_secret)
+    }
   }
   let values = bindings.values()
   if len(values) == 1 {
     let binding = values[0]
-    return binding?.signing_secret ?? binding?.secrets?.signing_secret ?? binding?.config?.signing_secret
+    let binding_secret = binding?.signing_secret ?? binding?.secrets?.signing_secret ?? binding?.config?.signing_secret
+    if binding_secret != nil && trim(to_string(binding_secret)) != "" {
+      return to_string(binding_secret)
+    }
+  }
+  let secret_id = __signing_secret_id(raw)
+  let secret = __secret_get_optional(secret_id)
+  if secret != nil && trim(to_string(secret)) != "" {
+    return secret
   }
   return nil
+}
+
+fn __signing_secret_id(raw) {
+  let metadata = raw?.metadata ?? {}
+  let id = raw?.signing_secret_id ?? raw?.signing_secret_secret
+    ?? raw?.config?.signing_secret_id
+    ?? raw?.config?.signing_secret_secret
+    ?? raw?.secrets?.signing_secret_id
+    ?? metadata?.signing_secret_id
+    ?? metadata?.signing_secret_secret
+    ?? metadata?.secret_ids?.signing_secret
+    ?? metadata?.config?.secret_ids?.signing_secret
+  let direct_id = __secret_id_candidate(id, "signing_secret")
+  if direct_id != nil {
+    return direct_id
+  }
+  let bindings = __state()?.bindings ?? {}
+  let binding_id = metadata?.binding_id ?? raw?.binding_id
+  if binding_id != nil {
+    let binding = bindings.get(binding_id)
+    return __binding_signing_secret_id(binding)
+  }
+  let values = bindings.values()
+  if len(values) == 1 {
+    return __binding_signing_secret_id(values[0])
+  }
+  return nil
+}
+
+fn __binding_signing_secret_id(binding) {
+  let id = binding?.signing_secret_id ?? binding?.signing_secret_secret
+    ?? binding?.secrets?.signing_secret_id
+    ?? binding?.config?.signing_secret_id
+    ?? binding?.config?.signing_secret_secret
+    ?? binding?.config?.secret_ids?.signing_secret
+    ?? binding?.config?.secrets?.signing_secret
+  return __secret_id_candidate(id, "signing_secret")
+}
+
+fn __secret_id_candidate(value, fallback_name) {
+  if value == nil || trim(to_string(value)) == "" {
+    return nil
+  }
+  let text = trim(to_string(value))
+  if contains(text, "/") {
+    return text
+  }
+  if fallback_name != nil && trim(to_string(fallback_name)) != "" {
+    return GITHUB_PROVIDER_ID + "/" + to_string(fallback_name)
+  }
+  return nil
+}
+
+fn __secret_get_optional(secret_id) {
+  if secret_id == nil || trim(to_string(secret_id)) == "" {
+    return nil
+  }
+  let resolved = try {
+    secret_get(to_string(secret_id))
+  }
+  if is_err(resolved) {
+    return nil
+  }
+  return to_string(unwrap(resolved))
 }
 
 fn __verify_github_signature(raw, headers, body_text) {
