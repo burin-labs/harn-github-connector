@@ -199,6 +199,27 @@ printf 'import "harn-github-connector/default"\n' > smoke.harn
 harn check smoke.harn
 ```
 
+## Release process
+
+Release validation is tag-driven. Before tagging, update `[package].version` in
+`harn.toml` and add a matching `CHANGELOG.md` heading, then run:
+
+```sh
+scripts/check-release.sh vX.Y.Z
+```
+
+After the release PR lands on `main`, create and push the tag:
+
+```sh
+git tag vX.Y.Z
+git push origin vX.Y.Z
+```
+
+The Release workflow verifies that the tag, manifest version, and changelog
+heading match, reruns the Harn connector gate, performs a clean consumer
+install/import smoke, and creates or updates the GitHub Release from the
+matching changelog section.
+
 ## License
 
 Dual-licensed under MIT and Apache-2.0.
