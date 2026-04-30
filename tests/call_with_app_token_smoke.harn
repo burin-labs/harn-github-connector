@@ -161,7 +161,7 @@ pipeline default() {
   let files = call("pulls.list_files", config(1700000000) + {owner: "octo", repo: "demo", pull_number: 5})
   assert_eq(files[0].filename, "src/lib.harn", "list files filename after 401 retry")
   let calls = http_mock_calls()
-  assert_eq(calls[1].headers.Authorization, "Bearer token-a", "first request bearer token")
+  assert_eq(calls[1].headers.authorization, "[redacted]", "first request bearer token is redacted")
   let comment_body = json_parse(calls[1].body)
   assert_eq(comment_body.body, "hello", "issues.create_comment body")
   reset_token_cache()
