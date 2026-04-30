@@ -11,16 +11,16 @@ on:
 permissions:
   contents: read
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   harn:
     name: Harn
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: actions/checkout@v6
 
       - name: Read Harn version
         id: harn-version
@@ -30,26 +30,26 @@ jobs:
           version="$(tr -d '[:space:]' < .harn-version)"
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
 
-      - name: Cache harn-cli
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo-harn/${{ steps.harn-version.outputs.version }}
-          key: harn-cli-${{ runner.os }}-${{ steps.harn-version.outputs.version }}-${{ hashFiles('.harn-version') }}
-          restore-keys: |
-            harn-cli-${{ runner.os }}-${{ steps.harn-version.outputs.version }}-
-
       - name: Install harn-cli
         shell: bash
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          bash .github/scripts/install-harn.sh "${{ steps.harn-version.outputs.version }}"
+          version="${{ steps.harn-version.outputs.version }}"
+          harn_root="${HOME}/.harn-cli/${version}"
+          if [[ ! -x "${harn_root}/bin/harn" ]]; then
+            mkdir -p "${harn_root}/bin"
+            curl -fsSL \
+              -o "${RUNNER_TEMP}/harn.tar.gz" \
+              "https://github.com/burin-labs/harn/releases/download/v${version}/harn-x86_64-unknown-linux-gnu.tar.gz"
+            tar -xzf "${RUNNER_TEMP}/harn.tar.gz" -C "${harn_root}/bin"
+          fi
+          echo "${harn_root}/bin" >> "${GITHUB_PATH}"
 
       - name: Show Harn version
         run: harn --version
+
+      - name: Install Harn dependencies
+        run: harn install
 
       - name: Check
         run: harn check src
@@ -69,7 +69,7 @@ jobs:
           done
 
       - name: Connector contract
-        run: harn connector check . --provider github
+        run: harn connector check .
 
       - name: Package install smoke
         shell: bash
