@@ -8,12 +8,22 @@ let GITHUB_USER_AGENT = "harn-github-connector"
 
 let GITHUB_OUTBOUND_METHODS = [
   "issues.create_comment",
+  "issues.create",
+  "issues.create_with_template",
   "issues.update",
+  "issues.add_labels",
+  "pulls.list",
+  "pulls.list_with_checks",
   "pulls.get",
+  "pulls.merge",
+  "pulls.merge_safe",
   "pulls.create_review_comment",
   "pulls.get_diff",
   "pulls.list_files",
+  "pulls.list_reviews",
   "repos.get_content",
+  "repos.get_branch_protection",
+  "git.delete_ref",
   "check_runs.create",
   "check_runs.update",
   "graphql",
@@ -165,6 +175,17 @@ pub fn call(method, args = {}) {
       cfg,
     )
   }
+  if method == "issues.create" {
+    return __github_json(
+      "POST",
+      __github_api_url(cfg.api_base_url, "/repos/" + args.owner + "/" + args.repo + "/issues"),
+      __body_without(args, __config_keys() + ["owner", "repo"]),
+      cfg,
+    )
+  }
+  if method == "issues.create_with_template" {
+    return __issues_create_with_template(args, cfg)
+  }
   if method == "issues.update" {
     return __github_json(
       "PATCH",
@@ -176,6 +197,32 @@ pub fn call(method, args = {}) {
       cfg,
     )
   }
+  if method == "issues.add_labels" {
+    return __github_json(
+      "POST",
+      __github_api_url(
+        cfg.api_base_url,
+        "/repos/" + args.owner + "/" + args.repo + "/issues/" + to_string(args.issue_number)
+          + "/labels",
+      ),
+      {labels: args.labels ?? []},
+      cfg,
+    )
+  }
+  if method == "pulls.list" {
+    return __github_json(
+      "GET",
+      __github_api_url(
+        cfg.api_base_url,
+        "/repos/" + args.owner + "/" + args.repo + "/pulls" + __pulls_list_query(args),
+      ),
+      nil,
+      cfg,
+    )
+  }
+  if method == "pulls.list_with_checks" {
+    return __pulls_list_with_checks(args, cfg)
+  }
   if method == "pulls.get" {
     return __github_json(
       "GET",
@@ -186,6 +233,28 @@ pub fn call(method, args = {}) {
       nil,
       cfg,
     )
+  }
+  if method == "pulls.merge" {
+    let merged = __github_json(
+      "PUT",
+      __github_api_url(
+        cfg.api_base_url,
+        "/repos/" + args.owner + "/" + args.repo + "/pulls/" + to_string(args.pull_number)
+          + "/merge",
+      ),
+      __body_without(
+        args,
+        __config_keys() + ["owner", "repo", "pull_number", "admin_override", "delete_branch"],
+      ),
+      cfg,
+    )
+    if is_err(merged) {
+      return merged
+    }
+    return __merge_annotation(merged, args)
+  }
+  if method == "pulls.merge_safe" {
+    return __pulls_merge_safe(args, cfg)
   }
   if method == "pulls.create_review_comment" {
     return __github_json(
@@ -223,6 +292,19 @@ pub fn call(method, args = {}) {
       cfg,
     )
   }
+  if method == "pulls.list_reviews" {
+    return __github_json(
+      "GET",
+      __github_api_url(
+        cfg.api_base_url,
+        "/repos/" + args.owner + "/" + args.repo + "/pulls/" + to_string(args.pull_number)
+          + "/reviews"
+          + __pagination_query(args),
+      ),
+      nil,
+      cfg,
+    )
+  }
   if method == "repos.get_content" {
     return __github_json(
       "GET",
@@ -231,6 +313,30 @@ pub fn call(method, args = {}) {
         "/repos/" + args.owner + "/" + args.repo + "/contents/"
           + __trim_leading_slash(args.path ?? "")
           + __ref_query(args),
+      ),
+      nil,
+      cfg,
+    )
+  }
+  if method == "repos.get_branch_protection" {
+    return __github_json(
+      "GET",
+      __github_api_url(
+        cfg.api_base_url,
+        "/repos/" + args.owner + "/" + args.repo + "/branches/" + url_encode(to_string(args.branch))
+          + "/protection",
+      ),
+      nil,
+      cfg,
+    )
+  }
+  if method == "git.delete_ref" {
+    return __github_json(
+      "DELETE",
+      __github_api_url(
+        cfg.api_base_url,
+        "/repos/" + args.owner + "/" + args.repo + "/git/refs/"
+          + __trim_leading_slash(args.ref ?? ""),
       ),
       nil,
       cfg,
@@ -259,6 +365,321 @@ pub fn call(method, args = {}) {
     "POST",
     __github_api_url(cfg.api_base_url, "/graphql"),
     {query: args.query, variables: args.variables ?? {}},
+    cfg,
+  )
+}
+
+/** List PRs in the same shape consumed by managed merge_captain. */
+pub fn pulls_list_with_checks(owner, repo, state = "open", limit = 100, options = nil) {
+  let opts = options ?? {}
+  return call("pulls.list_with_checks", opts + {owner: owner, repo: repo, state: state, limit: limit})
+}
+
+/** Merge a PR after checking the base branch protection settings. */
+pub fn pulls_merge_safe(owner, repo, number, options = nil) {
+  let opts = options ?? {}
+  return call("pulls.merge_safe", opts + {owner: owner, repo: repo, pull_number: number})
+}
+
+/** Create an issue from a small title/body template and variables. */
+pub fn issues_create_with_template(owner, repo, template, vars = nil, options = nil) {
+  let opts = options ?? {}
+  return call(
+    "issues.create_with_template",
+    opts + {owner: owner, repo: repo, template: template, vars: vars ?? {}},
+  )
+}
+
+fn __issues_create_with_template(args, cfg) {
+  let template = args?.template ?? {}
+  let title_template = if type_of(template) == "dict" {
+    template?.title ?? args?.title_template ?? args?.title ?? "Merge Captain follow-up"
+  } else {
+    args?.title_template ?? args?.title ?? "Merge Captain follow-up"
+  }
+  let body_template = if type_of(template) == "dict" {
+    template?.body ?? args?.body_template ?? ""
+  } else {
+    to_string(template)
+  }
+  var body = {
+    title: __render_template(title_template, args?.vars ?? {}),
+    body: __render_template(body_template, args?.vars ?? {}),
+  }
+  let labels = args?.labels ?? if type_of(template) == "dict" {
+    template?.labels
+  } else {
+    nil
+  }
+  if labels != nil {
+    body["labels"] = labels
+  }
+  let assignees = args?.assignees ?? if type_of(template) == "dict" {
+    template?.assignees
+  } else {
+    nil
+  }
+  if assignees != nil {
+    body["assignees"] = assignees
+  }
+  let milestone = args?.milestone ?? if type_of(template) == "dict" {
+    template?.milestone
+  } else {
+    nil
+  }
+  if milestone != nil {
+    body["milestone"] = milestone
+  }
+  return __github_json(
+    "POST",
+    __github_api_url(cfg.api_base_url, "/repos/" + args.owner + "/" + args.repo + "/issues"),
+    body,
+    cfg,
+  )
+}
+
+fn __pulls_list_with_checks(args, cfg) {
+  let graph = __github_json(
+    "POST",
+    __github_api_url(cfg.api_base_url, "/graphql"),
+    {
+      query: __pulls_with_checks_query(),
+      variables: {
+        owner: args.owner,
+        repo: args.repo,
+        states: [uppercase(args?.state ?? "OPEN")],
+        limit: min(max(to_int(args?.limit ?? 100) ?? 100, 1), 100),
+        checkLimit: min(max(to_int(args?.check_limit ?? 50) ?? 50, 1), 100),
+      },
+    },
+    cfg,
+  )
+  if is_err(graph) {
+    return graph
+  }
+  let payload = graph
+  if payload?.errors != nil && len(payload.errors) > 0 {
+    return __err("graphql", "github GraphQL returned errors: " + json_stringify(payload.errors))
+  }
+  let nodes = payload?.data?.repository?.pullRequests?.nodes ?? []
+  var pulls = []
+  for node in nodes {
+    pulls = pulls + [__normalize_graphql_pr(node)]
+  }
+  return pulls
+}
+
+fn __pulls_merge_safe(args, cfg) {
+  let pull = __github_json(
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/pulls/" + to_string(args.pull_number),
+    ),
+    nil,
+    cfg,
+  )
+  if is_err(pull) {
+    return pull
+  }
+  let base_branch = pull?.base?.ref ?? args?.base_branch
+  let protection = __github_json(
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/branches/" + url_encode(to_string(base_branch))
+        + "/protection",
+    ),
+    nil,
+    cfg,
+  )
+  let protected = !is_err(protection)
+  if is_err(protection) && !contains(to_string(unwrap_err(protection)?.message ?? ""), "status 404") {
+    return protection
+  }
+  if protected && !(args?.admin_override ?? false) {
+    return __err(
+      "protected_branch_requires_admin_override",
+      "base branch `" + to_string(base_branch)
+        + "` is protected; pass admin_override to merge through it",
+    )
+  }
+  let merged = __github_json(
+    "PUT",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/pulls/" + to_string(args.pull_number) + "/merge",
+    ),
+    __merge_body(args, pull),
+    cfg,
+  )
+  if is_err(merged) {
+    return merged
+  }
+  var result = {
+    pull_request: pull,
+    protected: protected,
+    branch_protection: if protected {
+      protection
+    } else {
+      nil
+    },
+    merge: __merge_annotation(merged, args),
+  }
+  if args?.delete_branch ?? false {
+    let deleted = __delete_pull_head_branch(args, pull, cfg)
+    if is_err(deleted) {
+      return deleted
+    }
+    result["delete_branch"] = deleted
+  }
+  return result
+}
+
+fn __render_template(template, vars) {
+  var rendered = to_string(template ?? "")
+  for entry in (vars ?? {}).entries() {
+    let value = to_string(entry.value ?? "")
+    rendered = rendered.replace("{{" + to_string(entry.key) + "}}", value)
+    rendered = rendered.replace("${" + to_string(entry.key) + "}", value)
+  }
+  return rendered
+}
+
+fn __pulls_with_checks_query() {
+  return """
+query HarnGithubConnectorPullsWithChecks($owner: String!, $repo: String!, $states: [PullRequestState!], $limit: Int!, $checkLimit: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequests(states: $states, first: $limit, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      nodes {
+        number
+        title
+        headRefName
+        baseRefName
+        isDraft
+        mergeStateStatus
+        url
+        statusCheckRollup {
+          contexts(first: $checkLimit) {
+            nodes {
+              __typename
+              ... on CheckRun {
+                name
+                status
+                conclusion
+                detailsUrl
+              }
+              ... on StatusContext {
+                context
+                state
+                targetUrl
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+}
+
+fn __normalize_graphql_pr(node) {
+  return {
+    number: node?.number,
+    title: node?.title ?? "",
+    headRefName: node?.headRefName ?? "",
+    baseRefName: node?.baseRefName ?? "",
+    isDraft: node?.isDraft ?? false,
+    mergeStateStatus: node?.mergeStateStatus ?? "UNKNOWN",
+    statusCheckRollup: __normalize_status_check_rollup(node?.statusCheckRollup),
+    url: node?.url ?? "",
+  }
+}
+
+fn __normalize_status_check_rollup(rollup) {
+  let contexts = rollup?.contexts?.nodes ?? []
+  var checks = []
+  for context in contexts {
+    checks = checks + [__normalize_status_check(context)]
+  }
+  return checks
+}
+
+fn __normalize_status_check(context) {
+  if context?.__typename == "StatusContext" {
+    let state = uppercase(context?.state ?? "")
+    return {
+      name: context?.context ?? "",
+      status: if state == "PENDING" {
+        "IN_PROGRESS"
+      } else {
+        "COMPLETED"
+      },
+      conclusion: __status_context_conclusion(state),
+      detailsUrl: context?.targetUrl,
+    }
+  }
+  return {
+    name: context?.name ?? "",
+    status: context?.status ?? "",
+    conclusion: context?.conclusion,
+    detailsUrl: context?.detailsUrl,
+  }
+}
+
+fn __status_context_conclusion(state) {
+  if state == "SUCCESS" {
+    return "SUCCESS"
+  }
+  if state == "FAILURE" || state == "ERROR" {
+    return state
+  }
+  return nil
+}
+
+fn __merge_body(args, pull) {
+  var body = __body_without(
+    args,
+    __config_keys()
+      + [
+      "owner",
+      "repo",
+      "pull_number",
+      "admin_override",
+      "delete_branch",
+      "base_branch",
+      "check_branch_protection",
+    ],
+  )
+  if body?.sha == nil && pull?.head?.sha != nil {
+    body["sha"] = pull.head.sha
+  }
+  return body
+}
+
+fn __merge_annotation(response, args) {
+  if args?.admin_override ?? false {
+    return response + {admin_override_requested: true}
+  }
+  return response
+}
+
+fn __delete_pull_head_branch(args, pull, cfg) {
+  let head_ref = pull?.head?.ref
+  if head_ref == nil || trim(to_string(head_ref)) == "" {
+    return __err("missing_head_ref", "cannot delete PR branch because pull.head.ref was missing")
+  }
+  let head_repo = pull?.head?.repo
+  let repo_owner = head_repo?.owner?.login ?? args.owner
+  let repo_name = head_repo?.name ?? args.repo
+  return __github_json(
+    "DELETE",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + repo_owner + "/" + repo_name + "/git/refs/heads/" + to_string(head_ref),
+    ),
+    nil,
     cfg,
   )
 }
@@ -679,6 +1100,35 @@ fn __pagination_query(args) {
   var parts = []
   if args?.per_page != nil {
     parts = parts + ["per_page=" + url_encode(to_string(args.per_page))]
+  }
+  if args?.page != nil {
+    parts = parts + ["page=" + url_encode(to_string(args.page))]
+  }
+  if len(parts) == 0 {
+    return ""
+  }
+  return "?" + join(parts, "&")
+}
+
+fn __pulls_list_query(args) {
+  var parts = []
+  if args?.state != nil {
+    parts = parts + ["state=" + url_encode(to_string(args.state))]
+  }
+  if args?.head != nil {
+    parts = parts + ["head=" + url_encode(to_string(args.head))]
+  }
+  if args?.base != nil {
+    parts = parts + ["base=" + url_encode(to_string(args.base))]
+  }
+  if args?.sort != nil {
+    parts = parts + ["sort=" + url_encode(to_string(args.sort))]
+  }
+  if args?.direction != nil {
+    parts = parts + ["direction=" + url_encode(to_string(args.direction))]
+  }
+  if args?.per_page != nil || args?.limit != nil {
+    parts = parts + ["per_page=" + url_encode(to_string(args?.per_page ?? args?.limit))]
   }
   if args?.page != nil {
     parts = parts + ["page=" + url_encode(to_string(args.page))]

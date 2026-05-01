@@ -1,0 +1,256 @@
+import {
+  call,
+  issues_create_with_template,
+  pulls_list_with_checks,
+  pulls_merge_safe,
+} from "../src/lib"
+
+pipeline default() {
+  http_mock_clear()
+  let base = "https://github-api.test"
+  let token = "github-installation-token"
+  let auth = {api_base_url: base, installation_token: token}
+  http_mock(
+    "POST",
+    base + "/graphql",
+    {
+      status: 200,
+      body: json_stringify(
+        {
+          data: {
+            repository: {
+              pullRequests: {
+                nodes: [
+                  {
+                    number: 101,
+                    title: "Ship release notes",
+                    headRefName: "release/notes",
+                    baseRefName: "main",
+                    isDraft: false,
+                    mergeStateStatus: "CLEAN",
+                    url: "https://github.com/octo-org/octo-repo/pull/101",
+                    statusCheckRollup: {
+                      contexts: {
+                        nodes: [
+                          {
+                            __typename: "CheckRun",
+                            name: "Harn CI",
+                            status: "COMPLETED",
+                            conclusion: "SUCCESS",
+                            detailsUrl: "https://github.com/octo-org/octo-repo/actions/runs/1",
+                          },
+                          {
+                            __typename: "StatusContext",
+                            context: "legacy/status",
+                            state: "SUCCESS",
+                            targetUrl: "https://ci.example.test/101",
+                          },
+                        ],
+                      },
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        },
+      ),
+      headers: {["x-ratelimit-remaining"]: "10"},
+    },
+  )
+  let pulls = pulls_list_with_checks("octo-org", "octo-repo", "open", 2, auth)
+  assert_eq(pulls[0].number, 101, "list_with_checks PR number")
+  assert_eq(pulls[0].mergeStateStatus, "CLEAN", "list_with_checks merge state")
+  assert_eq(pulls[0].statusCheckRollup[0].conclusion, "SUCCESS", "check run conclusion")
+  assert_eq(pulls[0].statusCheckRollup[1].status, "COMPLETED", "status context normalized")
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/pulls?state=open&per_page=3",
+    {
+      status: 200,
+      body: json_stringify([{number: 101}, {number: 102}]),
+      headers: {["x-ratelimit-remaining"]: "9"},
+    },
+  )
+  let rest_pulls = call("pulls.list", auth + {owner: "octo-org", repo: "octo-repo", state: "open", limit: 3})
+  assert_eq(len(rest_pulls), 2, "pulls.list response")
+  http_mock(
+    "POST",
+    base + "/repos/octo-org/octo-repo/issues",
+    {
+      status: 201,
+      body: json_stringify({number: 77, title: "Conflict in #101"}),
+      headers: {["x-ratelimit-remaining"]: "8"},
+    },
+  )
+  let issue = issues_create_with_template(
+    "octo-org",
+    "octo-repo",
+    {
+      title: "Conflict in #{{number}}",
+      body: "PR {{number}} needs a human for {{reason}}.",
+      labels: ["merge-captain", "needs-human"],
+    },
+    {number: 101, reason: "semantic conflict"},
+    auth,
+  )
+  assert_eq(issue.number, 77, "template issue number")
+  http_mock(
+    "PATCH",
+    base + "/repos/octo-org/octo-repo/issues/77",
+    {
+      status: 200,
+      body: json_stringify({number: 77, state: "closed"}),
+      headers: {["x-ratelimit-remaining"]: "7"},
+    },
+  )
+  call(
+    "issues.update",
+    auth + {owner: "octo-org", repo: "octo-repo", issue_number: 77, state: "closed"},
+  )
+  http_mock(
+    "POST",
+    base + "/repos/octo-org/octo-repo/issues/77/labels",
+    {
+      status: 200,
+      body: json_stringify([{name: "merge-captain"}]),
+      headers: {["x-ratelimit-remaining"]: "6"},
+    },
+  )
+  let labels = call(
+    "issues.add_labels",
+    auth + {owner: "octo-org", repo: "octo-repo", issue_number: 77, labels: ["merge-captain"]},
+  )
+  assert_eq(labels[0].name, "merge-captain", "add labels response")
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/branches/develop/protection",
+    {
+      status: 200,
+      body: json_stringify({required_status_checks: {strict: true}}),
+      headers: {["x-ratelimit-remaining"]: "5"},
+    },
+  )
+  let protection = call(
+    "repos.get_branch_protection",
+    auth + {owner: "octo-org", repo: "octo-repo", branch: "develop"},
+  )
+  assert(protection.required_status_checks.strict, "branch protection response")
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/pulls/101/files?per_page=2",
+    {
+      status: 200,
+      body: json_stringify([{filename: "src/lib.harn"}]),
+      headers: {["x-ratelimit-remaining"]: "4"},
+    },
+  )
+  let files = call(
+    "pulls.list_files",
+    auth + {owner: "octo-org", repo: "octo-repo", pull_number: 101, per_page: 2},
+  )
+  assert_eq(files[0].filename, "src/lib.harn", "list files response")
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/pulls/101/reviews?per_page=2",
+    {
+      status: 200,
+      body: json_stringify([{id: 9001, state: "APPROVED"}]),
+      headers: {["x-ratelimit-remaining"]: "3"},
+    },
+  )
+  let reviews = call(
+    "pulls.list_reviews",
+    auth + {owner: "octo-org", repo: "octo-repo", pull_number: 101, per_page: 2},
+  )
+  assert_eq(reviews[0].state, "APPROVED", "list reviews response")
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/pulls/101",
+    {
+      status: 200,
+      body: json_stringify(
+        {
+          number: 101,
+          base: {ref: "main"},
+          head: {
+            sha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ref: "feature/mergeable",
+            repo: {name: "octo-repo", owner: {login: "octo-org"}},
+          },
+        },
+      ),
+      headers: {["x-ratelimit-remaining"]: "2"},
+    },
+  )
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/branches/main/protection",
+    {
+      status: 200,
+      body: json_stringify({required_status_checks: {strict: true}}),
+      headers: {["x-ratelimit-remaining"]: "2"},
+    },
+  )
+  http_mock(
+    "PUT",
+    base + "/repos/octo-org/octo-repo/pulls/101/merge",
+    {
+      status: 200,
+      body: json_stringify({merged: true, message: "Pull Request successfully merged"}),
+      headers: {["x-ratelimit-remaining"]: "2"},
+    },
+  )
+  http_mock(
+    "DELETE",
+    base + "/repos/octo-org/octo-repo/git/refs/heads/feature/mergeable",
+    {status: 204, body: "", headers: {["x-ratelimit-remaining"]: "2"}},
+  )
+  let merged = pulls_merge_safe(
+    "octo-org",
+    "octo-repo",
+    101,
+    auth + {merge_method: "squash", admin_override: true, delete_branch: true},
+  )
+  assert(merged.protected, "merge_safe detected protected branch")
+  assert(merged.merge.merged, "merge_safe merge response")
+  assert(merged.merge.admin_override_requested, "merge_safe admin override annotation")
+  assert_eq(merged.delete_branch.status, 204, "merge_safe deleted branch")
+  http_mock(
+    "PUT",
+    base + "/repos/octo-org/octo-repo/pulls/102/merge",
+    {status: 200, body: json_stringify({merged: true}), headers: {["x-ratelimit-remaining"]: "2"}},
+  )
+  let direct_merge = call(
+    "pulls.merge",
+    auth + {owner: "octo-org", repo: "octo-repo", pull_number: 102, merge_method: "merge"},
+  )
+  assert(direct_merge.merged, "pulls.merge response")
+  let calls = http_mock_calls()
+  assert_eq(calls[0].url, base + "/graphql", "list_with_checks uses GraphQL")
+  assert_eq(json_parse(calls[0].body).variables.limit, 2, "GraphQL limit variable")
+  assert(
+    contains(json_parse(calls[0].body).query, "mergeStateStatus"),
+    "GraphQL query includes merge state",
+  )
+  assert(
+    contains(json_parse(calls[0].body).query, "statusCheckRollup"),
+    "GraphQL query includes checks",
+  )
+  assert_eq(json_parse(calls[2].body).title, "Conflict in #101", "template title rendered")
+  assert_eq(
+    json_parse(calls[2].body).body,
+    "PR 101 needs a human for semantic conflict.",
+    "template body rendered",
+  )
+  assert_eq(json_parse(calls[4].body).labels[0], "merge-captain", "labels request body")
+  assert_eq(json_parse(calls[10].body).merge_method, "squash", "merge_safe merge method")
+  assert_eq(
+    json_parse(calls[10].body).sha,
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "merge_safe expected SHA",
+  )
+  assert_eq(json_parse(calls[12].body).merge_method, "merge", "pulls.merge body")
+  assert_eq(calls[0].headers.authorization, "[redacted]", "authorization header redacted")
+  http_mock_clear()
+}
