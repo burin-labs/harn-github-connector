@@ -76,15 +76,43 @@ Outbound methods:
 | Method | GitHub API |
 |---|---|
 | `issues.create_comment` | `POST /repos/{owner}/{repo}/issues/{issue_number}/comments` |
+| `issues.create` | `POST /repos/{owner}/{repo}/issues` |
+| `issues.create_with_template` | Convenience helper over `issues.create` |
 | `issues.update` | `PATCH /repos/{owner}/{repo}/issues/{issue_number}` |
+| `issues.add_labels` | `POST /repos/{owner}/{repo}/issues/{issue_number}/labels` |
+| `pulls.list` | `GET /repos/{owner}/{repo}/pulls` |
+| `pulls.list_with_checks` | GraphQL `repository.pullRequests` query with `mergeStateStatus` and `statusCheckRollup` |
 | `pulls.get` | `GET /repos/{owner}/{repo}/pulls/{pull_number}` |
+| `pulls.merge` | `PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge` |
+| `pulls.merge_safe` | Convenience helper over branch protection, pull details, merge, and optional branch deletion |
 | `pulls.create_review_comment` | `POST /repos/{owner}/{repo}/pulls/{pull_number}/comments` |
 | `pulls.get_diff` | `GET /repos/{owner}/{repo}/pulls/{pull_number}` with a diff `Accept` header |
 | `pulls.list_files` | `GET /repos/{owner}/{repo}/pulls/{pull_number}/files` |
+| `pulls.list_reviews` | `GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews` |
 | `repos.get_content` | `GET /repos/{owner}/{repo}/contents/{path}` |
+| `repos.get_branch_protection` | `GET /repos/{owner}/{repo}/branches/{branch}/protection` |
+| `git.delete_ref` | `DELETE /repos/{owner}/{repo}/git/refs/{ref}` |
 | `check_runs.create` | `POST /repos/{owner}/{repo}/check-runs` |
 | `check_runs.update` | `PATCH /repos/{owner}/{repo}/check-runs/{check_run_id}` |
 | `graphql` | `POST /graphql` |
+
+## Supported methods for managed personas
+
+Managed personas should prefer the named helpers for high-level workflows and
+use `call(method, args)` only for direct method dispatch.
+
+| Persona need | Helper or method | Notes |
+|---|---|---|
+| List open PRs with merge state and CI rollup | `pulls_list_with_checks(owner, repo, state, limit, options)` or `call("pulls.list_with_checks", args)` | Uses GraphQL because `mergeStateStatus` and `statusCheckRollup` are GraphQL PR fields surfaced by `gh pr --json`; the REST list endpoint does not return the same check rollup shape. Returns `number`, `title`, `headRefName`, `baseRefName`, `isDraft`, `mergeStateStatus`, `statusCheckRollup`, and `url`. |
+| Fetch PR details | `call("pulls.get", args)` | REST PR details for a specific PR number. |
+| Merge a PR directly | `call("pulls.merge", args)` | Sends `merge_method`, `sha`, `commit_title`, and `commit_message` through to GitHub's merge endpoint. If `admin_override` is present, the response is annotated with `admin_override_requested`; GitHub still enforces the installation token's permissions. |
+| Merge with branch-protection awareness | `pulls_merge_safe(owner, repo, number, options)` or `call("pulls.merge_safe", args)` | Fetches PR details, checks base branch protection, requires `admin_override` when the branch is protected, merges with the PR head SHA, and optionally deletes the head branch when `delete_branch` is true. |
+| Create conflict/follow-up issues | `issues_create_with_template(owner, repo, template, vars, options)` or `call("issues.create_with_template", args)` | Renders `{{name}}` placeholders in `title` and `body`, then calls `issues.create`. |
+| Update issues | `call("issues.update", args)` | Supports fields accepted by GitHub's issue update endpoint, such as `state`, `title`, `body`, `labels`, `assignees`, and `milestone`. |
+| Add issue or PR labels | `call("issues.add_labels", args)` | Uses the issue-labels endpoint; GitHub models PRs as issues for labels. |
+| Inspect branch protection | `call("repos.get_branch_protection", args)` | Used by `pulls.merge_safe` before admin merges. |
+| List changed files | `call("pulls.list_files", args)` | Used by review/conflict workflows. |
+| List reviews | `call("pulls.list_reviews", args)` | Used by review workflows. |
 
 ## GitHub App setup
 
@@ -124,11 +152,17 @@ setup should use `private_key_secret` so the PEM is resolved through
 
 Required GitHub App permissions depend on the outbound method:
 
-- `issues.create_comment`, `issues.update`: Issues read/write, or Pull requests
-  read/write when commenting on pull requests.
-- `pulls.get`, `pulls.get_diff`, `pulls.list_files`: Pull requests read.
+- `issues.create_comment`, `issues.create`, `issues.create_with_template`,
+  `issues.update`, `issues.add_labels`: Issues read/write, or Pull requests
+  read/write when acting on pull requests.
+- `pulls.list`, `pulls.list_with_checks`, `pulls.get`, `pulls.get_diff`,
+  `pulls.list_files`, `pulls.list_reviews`: Pull requests read.
+- `pulls.merge`, `pulls.merge_safe`: Pull requests write, and administrator or
+  bypass permissions when merging protected branches.
 - `pulls.create_review_comment`: Pull requests write.
 - `repos.get_content`: Contents read.
+- `repos.get_branch_protection`: Administration read.
+- `git.delete_ref`: Contents write.
 - `check_runs.create`, `check_runs.update`: Checks read/write.
 - `graphql`: the installed app must have the permissions required by the query
   or mutation.
