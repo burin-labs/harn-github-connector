@@ -1,52 +1,19 @@
-# CLAUDE.md — harn-github-connector
+# CLAUDE.md - harn-github-connector
 
-## Quick repo conventions
+Pure-Harn GitHub App connector package for inbound webhooks and outbound REST/GraphQL calls.
 
-- File extension: `.harn`. Use `snake_case` for filenames.
-- Repo directories use `kebab-case`.
-- Entry point: `src/lib.harn`.
-- Tests live under `tests/`. Recorded webhook fixtures live under
-  `tests/fixtures/webhooks/`.
+Shared Harn connector authoring rules live in the canonical guide:
 
-## How to test
+- https://github.com/burin-labs/harn/blob/main/docs/src/connectors/authoring.md
 
-Install the pinned Harn CLI from crates.io:
+Keep this file limited to provider-specific notes and local hazards. Add shared connector guidance
+to the Harn guide first.
 
-```sh
-cargo install harn-cli --version "$(cat .harn-version)" --locked
-harn --version
-```
+## Provider Notes
 
-Run checks from the repo root:
-
-```sh
-harn check src/lib.harn
-harn lint src/lib.harn
-harn fmt --check src/lib.harn tests/*.harn
-harn connector check .
-for test in tests/*.harn; do
-  harn run "$test" || exit 1
-done
-```
-
-## Reference Rust impl
-
-The existing 1243-LOC Rust connector at
-`/Users/ksinder/projects/harn/crates/harn-vm/src/connectors/github/mod.rs`
-is the **behavior spec**. Port semantics from there.
-
-## Sibling future repo
-
-A typed `github-sdk-harn` (REST + GraphQL) is plausible future work,
-modeled after `notion-sdk-harn`. Out of scope for this repo's v0.
-
-## Upstream conventions
-
-For general Harn coding conventions and project layout, defer to
-[`/Users/ksinder/projects/harn/CLAUDE.md`](/Users/ksinder/projects/harn/CLAUDE.md).
-
-## Don't
-
-- Don't bake an OpenAPI-codegen GitHub SDK into this repo. If you need a
-  typed surface, propose `github-sdk-harn` as a separate repo first.
-- Don't hand-edit `LICENSE-*` or `.gitignore`.
+- Webhook verification uses `X-Hub-Signature-256` over the raw request body with the configured
+  GitHub App webhook secret.
+- Outbound installation-token flow depends on GitHub App credentials: app id, private key, and
+  installation id. Keep token refresh behavior aligned with GitHub App expiry semantics.
+- A typed `github-sdk-harn` would be a separate package; this connector should not grow generated
+  REST endpoint definitions.
