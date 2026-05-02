@@ -1,0 +1,313 @@
+import { call } from "../src/lib"
+
+pipeline default() {
+  http_mock_clear()
+  let base = "https://github-api.test"
+  let token = "github-installation-token"
+  let auth = {api_base_url: base, installation_token: token}
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/pulls?state=open&per_page=4",
+    {
+      status: 200,
+      body: json_stringify(
+        [
+          {
+            number: 101,
+            title: "Green PR",
+            state: "open",
+            draft: false,
+            mergeable: true,
+            mergeable_state: "clean",
+            html_url: "https://github.com/octo-org/octo-repo/pull/101",
+            base: {ref: "main", sha: "base-sha", repo: {full_name: "octo-org/octo-repo", owner: {login: "octo-org"}}},
+            head: {
+              ref: "feature/green",
+              sha: "green-sha",
+              repo: {full_name: "octo-org/octo-repo", owner: {login: "octo-org"}},
+            },
+            labels: [{name: "ready"}],
+          },
+          {
+            number: 102,
+            title: "Dirty PR",
+            state: "open",
+            mergeable: false,
+            mergeable_state: "dirty",
+            base: {ref: "main", repo: {full_name: "octo-org/octo-repo"}},
+            head: {ref: "feature/dirty", sha: "dirty-sha", repo: {full_name: "octo-org/octo-repo"}},
+          },
+          {
+            number: 103,
+            title: "Queued PR",
+            state: "open",
+            mergeable: true,
+            mergeable_state: "clean",
+            auto_merge: {enabled_by: {login: "octocat"}},
+            base: {ref: "main", repo: {full_name: "octo-org/octo-repo"}},
+            head: {ref: "feature/queued", sha: "queued-sha", repo: {full_name: "octo-org/octo-repo"}},
+          },
+          {
+            number: 104,
+            title: "Merged PR",
+            state: "closed",
+            merged: true,
+            merged_at: "2026-05-02T12:00:00Z",
+            base: {ref: "main", repo: {full_name: "octo-org/octo-repo"}},
+            head: {ref: "feature/merged", sha: "merged-sha", repo: {full_name: "octo-org/octo-repo"}},
+          },
+        ],
+      ),
+      headers: {["x-ratelimit-remaining"]: "20"},
+    },
+  )
+  let prs = call("github.pr.list", auth + {repo: "octo-org/octo-repo", filters: {state: "open", per_page: 4}})
+  assert_eq(prs[0].state, "green", "clean PR classified green")
+  assert_eq(prs[1].state, "dirty", "dirty PR classified dirty")
+  assert_eq(prs[2].state, "queued", "queued PR classified queued")
+  assert_eq(prs[3].state, "merged", "merged PR classified merged")
+  assert_eq(prs[0].head.sha, "green-sha", "typed head sha")
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/pulls/101",
+    {
+      responses: [
+        {
+          status: 200,
+          body: json_stringify(
+            {
+              number: 101,
+              title: "Green PR",
+              state: "open",
+              mergeable: true,
+              mergeable_state: "clean",
+              base: {ref: "main", sha: "base-sha", repo: {full_name: "octo-org/octo-repo", owner: {login: "octo-org"}}},
+              head: {
+                ref: "feature/green",
+                sha: "green-sha",
+                repo: {full_name: "octo-org/octo-repo", owner: {login: "octo-org"}},
+              },
+              user: {id: 1001, login: "octocat", type: "User"},
+            },
+          ),
+          headers: {["x-ratelimit-remaining"]: "19"},
+        },
+        {
+          status: 200,
+          body: json_stringify({number: 101, base: {ref: "main"}, head: {sha: "green-sha"}}),
+          headers: {["x-ratelimit-remaining"]: "19"},
+        },
+      ],
+    },
+  )
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/branches/main/protection",
+    {
+      responses: [
+        {
+          status: 200,
+          body: json_stringify(
+            {
+              required_status_checks: {strict: true, contexts: ["Harn CI"]},
+              required_pull_request_reviews: {required_approving_review_count: 2, require_code_owner_reviews: true},
+              required_conversation_resolution: {enabled: true},
+            },
+          ),
+          headers: {["x-ratelimit-remaining"]: "18"},
+        },
+        {
+          status: 200,
+          body: json_stringify({required_status_checks: {strict: true, contexts: ["Harn CI"]}}),
+          headers: {["x-ratelimit-remaining"]: "18"},
+        },
+      ],
+    },
+  )
+  let viewed = call("github.pr.view", auth + {repo: "octo-org/octo-repo", number: 101})
+  assert_eq(viewed.base.sha, "base-sha", "view includes base sha")
+  assert_eq(viewed.head.sha, "green-sha", "view includes head sha")
+  assert(viewed.branch_protection.protected, "view includes branch protection")
+  assert_eq(viewed.branch_protection.required_checks[0], "Harn CI", "required checks summarized")
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/commits/green-sha/check-runs",
+    {
+      status: 200,
+      body: json_stringify(
+        {
+          total_count: 1,
+          check_runs: [
+            {
+              id: 8001,
+              name: "Harn CI",
+              status: "completed",
+              conclusion: "success",
+              head_sha: "green-sha",
+              started_at: "2026-05-02T12:00:00Z",
+              completed_at: "2026-05-02T12:03:00Z",
+              details_url: "https://github.com/octo-org/octo-repo/actions/runs/6001/job/1",
+            },
+          ],
+        },
+      ),
+      headers: {["x-ratelimit-remaining"]: "17"},
+    },
+  )
+  let green_checks = call("github.pr.checks", auth + {repo: "octo-org/octo-repo", head_sha: "green-sha"})
+  assert_eq(green_checks.state, "green", "green checks classify green")
+  assert_eq(green_checks.rollup.conclusion, "success", "green rollup conclusion")
+  assert_eq(green_checks.checks[0].duration_seconds, 180, "check duration")
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/commits/pending-sha/check-runs",
+    {
+      status: 200,
+      body: json_stringify({check_runs: [{id: 8002, name: "Harn CI", status: "in_progress", conclusion: nil}]}),
+      headers: {["x-ratelimit-remaining"]: "16"},
+    },
+  )
+  assert_eq(
+    call("github.pr.checks", auth + {repo: "octo-org/octo-repo", head_sha: "pending-sha"}).state,
+    "pending",
+    "pending checks classify pending",
+  )
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/commits/failing-sha/check-runs",
+    {
+      status: 200,
+      body: json_stringify(
+        {check_runs: [{id: 8003, name: "Harn CI", status: "completed", conclusion: "failure"}]},
+      ),
+      headers: {["x-ratelimit-remaining"]: "15"},
+    },
+  )
+  assert_eq(
+    call("github.pr.checks", auth + {repo: "octo-org/octo-repo", head_sha: "failing-sha"}).state,
+    "failing",
+    "failing checks classify failing",
+  )
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/check-runs/8001",
+    {
+      status: 200,
+      body: json_stringify(
+        {id: 8001, details_url: "https://github.com/octo-org/octo-repo/actions/runs/6001/job/1"},
+      ),
+      headers: {["x-ratelimit-remaining"]: "14"},
+    },
+  )
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/actions/runs/6001/logs",
+    {status: 200, body: "step 1 / 1 succeeded\n", headers: {["x-ratelimit-remaining"]: "13"}},
+  )
+  let logs = call("github.actions.logs", auth + {repo: "octo-org/octo-repo", check_id: 8001})
+  assert_eq(logs.run_id, 6001, "check id resolves action run id")
+  assert(logs.content.contains("succeeded"), "logs content returned")
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/merge_queue/queues/main",
+    {
+      status: 200,
+      body: json_stringify(
+        {
+          base: "main",
+          entries: [{pull_request_number: 103, status: "queued", head_branch: "feature/queued"}],
+        },
+      ),
+      headers: {["x-ratelimit-remaining"]: "12"},
+    },
+  )
+  let queue = call("github.merge_queue.entries", auth + {repo: "octo-org/octo-repo", branch: "main"})
+  assert_eq(queue.entries[0].pull_number, 103, "merge queue entry PR number")
+  http_mock(
+    "POST",
+    base + "/repos/octo-org/octo-repo/merge_queue/queues/main/items",
+    {
+      status: 201,
+      body: json_stringify({pull_number: 105, status: "queued", priority: "normal"}),
+      headers: {["x-ratelimit-remaining"]: "11"},
+    },
+  )
+  let enqueued = call(
+    "github.merge_queue.enqueue",
+    auth
+      + {repo: "octo-org/octo-repo", branch: "main", pr_number: 105, method: "squash", priority: "normal"},
+  )
+  assert_eq(enqueued.entry.status, "queued", "enqueue returns typed entry")
+  http_mock(
+    "POST",
+    base + "/repos/octo-org/octo-repo/issues",
+    {
+      status: 201,
+      body: json_stringify({number: 77, title: "Follow up"}),
+      headers: {["x-ratelimit-remaining"]: "10"},
+    },
+  )
+  assert_eq(
+    call("github.issue.create", auth + {repo: "octo-org/octo-repo", title: "Follow up"}).number,
+    77,
+  )
+  http_mock(
+    "POST",
+    base + "/repos/octo-org/octo-repo/issues/77/comments",
+    {
+      status: 201,
+      body: json_stringify({id: 9001, body: "noted"}),
+      headers: {["x-ratelimit-remaining"]: "9"},
+    },
+  )
+  assert_eq(
+    call("github.issue.comment", auth + {repo: "octo-org/octo-repo", number: 77, body: "noted"}).id,
+    9001,
+  )
+  http_mock(
+    "POST",
+    base + "/repos/octo-org/octo-repo/issues/101/comments",
+    {
+      status: 201,
+      body: json_stringify({id: 9002, body: "PR note"}),
+      headers: {["x-ratelimit-remaining"]: "8"},
+    },
+  )
+  assert_eq(
+    call("github.pr.comment", auth + {repo: "octo-org/octo-repo", number: 101, body: "PR note"}).id,
+    9002,
+  )
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/branches/develop/protection",
+    {
+      status: 200,
+      body: json_stringify({required_status_checks: {strict: false, contexts: []}}),
+      headers: {["x-ratelimit-remaining"]: "7"},
+    },
+  )
+  assert(
+    call("github.branch.protection", auth + {repo: "octo-org/octo-repo", branch: "develop"}).protected,
+  )
+  let blocked = call("github.pr.merge", auth + {repo: "octo-org/octo-repo", number: 101, method: "squash"})
+  assert(is_err(blocked), "protected branch blocks github.pr.merge without override")
+  assert_eq(unwrap_err(blocked).category, "branch_protection", "branch protection error category")
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/pulls?state=open",
+    {status: 200, body: "[]", headers: {["x-ratelimit-remaining"]: "6"}},
+  )
+  call(
+    "github.pr.list",
+    {
+      api_base_url: base,
+      allow_gh_auth_fallback: true,
+      gh_token: "gh-env-token",
+      repo: "octo-org/octo-repo",
+      filters: {state: "open"},
+    },
+  )
+  let calls = http_mock_calls()
+  assert_eq(calls[len(calls) - 1].headers.authorization, "[redacted]", "gh fallback token redacted")
+  http_mock_clear()
+}
