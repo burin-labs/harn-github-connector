@@ -7,6 +7,17 @@ let GITHUB_API_VERSION = "2022-11-28"
 let GITHUB_USER_AGENT = "harn-github-connector"
 
 let GITHUB_OUTBOUND_METHODS = [
+  "github.pr.list",
+  "github.pr.view",
+  "github.pr.checks",
+  "github.pr.merge",
+  "github.pr.comment",
+  "github.actions.logs",
+  "github.merge_queue.entries",
+  "github.merge_queue.enqueue",
+  "github.issue.create",
+  "github.issue.comment",
+  "github.branch.protection",
   "issues.create_comment",
   "issues.create",
   "issues.create_with_template",
@@ -163,6 +174,39 @@ pub fn call(method, args = {}) {
     return config
   }
   let cfg = unwrap(config)
+  if method == "github.pr.list" {
+    return __github_pr_list(args, cfg)
+  }
+  if method == "github.pr.view" {
+    return __github_pr_view(args, cfg)
+  }
+  if method == "github.pr.checks" {
+    return __github_pr_checks(args, cfg)
+  }
+  if method == "github.pr.merge" {
+    return __github_pr_merge(args, cfg)
+  }
+  if method == "github.pr.comment" {
+    return __github_issue_comment(args + {issue_number: args?.pr_number ?? args?.number}, cfg)
+  }
+  if method == "github.actions.logs" {
+    return __github_actions_logs(args, cfg)
+  }
+  if method == "github.merge_queue.entries" {
+    return __github_merge_queue_entries(args, cfg)
+  }
+  if method == "github.merge_queue.enqueue" {
+    return __github_merge_queue_enqueue(args, cfg)
+  }
+  if method == "github.issue.create" {
+    return __github_issue_create(args, cfg)
+  }
+  if method == "github.issue.comment" {
+    return __github_issue_comment(args, cfg)
+  }
+  if method == "github.branch.protection" {
+    return __github_branch_protection(args, cfg)
+  }
   if method == "issues.create_comment" {
     return __github_json(
       "POST",
@@ -388,6 +432,331 @@ pub fn issues_create_with_template(owner, repo, template, vars = nil, options = 
     "issues.create_with_template",
     opts + {owner: owner, repo: repo, template: template, vars: vars ?? {}},
   )
+}
+
+fn __github_pr_list(args, cfg) {
+  let repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  let r = unwrap(repo)
+  let filters = args?.filters ?? args ?? {}
+  let pulls = __github_json(
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + r.owner + "/" + r.name + "/pulls" + __pulls_list_query(filters),
+    ),
+    nil,
+    cfg,
+  )
+  if is_err(pulls) {
+    return pulls
+  }
+  var typed = []
+  for pull in pulls {
+    typed = typed + [__typed_pr_summary(pull)]
+  }
+  return typed
+}
+
+fn __github_pr_view(args, cfg) {
+  let repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  let r = unwrap(repo)
+  let number = args?.pr_number ?? args?.number ?? args?.pull_number
+  if number == nil {
+    return __err("schema_drift", "github.pr.view requires number, pr_number, or pull_number")
+  }
+  let pull = __github_json(
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + r.owner + "/" + r.name + "/pulls/" + to_string(number),
+    ),
+    nil,
+    cfg,
+  )
+  if is_err(pull) {
+    return pull
+  }
+  let base_branch = pull?.base?.ref ?? args?.branch ?? args?.base_branch
+  let protection = __github_branch_protection_raw(r, base_branch, cfg)
+  if is_err(protection) {
+    return protection
+  }
+  return __typed_pr_view(pull, unwrap(protection))
+}
+
+fn __github_pr_checks(args, cfg) {
+  let repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  let r = unwrap(repo)
+  var head_sha = args?.head_sha ?? args?.sha
+  let number = args?.pr_number ?? args?.number ?? args?.pull_number
+  var pull = nil
+  if (head_sha == nil || trim(to_string(head_sha)) == "") && number != nil {
+    let fetched = __github_json(
+      "GET",
+      __github_api_url(
+        cfg.api_base_url,
+        "/repos/" + r.owner + "/" + r.name + "/pulls/" + to_string(number),
+      ),
+      nil,
+      cfg,
+    )
+    if is_err(fetched) {
+      return fetched
+    }
+    pull = fetched
+    head_sha = fetched?.head?.sha
+  }
+  if head_sha == nil || trim(to_string(head_sha)) == "" {
+    return __err("schema_drift", "github.pr.checks requires pr_number, number, pull_number, head_sha, or sha")
+  }
+  let envelope = __github_json(
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + r.owner + "/" + r.name + "/commits/" + to_string(head_sha) + "/check-runs"
+        + __pagination_query(args),
+    ),
+    nil,
+    cfg,
+  )
+  if is_err(envelope) {
+    return envelope
+  }
+  let checks = __typed_check_runs(envelope?.check_runs ?? [])
+  let rollup = __check_rollup(checks)
+  return {
+    repo: r.full_name,
+    pull_number: number,
+    head_sha: to_string(head_sha),
+    state: __classify_pr_state(pull, rollup, nil),
+    rollup: rollup,
+    checks: checks,
+  }
+}
+
+fn __github_pr_merge(args, cfg) {
+  let repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  let r = unwrap(repo)
+  let number = args?.pr_number ?? args?.number ?? args?.pull_number
+  if number == nil {
+    return __err("schema_drift", "github.pr.merge requires number, pr_number, or pull_number")
+  }
+  let method = args?.method ?? args?.merge_method ?? args?.options?.merge_method ?? "merge"
+  let options = args?.options ?? {}
+  let merged = __pulls_merge_safe(
+    options
+      + args
+      + {owner: r.owner, repo: r.name, pull_number: number, merge_method: method},
+    cfg,
+  )
+  if is_err(merged) {
+    let err = unwrap_err(merged)
+    if err?.category == "branch_protection" || err?.code == "protected_branch_requires_admin_override" {
+      return __err("branch_protection", err?.message ?? "branch protection blocked merge")
+    }
+    return merged
+  }
+  return merged + {repo: r.full_name, pull_number: number, requested_method: method, state: "merged"}
+}
+
+fn __github_actions_logs(args, cfg) {
+  let repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  let r = unwrap(repo)
+  var run_id = args?.run_id
+  let check_id = args?.check_id ?? args?.check_run_id
+  var check_run = nil
+  if (run_id == nil || trim(to_string(run_id)) == "") && check_id != nil {
+    check_run = __github_json(
+      "GET",
+      __github_api_url(
+        cfg.api_base_url,
+        "/repos/" + r.owner + "/" + r.name + "/check-runs/" + to_string(check_id),
+      ),
+      nil,
+      cfg,
+    )
+    if is_err(check_run) {
+      return check_run
+    }
+    run_id = __extract_actions_run_id(check_run?.details_url ?? check_run?.html_url)
+  }
+  if run_id == nil || trim(to_string(run_id)) == "" {
+    return __err("schema_drift", "github.actions.logs requires run_id or a check_id with an actions run URL")
+  }
+  let logs = __github_text(
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + r.owner + "/" + r.name + "/actions/runs/" + to_string(run_id) + "/logs"
+        + __pagination_query(args),
+    ),
+    cfg,
+    args?.accept ?? "application/vnd.github+json",
+  )
+  if is_err(logs) {
+    return logs
+  }
+  return {
+    repo: r.full_name,
+    run_id: run_id,
+    check_id: check_id,
+    check_run: check_run,
+    content: logs,
+    truncated: false,
+    page: args?.page,
+    per_page: args?.per_page,
+  }
+}
+
+fn __github_merge_queue_entries(args, cfg) {
+  let repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  let r = unwrap(repo)
+  let branch = args?.branch ?? args?.base_branch ?? args?.base
+  if branch == nil || trim(to_string(branch)) == "" {
+    return __err("merge_queue", "github.merge_queue.entries requires branch or base_branch")
+  }
+  let response = __github_json(
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + r.owner + "/" + r.name + "/merge_queue/queues/" + url_encode(to_string(branch)),
+    ),
+    nil,
+    cfg,
+  )
+  if is_err(response) {
+    return __err("merge_queue", unwrap_err(response)?.message ?? "failed to fetch merge queue entries")
+  }
+  var entries = []
+  for entry in response?.entries ?? [] {
+    entries = entries + [__typed_merge_queue_entry(entry)]
+  }
+  return {repo: r.full_name, branch: branch, entries: entries}
+}
+
+fn __github_merge_queue_enqueue(args, cfg) {
+  let repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  let r = unwrap(repo)
+  let number = args?.pr_number ?? args?.number ?? args?.pull_number
+  if number == nil {
+    return __err("merge_queue", "github.merge_queue.enqueue requires pr_number, number, or pull_number")
+  }
+  var branch = args?.branch ?? args?.base_branch ?? args?.base
+  if branch == nil || trim(to_string(branch)) == "" {
+    let pull = __github_json(
+      "GET",
+      __github_api_url(
+        cfg.api_base_url,
+        "/repos/" + r.owner + "/" + r.name + "/pulls/" + to_string(number),
+      ),
+      nil,
+      cfg,
+    )
+    if is_err(pull) {
+      return pull
+    }
+    branch = pull?.base?.ref
+  }
+  if branch == nil || trim(to_string(branch)) == "" {
+    return __err("merge_queue", "github.merge_queue.enqueue requires branch or a PR with base.ref")
+  }
+  let method = args?.method ?? args?.merge_method ?? "merge"
+  let response = __github_json(
+    "POST",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + r.owner + "/" + r.name + "/merge_queue/queues/" + url_encode(to_string(branch))
+        + "/items",
+    ),
+    {pull_number: number, merge_method: method, method: method, priority: args?.priority},
+    cfg,
+  )
+  if is_err(response) {
+    return __err("merge_queue", unwrap_err(response)?.message ?? "failed to enqueue PR in merge queue")
+  }
+  return {
+    repo: r.full_name,
+    branch: branch,
+    pull_number: number,
+    requested_method: method,
+    entry: __typed_merge_queue_entry(response),
+  }
+}
+
+fn __github_issue_create(args, cfg) {
+  let repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  let r = unwrap(repo)
+  return __github_json(
+    "POST",
+    __github_api_url(cfg.api_base_url, "/repos/" + r.owner + "/" + r.name + "/issues"),
+    __body_without(
+      args,
+      __config_keys() + ["repo", "repository", "repo_ref", "repo_full_name", "owner"],
+    ),
+    cfg,
+  )
+}
+
+fn __github_issue_comment(args, cfg) {
+  let repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  let r = unwrap(repo)
+  let number = args?.issue_number ?? args?.number ?? args?.pr_number ?? args?.pull_number
+  if number == nil {
+    return __err(
+      "schema_drift",
+      "github issue comment helpers require issue_number, number, pr_number, or pull_number",
+    )
+  }
+  return __github_json(
+    "POST",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + r.owner + "/" + r.name + "/issues/" + to_string(number) + "/comments",
+    ),
+    {body: args?.body},
+    cfg,
+  )
+}
+
+fn __github_branch_protection(args, cfg) {
+  let repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  let r = unwrap(repo)
+  let branch = args?.branch ?? args?.base_branch ?? args?.base
+  let protection = __github_branch_protection_raw(r, branch, cfg)
+  if is_err(protection) {
+    return protection
+  }
+  return __branch_protection_summary(unwrap(protection), branch)
 }
 
 fn __issues_create_with_template(args, cfg) {
@@ -638,6 +1007,291 @@ fn __status_context_conclusion(state) {
   return nil
 }
 
+fn __repo_parts(args) {
+  if args?.owner != nil && args?.repo != nil && !contains(to_string(args.repo), "/") {
+    return Ok(
+      {
+        owner: to_string(args.owner),
+        name: to_string(args.repo),
+        full_name: to_string(args.owner) + "/" + to_string(args.repo),
+      },
+    )
+  }
+  let repo_arg = args?.repository ?? args?.repo_ref ?? args?.repo_full_name ?? args?.repo
+  if type_of(repo_arg) == "dict" {
+    let owner = repo_arg?.owner ?? repo_arg?.owner_login
+    let name = repo_arg?.name ?? repo_arg?.repo
+    let full_name = repo_arg?.full_name
+    if full_name != nil && contains(to_string(full_name), "/") {
+      return __repo_parts({repo: full_name})
+    }
+    if owner != nil && name != nil {
+      return Ok(
+        {
+          owner: to_string(owner),
+          name: to_string(name),
+          full_name: to_string(owner) + "/" + to_string(name),
+        },
+      )
+    }
+  }
+  if repo_arg != nil && contains(to_string(repo_arg), "/") {
+    let parts = split(to_string(repo_arg), "/")
+    if len(parts) == 2 && trim(parts[0]) != "" && trim(parts[1]) != "" {
+      return Ok({owner: parts[0], name: parts[1], full_name: parts[0] + "/" + parts[1]})
+    }
+  }
+  return __err("schema_drift", "github typed API requires repo as `owner/name` or owner + repo")
+}
+
+fn __github_branch_protection_raw(repo, branch, cfg) {
+  if branch == nil || trim(to_string(branch)) == "" {
+    return Ok(nil)
+  }
+  let protection = __github_json(
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + repo.owner + "/" + repo.name + "/branches/" + url_encode(to_string(branch))
+        + "/protection",
+    ),
+    nil,
+    cfg,
+  )
+  if is_err(protection) {
+    let err = unwrap_err(protection)
+    if __is_status_error(err, 404) {
+      return Ok(nil)
+    }
+    return protection
+  }
+  return Ok(protection)
+}
+
+fn __typed_pr_summary(pull) {
+  let state = __classify_pr_state(pull, nil, pull?.auto_merge)
+  return {
+    repo: pull?.base?.repo?.full_name ?? "",
+    number: pull?.number,
+    title: pull?.title ?? "",
+    url: pull?.html_url ?? pull?.url ?? "",
+    state: state,
+    github_state: pull?.state ?? "",
+    draft: pull?.draft ?? false,
+    merged: pull?.merged ?? false,
+    mergeable: pull?.mergeable,
+    mergeable_state: pull?.mergeable_state ?? "unknown",
+    base: __typed_ref(pull?.base),
+    head: __typed_ref(pull?.head),
+    labels: __label_names(pull?.labels ?? []),
+    in_merge_queue: pull?.auto_merge != nil,
+  }
+}
+
+fn __typed_pr_view(pull, protection) {
+  return __typed_pr_summary(pull)
+    + {
+    body: pull?.body ?? "",
+    user: __typed_user(pull?.user),
+    created_at: pull?.created_at,
+    updated_at: pull?.updated_at,
+    closed_at: pull?.closed_at,
+    merged_at: pull?.merged_at,
+    branch_protection: __branch_protection_summary(protection, pull?.base?.ref),
+    raw: pull,
+  }
+}
+
+fn __typed_ref(ref) {
+  return {
+    ref: ref?.ref ?? "",
+    sha: ref?.sha ?? "",
+    repo: ref?.repo?.full_name ?? "",
+    owner: ref?.repo?.owner?.login ?? ref?.user?.login ?? "",
+  }
+}
+
+fn __typed_user(user) {
+  if user == nil {
+    return nil
+  }
+  return {id: user?.id, login: user?.login ?? "", type: user?.type ?? ""}
+}
+
+fn __label_names(labels) {
+  var names = []
+  for label in labels ?? [] {
+    names = names + [label?.name ?? to_string(label)]
+  }
+  return names
+}
+
+fn __branch_protection_summary(protection, branch) {
+  if protection == nil {
+    return {branch: branch, protected: false, required_checks: [], strict: false, raw: nil}
+  }
+  return {
+    branch: branch,
+    protected: true,
+    required_checks: protection?.required_status_checks?.contexts ?? [],
+    strict: protection?.required_status_checks?.strict ?? false,
+    required_review_count: protection?.required_pull_request_reviews?.required_approving_review_count ?? 0,
+    require_code_owner_reviews: protection?.required_pull_request_reviews?.require_code_owner_reviews ?? false,
+    require_conversation_resolution: protection?.required_conversation_resolution?.enabled ?? false,
+    allow_force_pushes: protection?.allow_force_pushes?.enabled ?? false,
+    allow_deletions: protection?.allow_deletions?.enabled ?? false,
+    raw: protection,
+  }
+}
+
+fn __typed_check_runs(runs) {
+  var checks = []
+  for run in runs ?? [] {
+    checks = checks + [__typed_check_run(run)]
+  }
+  return checks
+}
+
+fn __typed_check_run(run) {
+  return {
+    id: run?.id,
+    name: run?.name ?? "",
+    status: lowercase(run?.status ?? ""),
+    conclusion: lowercase(run?.conclusion ?? ""),
+    head_sha: run?.head_sha ?? "",
+    started_at: run?.started_at,
+    completed_at: run?.completed_at,
+    duration_seconds: __duration_seconds(run?.started_at, run?.completed_at),
+    details_url: run?.details_url ?? run?.detailsUrl,
+    html_url: run?.html_url,
+    external_id: run?.external_id,
+    raw: run,
+  }
+}
+
+fn __check_rollup(checks) {
+  var pending = 0
+  var failed = 0
+  var successful = 0
+  var skipped = 0
+  for check in checks ?? [] {
+    let status = lowercase(check?.status ?? "")
+    let conclusion = lowercase(check?.conclusion ?? "")
+    if status != "completed" {
+      pending = pending + 1
+    } else if conclusion == "success" || conclusion == "neutral" {
+      successful = successful + 1
+    } else if conclusion == "skipped" {
+      skipped = skipped + 1
+    } else {
+      failed = failed + 1
+    }
+  }
+  let state = if failed > 0 {
+    "failing"
+  } else {
+    if pending > 0 || len(checks ?? []) == 0 {
+      "pending"
+    } else {
+      "green"
+    }
+  }
+  return {
+    state: state,
+    total: len(checks ?? []),
+    pending: pending,
+    failed: failed,
+    successful: successful,
+    skipped: skipped,
+    conclusion: if state == "green" {
+      "success"
+    } else {
+      if state == "failing" {
+        "failure"
+      } else {
+        nil
+      }
+    },
+  }
+}
+
+fn __classify_pr_state(pull, rollup, queue) {
+  if pull?.merged ?? false {
+    return "merged"
+  }
+  if pull?.state == "closed" && pull?.merged_at != nil {
+    return "merged"
+  }
+  if queue != nil || pull?.auto_merge != nil {
+    return "queued"
+  }
+  if !(pull?.mergeable ?? true) || lowercase(pull?.mergeable_state ?? "") == "dirty" {
+    return "dirty"
+  }
+  if rollup?.state == "failing" {
+    return "failing"
+  }
+  if rollup?.state == "pending" {
+    return "pending"
+  }
+  if rollup?.state == "green" || lowercase(pull?.mergeable_state ?? "") == "clean" {
+    return "green"
+  }
+  return "pending"
+}
+
+fn __typed_merge_queue_entry(entry) {
+  return {
+    pull_number: entry?.pull_request_number ?? entry?.pull_number ?? entry?.number,
+    status: entry?.status ?? "unknown",
+    head_branch: entry?.head_branch,
+    priority: entry?.priority,
+    raw: entry,
+  }
+}
+
+fn __extract_actions_run_id(url) {
+  if url == nil || !contains(to_string(url), "/actions/runs/") {
+    return nil
+  }
+  let parts = split(to_string(url), "/actions/runs/")
+  if len(parts) < 2 {
+    return nil
+  }
+  let rest = split(parts[1], "/")[0]
+  let parsed = try {
+    to_int(rest)
+  }
+  if is_err(parsed) {
+    return rest
+  }
+  return unwrap(parsed)
+}
+
+fn __duration_seconds(started_at, completed_at) {
+  if started_at == nil || completed_at == nil {
+    return nil
+  }
+  let start = try {
+    to_int(date_parse(to_string(started_at)))
+  }
+  let done = try {
+    to_int(date_parse(to_string(completed_at)))
+  }
+  if is_err(start) || is_err(done) {
+    return nil
+  }
+  let duration = unwrap(done) - unwrap(start)
+  if duration < 0 {
+    return nil
+  }
+  return duration
+}
+
+fn __is_status_error(err, status) {
+  return contains(to_string(err?.message ?? ""), "status " + to_string(status))
+}
+
 fn __merge_body(args, pull) {
   var body = __body_without(
     args,
@@ -650,6 +1304,10 @@ fn __merge_body(args, pull) {
       "delete_branch",
       "base_branch",
       "check_branch_protection",
+      "method",
+      "number",
+      "options",
+      "pr_number",
     ],
   )
   if body?.sha == nil && pull?.head?.sha != nil {
@@ -761,7 +1419,40 @@ fn __set_state(state) {
 }
 
 fn __err(code, message) {
-  return Err({code: code, message: message})
+  return Err({code: code, category: __error_category(code), message: message})
+}
+
+fn __error_category(code) {
+  if code == "auth" || code == "unauthorized" || code == "missing_credentials"
+    || code == "missing_private_key"
+    || code == "missing_app_id" {
+    return "auth"
+  }
+  if code == "permission" {
+    return "permission"
+  }
+  if code == "rate_limit" || code == "rate_limited" {
+    return "rate_limit"
+  }
+  if code == "branch_protection" || code == "protected_branch_requires_admin_override" {
+    return "branch_protection"
+  }
+  if code == "merge_queue" {
+    return "merge_queue"
+  }
+  if code == "checks_pending" {
+    return "checks_pending"
+  }
+  if code == "checks_failed" {
+    return "checks_failed"
+  }
+  if code == "network" || code == "transport" {
+    return "network"
+  }
+  if code == "schema_drift" || code == "invalid_response" || code == "invalid_json" {
+    return "schema_drift"
+  }
+  return code
 }
 
 fn __reject(status, code, message) {
@@ -1022,6 +1713,20 @@ fn __outbound_config(args) {
   let installation_id = args?.installation_id ?? env("GITHUB_INSTALLATION_ID")
   if app_id == nil || trim(to_string(app_id)) == "" || installation_id == nil
     || trim(to_string(installation_id)) == "" {
+    if __allow_gh_auth_fallback(args) {
+      let gh_token = __gh_auth_token(args)
+      if is_err(gh_token) {
+        return gh_token
+      }
+      return Ok(
+        {
+          api_base_url: to_string(api_base_url),
+          installation_token: to_string(unwrap(gh_token)),
+          token_mode: "gh_auth",
+          installation_id: nil,
+        },
+      )
+    }
     return __err(
       "missing_credentials",
       "github connector requires installation_token, or app_id + installation_id + private_key",
@@ -1064,7 +1769,41 @@ fn __config_keys() {
     "token_refresh_skew_seconds",
     "now",
     "timeout_ms",
+    "allow_gh_auth_fallback",
+    "gh_auth_fallback",
+    "gh_token",
   ]
+}
+
+fn __allow_gh_auth_fallback(args) {
+  let direct = args?.allow_gh_auth_fallback ?? false
+  let alias = args?.gh_auth_fallback ?? false
+  return direct || alias || env_or("HARN_GITHUB_ALLOW_GH_AUTH_FALLBACK", "") == "1"
+}
+
+fn __gh_auth_token(args) {
+  let env_token = args?.gh_token ?? env("GH_TOKEN") ?? env("GITHUB_TOKEN")
+  if env_token != nil && trim(to_string(env_token)) != "" {
+    return Ok(to_string(env_token))
+  }
+  let output = try {
+    exec("gh", "auth", "token")
+  }
+  if is_err(output) {
+    return __err(
+      "auth",
+      "gh auth fallback is enabled, but `gh auth token` failed: " + to_string(unwrap_err(output)),
+    )
+  }
+  let result = unwrap(output)
+  if !(result?.success ?? false) {
+    return __err("auth", "gh auth fallback is enabled, but `gh auth token` exited non-zero")
+  }
+  let token = trim(to_string(result?.stdout ?? ""))
+  if token == "" {
+    return __err("auth", "gh auth fallback is enabled, but `gh auth token` returned an empty token")
+  }
+  return Ok(token)
 }
 
 fn __body_without(args, keys) {
@@ -1178,7 +1917,7 @@ fn __github_request(method, url, body, cfg, accept, parse_json) {
       http_request(method, url, options)
     }
     if is_err(response_result) {
-      return __err("transport", to_string(unwrap_err(response_result)))
+      return __err("network", to_string(unwrap_err(response_result)))
     }
     let response = unwrap(response_result)
     if response.status == 401 && cfg.token_mode == "jwt" && !retried_auth {
@@ -1201,12 +1940,16 @@ fn __github_request(method, url, body, cfg, accept, parse_json) {
     }
     if response.status < 200 || response.status >= 300 {
       let code = if response.status == 401 {
-        "unauthorized"
+        "auth"
       } else {
         if response.status == 403 || response.status == 429 {
-          "rate_limited"
+          if __is_rate_limit_response(response) {
+            "rate_limited"
+          } else {
+            "permission"
+          }
         } else {
-          "transport"
+          "network"
         }
       }
       return __err(
@@ -1228,6 +1971,14 @@ fn __github_request(method, url, body, cfg, accept, parse_json) {
     }
     return unwrap(parsed)
   }
+}
+
+fn __is_rate_limit_response(response) {
+  if response.status == 429 {
+    return true
+  }
+  let remaining = __response_header(response.headers ?? {}, "x-ratelimit-remaining")
+  return remaining != nil && trim(to_string(remaining)) == "0"
 }
 
 fn __maybe_wait_for_rate_limit(response) {

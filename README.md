@@ -75,6 +75,17 @@ Outbound methods:
 
 | Method | GitHub API |
 |---|---|
+| `github.pr.list` | Typed PR list over `GET /repos/{owner}/{repo}/pulls` |
+| `github.pr.view` | Typed PR details plus branch protection summary |
+| `github.pr.checks` | Typed check-run rollup over `GET /repos/{owner}/{repo}/commits/{sha}/check-runs` |
+| `github.pr.merge` | Branch-protection-aware typed merge helper |
+| `github.pr.comment` | Typed PR comment helper over the issues comments endpoint |
+| `github.actions.logs` | Fetch Actions logs by `run_id` or by `check_id` when the check links to an Actions run |
+| `github.merge_queue.entries` | Typed merge queue entries for a base branch |
+| `github.merge_queue.enqueue` | Enqueue a PR on the merge queue |
+| `github.issue.create` | Typed issue create helper |
+| `github.issue.comment` | Typed issue comment helper |
+| `github.branch.protection` | Typed branch protection summary |
 | `issues.create_comment` | `POST /repos/{owner}/{repo}/issues/{issue_number}/comments` |
 | `issues.create` | `POST /repos/{owner}/{repo}/issues` |
 | `issues.create_with_template` | Convenience helper over `issues.create` |
@@ -103,6 +114,11 @@ use `call(method, args)` only for direct method dispatch.
 
 | Persona need | Helper or method | Notes |
 |---|---|---|
+| List PRs as typed records | `call("github.pr.list", {repo: "owner/name", filters: {...}})` | Returns stable fields such as `number`, `state`, `base.sha`, `head.sha`, labels, and merge-queue presence. |
+| Fetch PR details with branch policy | `call("github.pr.view", {repo, number})` | Includes `base`, `head`, `mergeable_state`, `branch_protection`, and the raw payload for uncommon GitHub fields. |
+| Classify checks | `call("github.pr.checks", {repo, number})` or `{repo, head_sha}` | Returns `state` as `green`, `pending`, `failing`, `dirty`, `queued`, or `merged` where enough PR context is available, plus per-check timings. |
+| Fetch Actions logs | `call("github.actions.logs", {repo, run_id})` | `check_id` is also accepted when GitHub exposes an Actions run URL on the check run. |
+| Use merge queue | `call("github.merge_queue.entries", {repo, branch})` and `call("github.merge_queue.enqueue", {repo, branch, pr_number, method})` | Matches the mock playground merge queue surface used by managed captain workflows. |
 | List open PRs with merge state and CI rollup | `pulls_list_with_checks(owner, repo, state, limit, options)` or `call("pulls.list_with_checks", args)` | Uses GraphQL because `mergeStateStatus` and `statusCheckRollup` are GraphQL PR fields surfaced by `gh pr --json`; the REST list endpoint does not return the same check rollup shape. Returns `number`, `title`, `headRefName`, `baseRefName`, `isDraft`, `mergeStateStatus`, `statusCheckRollup`, and `url`. |
 | Fetch PR details | `call("pulls.get", args)` | REST PR details for a specific PR number. |
 | Merge a PR directly | `call("pulls.merge", args)` | Sends `merge_method`, `sha`, `commit_title`, and `commit_message` through to GitHub's merge endpoint. If `admin_override` is present, the response is annotated with `admin_override_requested`; GitHub still enforces the installation token's permissions. |
@@ -175,6 +191,12 @@ If a caller already has an installation token, it can pass
 `installation_token` directly. The JWT path is preferred for production because
 the connector can refresh stale tokens itself.
 
+For local development only, callers may pass `allow_gh_auth_fallback: true`.
+When enabled and no installation credentials are present, the connector uses an
+explicit `gh_token`, `GH_TOKEN`, `GITHUB_TOKEN`, or `gh auth token` as the bearer
+token. This fallback is intentionally gated so production workflows do not
+silently depend on a user-scoped local CLI session.
+
 ## Operational limits
 
 - Webhook normalization verifies `X-Hub-Signature-256` against the exact raw
@@ -188,6 +210,9 @@ the connector can refresh stale tokens itself.
 - GitHub primary rate-limit responses with short reset windows are retried once;
   long reset windows return a `rate_limited` error instead of sleeping in CI or
   webhook paths.
+- Outbound errors carry deterministic `category` values for typed callers:
+  `auth`, `permission`, `rate_limit`, `branch_protection`, `merge_queue`,
+  `checks_pending`, `checks_failed`, `network`, and `schema_drift`.
 - The connector intentionally exposes a focused REST/GraphQL surface rather than
   vendoring a generated GitHub SDK.
 

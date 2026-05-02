@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Add typed outbound methods for PR list/view/checks/merge/comment, Actions
+  logs, merge queue entries/enqueue, issue create/comment, and branch
+  protection discovery.
+- Add deterministic outbound error categories and a gated local-development
+  `gh auth` token fallback.
+- Add mocked typed-outbound conformance coverage for green, pending, failing,
+  dirty, queued, and merged PR states.
+
 ## 0.1.0 - 2026-04-29
 
 - Ship the first production-ready pure-Harn GitHub connector release.
