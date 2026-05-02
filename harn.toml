@@ -134,6 +134,84 @@ expect_event_count = 1
 
 [[connector_contract.fixtures]]
 provider = "github"
+name = "check suite requested webhook"
+kind = "webhook"
+headers = { "X-GitHub-Event" = "check_suite", "X-GitHub-Delivery" = "delivery-contract-check-suite-requested", "X-Hub-Signature-256" = "sha256=ebca4fa04e40e59bb15606ceb8ded0b1ad447974cc094ff6a125236b8f461067", "content-type" = "application/json" }
+metadata = { signing_secret = "test-signing-secret" }
+body = '''{"action":"requested","check_suite":{"id":8101,"status":"queued","conclusion":null,"head_branch":"feature/connector-fixture","head_sha":"cccccccccccccccccccccccccccccccccccccccc","pull_requests":[{"number":42,"head":{"ref":"feature/connector-fixture","sha":"cccccccccccccccccccccccccccccccccccccccc"},"base":{"ref":"main","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}],"created_at":"2026-04-20T15:59:00Z","updated_at":"2026-04-20T15:59:00Z"},"repository":{"name":"octo-repo","full_name":"octo-org/octo-repo","owner":{"id":2001,"login":"octo-org","type":"Organization"}},"sender":{"id":1001,"login":"octocat","type":"User"},"installation":{"id":3001}}'''
+expect_type = "event"
+expect_kind = "check_suite"
+expect_signature_state = "verified"
+expect_payload_contains = { provider = "github", event = "check_suite", action = "requested", installation_id = 3001 }
+expect_event_count = 1
+
+[[connector_contract.fixtures]]
+provider = "github"
+name = "status success webhook"
+kind = "webhook"
+headers = { "X-GitHub-Event" = "status", "X-GitHub-Delivery" = "delivery-contract-status-success", "X-Hub-Signature-256" = "sha256=872533387fc2c4e2e11681288d212c716c3a5fe35e7771b6ec6ba034709993b8", "content-type" = "application/json" }
+metadata = { signing_secret = "test-signing-secret" }
+body = '''{"id":9101,"sha":"cccccccccccccccccccccccccccccccccccccccc","state":"success","context":"legacy/status","target_url":"https://ci.example.test/octo-repo/9101","description":"Legacy CI passed","branches":[{"name":"main"}],"created_at":"2026-04-20T16:05:00Z","updated_at":"2026-04-20T16:05:00Z","repository":{"name":"octo-repo","full_name":"octo-org/octo-repo","owner":{"id":2001,"login":"octo-org","type":"Organization"}},"sender":{"id":1001,"login":"octocat","type":"User"},"installation":{"id":3001}}'''
+expect_type = "event"
+expect_kind = "status"
+expect_signature_state = "verified"
+expect_payload_contains = { provider = "github", event = "status", installation_id = 3001 }
+expect_event_count = 1
+
+[[connector_contract.fixtures]]
+provider = "github"
+name = "merge group checks requested webhook"
+kind = "webhook"
+headers = { "X-GitHub-Event" = "merge_group", "X-GitHub-Delivery" = "delivery-contract-merge-group-checks-requested", "X-Hub-Signature-256" = "sha256=e9a802a5469f1cd73c92a06b26d5f18e71689381c172184a3817380fe145c98f", "content-type" = "application/json" }
+metadata = { signing_secret = "test-signing-secret" }
+body = '''{"action":"checks_requested","merge_group":{"id":9201,"head_ref":"gh-readonly-queue/main/pr-42-cccccccccccc","head_sha":"dddddddddddddddddddddddddddddddddddddddd","base_ref":"main","base_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","head_commit":{"timestamp":"2026-04-20T16:06:00Z"},"pull_requests":[{"number":42,"head":{"ref":"feature/connector-fixture","sha":"cccccccccccccccccccccccccccccccccccccccc"},"base":{"ref":"main","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}]},"repository":{"name":"octo-repo","full_name":"octo-org/octo-repo","owner":{"id":2001,"login":"octo-org","type":"Organization"}},"sender":{"id":1001,"login":"octocat","type":"User"},"installation":{"id":3001}}'''
+expect_type = "event"
+expect_kind = "merge_group"
+expect_signature_state = "verified"
+expect_payload_contains = { provider = "github", event = "merge_group", action = "checks_requested", installation_id = 3001 }
+expect_event_count = 1
+
+[[connector_contract.fixtures]]
+provider = "github"
+name = "installation suspend webhook"
+kind = "webhook"
+headers = { "X-GitHub-Event" = "installation", "X-GitHub-Delivery" = "delivery-contract-installation-suspend", "X-Hub-Signature-256" = "sha256=67cab28a2624f01d86151e5a87cc667436d4931387b95d51c27660d22b8c46da", "content-type" = "application/json" }
+metadata = { signing_secret = "test-signing-secret" }
+body = '''{"action":"suspend","installation":{"id":3001,"account":{"id":2001,"login":"octo-org","type":"Organization"},"repository_selection":"selected","suspended_at":"2026-04-20T18:00:00Z","suspended_by":{"id":1003,"login":"admin","type":"User"}},"repositories":[{"id":4001,"name":"octo-repo","full_name":"octo-org/octo-repo","private":false}],"sender":{"id":1003,"login":"admin","type":"User"}}'''
+expect_type = "event"
+expect_kind = "installation"
+expect_signature_state = "verified"
+expect_payload_contains = { provider = "github", event = "installation", action = "suspend", installation_id = 3001 }
+expect_event_count = 1
+
+[[connector_contract.fixtures]]
+provider = "github"
+name = "installation deleted webhook"
+kind = "webhook"
+headers = { "X-GitHub-Event" = "installation", "X-GitHub-Delivery" = "delivery-contract-installation-deleted", "X-Hub-Signature-256" = "sha256=74b770dbd0897fc170100b27f14b5018ad9049cffe395364a54c6f74a5ce7375", "content-type" = "application/json" }
+metadata = { signing_secret = "test-signing-secret" }
+body = '''{"action":"deleted","installation":{"id":3001,"account":{"id":2001,"login":"octo-org","type":"Organization"},"repository_selection":"selected"},"repositories":[{"id":4001,"name":"octo-repo","full_name":"octo-org/octo-repo","private":false}],"sender":{"id":1003,"login":"admin","type":"User"}}'''
+expect_type = "event"
+expect_kind = "installation"
+expect_signature_state = "verified"
+expect_payload_contains = { provider = "github", event = "installation", action = "deleted", installation_id = 3001 }
+expect_event_count = 1
+
+[[connector_contract.fixtures]]
+provider = "github"
+name = "installation repositories removed webhook"
+kind = "webhook"
+headers = { "X-GitHub-Event" = "installation_repositories", "X-GitHub-Delivery" = "delivery-contract-installation-repositories-removed", "X-Hub-Signature-256" = "sha256=6c9518ef23ec3fdc5bb028b07d7c4e74b3ec6c55098dd3ff9eb4e1ad05de250e", "content-type" = "application/json" }
+metadata = { signing_secret = "test-signing-secret" }
+body = '''{"action":"removed","installation":{"id":3001,"account":{"id":2001,"login":"octo-org","type":"Organization"},"repository_selection":"selected"},"repository_selection":"selected","repositories_added":[],"repositories_removed":[{"id":4001,"name":"octo-repo","full_name":"octo-org/octo-repo","private":false}],"sender":{"id":1003,"login":"admin","type":"User"}}'''
+expect_type = "event"
+expect_kind = "installation_repositories"
+expect_signature_state = "verified"
+expect_payload_contains = { provider = "github", event = "installation_repositories", action = "removed", installation_id = 3001 }
+expect_event_count = 1
+
+[[connector_contract.fixtures]]
+provider = "github"
 name = "invalid signature reject"
 kind = "webhook"
 headers = { "X-GitHub-Event" = "issues", "X-GitHub-Delivery" = "delivery-contract-invalid", "X-Hub-Signature-256" = "sha256=0000000000000000000000000000000000000000000000000000000000000000", "content-type" = "application/json" }

@@ -1,0 +1,14 @@
+{
+  "action": "removed",
+  "installation": {
+    "id": 3001,
+    "account": {"id": 2001, "login": "octo-org", "type": "Organization"},
+    "repository_selection": "selected"
+  },
+  "repository_selection": "selected",
+  "repositories_added": [],
+  "repositories_removed": [
+    {"id": 4001, "name": "octo-repo", "full_name": "octo-org/octo-repo", "private": false}
+  ],
+  "sender": {"id": 1003, "login": "admin", "type": "User"}
+}

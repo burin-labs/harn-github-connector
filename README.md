@@ -70,6 +70,39 @@ Inbound webhooks:
 - `workflow_run`
 - `deployment_status`
 - `check_run`
+- `check_suite`
+- `status`
+- `merge_group`
+- `installation`
+- `installation_repositories`
+
+Normalized webhook payloads use a stable provider envelope:
+
+| Field | Notes |
+|---|---|
+| `provider` | Always `github`. |
+| `event` | GitHub webhook event kind, such as `pull_request` or `merge_group`. |
+| `topic` | Stable subscription topic in the form `github.<event>` or `github.<event>.<action>`. |
+| `action` | GitHub payload action when present. |
+| `delivery_id` | `X-GitHub-Delivery`, also used for the event dedupe key. |
+| `installation_id` | GitHub App installation id when present. |
+| `repository` / `repo` | Raw repository object plus normalized `{owner, name, full_name}`. |
+| `raw` | Original GitHub payload for fields not promoted by the connector. |
+
+Merge Captain and release workflow consumers should subscribe to these stable
+topics:
+
+| Topic | Promoted fields |
+|---|---|
+| `github.pull_request.<action>` | `pull_request`, `pull_request_number`, `head_sha`, `head_ref`, `base_sha`, `base_ref`, `draft`, `merged`, `labels` |
+| `github.check_run.<action>` | `check_run`, `check_id`, `check_run_id`, `check_suite_id`, `pull_request_number`, `head_sha`, `head_ref`, `base_ref`, `name`, `status`, `conclusion` |
+| `github.check_suite.<action>` | `check_suite`, `check_suite_id`, `pull_request_number`, `head_sha`, `head_ref`, `base_ref`, `status`, `conclusion` |
+| `github.workflow_run.<action>` | `workflow_run`, `run_id`, `run_number`, `workflow_id`, `check_suite_id`, `pull_request_number`, `head_sha`, `head_ref`, `base_ref`, `name`, `status`, `conclusion` |
+| `github.status` | `commit_status`, `status_id`, `head_sha`, `head_ref`, `base_ref`, `state`, `context`, `target_url` |
+| `github.merge_group.<action>` | `merge_group`, `merge_group_id`, `head_sha`, `head_ref`, `base_sha`, `base_ref`, `pull_requests`, `pull_request_numbers` |
+| `github.push` | `ref`, `ref_name`, `before`, `after`, `head_sha`, `head_ref`, `commits`, `distinct_size`, `head_commit`, `pusher`, `created`, `deleted`, `forced` |
+| `github.installation.<action>` | `installation`, `account`, `installation_state`, `suspended`, `revoked`, `repositories` |
+| `github.installation_repositories.<action>` | `installation`, `account`, `installation_state`, `suspended`, `revoked`, `repository_selection`, `repositories_added`, `repositories_removed` |
 
 Outbound methods:
 

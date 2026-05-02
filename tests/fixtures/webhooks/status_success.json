@@ -1,0 +1,18 @@
+{
+  "id": 9101,
+  "sha": "cccccccccccccccccccccccccccccccccccccccc",
+  "state": "success",
+  "context": "legacy/status",
+  "target_url": "https://ci.example.test/octo-repo/9101",
+  "description": "Legacy CI passed",
+  "branches": [{"name": "main"}],
+  "created_at": "2026-04-20T16:05:00Z",
+  "updated_at": "2026-04-20T16:05:00Z",
+  "repository": {
+    "name": "octo-repo",
+    "full_name": "octo-org/octo-repo",
+    "owner": {"id": 2001, "login": "octo-org", "type": "Organization"}
+  },
+  "sender": {"id": 1001, "login": "octocat", "type": "User"},
+  "installation": {"id": 3001}
+}
