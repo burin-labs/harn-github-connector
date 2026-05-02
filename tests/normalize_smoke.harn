@@ -16,11 +16,21 @@ pipeline default() {
   assert_eq(pr.event.signature_status.state, "verified", "pr signed")
   assert_eq(pr.event.payload.action, "opened", "pull request action")
   assert_eq(pr.event.payload.pull_request.number, 42, "pull request number")
+  assert_eq(pr.event.payload.pull_request_number, 42, "normalized pull request number")
+  assert_eq(
+    pr.event.payload.head_sha,
+    "cccccccccccccccccccccccccccccccccccccccc",
+    "normalized pr head sha",
+  )
+  assert_eq(pr.event.payload.base_ref, "main", "normalized pr base ref")
+  assert_eq(pr.event.payload.topic, "github.pull_request.opened", "normalized pr topic")
   assert_eq(pr.event.payload.sender.login, "octocat", "pull request actor")
   assert(pr.event.dedupe_key != "" && pr.event.dedupe_key != nil, "pr dedupe key populated")
   let push = github_normalize(fixture_raw("push", secret, "push"))
   assert_eq(push.event.kind, "push", "push event kind")
   assert_eq(push.event.payload.after, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "push after")
+  assert_eq(push.event.payload.head_sha, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "push head sha")
+  assert_eq(push.event.payload.head_ref, "main", "push ref name")
   let issues = github_normalize(fixture_raw("issues_opened", secret, "issues"))
   assert_eq(issues.event.kind, "issues", "issues event kind")
   assert_eq(issues.event.payload.issue.number, 7, "issue number")
@@ -33,12 +43,50 @@ pipeline default() {
   let workflow = github_normalize(fixture_raw("workflow_run_completed", secret, "workflow_run"))
   assert_eq(workflow.event.kind, "workflow_run", "workflow run event kind")
   assert_eq(workflow.event.payload.workflow_run.conclusion, "success", "workflow conclusion")
+  assert_eq(workflow.event.payload.run_id, 6001, "workflow run id")
+  assert_eq(workflow.event.payload.check_suite_id, 8101, "workflow suite id")
+  assert_eq(workflow.event.payload.pull_request_number, 42, "workflow pr number")
   let deployment = github_normalize(fixture_raw("deployment_status_created", secret, "deployment_status"))
   assert_eq(deployment.event.kind, "deployment_status", "deployment status event kind")
   assert_eq(deployment.event.payload.deployment.environment, "staging", "deployment environment")
   let check = github_normalize(fixture_raw("check_run_completed", secret, "check_run"))
   assert_eq(check.event.kind, "check_run", "check run event kind")
   assert_eq(check.event.payload.check_run.conclusion, "success", "check conclusion")
+  assert_eq(check.event.payload.check_id, 8001, "check run id")
+  assert_eq(check.event.payload.check_suite_id, 8101, "check suite id")
+  assert_eq(check.event.payload.pull_request_number, 42, "check pr number")
+  let suite = github_normalize(fixture_raw("check_suite_requested", secret, "check_suite"))
+  assert_eq(suite.event.kind, "check_suite", "check suite event kind")
+  assert_eq(suite.event.payload.check_suite_id, 8101, "check suite normalized id")
+  assert_eq(suite.event.payload.head_ref, "feature/connector-fixture", "check suite head ref")
+  let status = github_normalize(fixture_raw("status_success", secret, "status"))
+  assert_eq(status.event.kind, "status", "status event kind")
+  assert_eq(status.event.payload.status_id, 9101, "status normalized id")
+  assert_eq(status.event.payload.head_sha, "cccccccccccccccccccccccccccccccccccccccc", "status sha")
+  let group = github_normalize(fixture_raw("merge_group_checks_requested", secret, "merge_group"))
+  assert_eq(group.event.kind, "merge_group", "merge group event kind")
+  assert_eq(group.event.payload.merge_group_id, 9201, "merge group id")
+  assert_eq(group.event.payload.pull_request_numbers[0], 42, "merge group pull number")
+  let suspended = github_normalize(fixture_raw("installation_suspend", secret, "installation"))
+  assert_eq(suspended.event.kind, "installation", "installation event kind")
+  assert_eq(suspended.event.payload.installation_state, "suspended", "installation suspension state")
+  assert(suspended.event.payload.suspended, "installation suspension flag")
+  let deleted = github_normalize(fixture_raw("installation_deleted", secret, "installation"))
+  assert_eq(deleted.event.payload.installation_state, "revoked", "installation revocation state")
+  assert(deleted.event.payload.revoked, "installation revocation flag")
+  let repo_removed = github_normalize(
+    fixture_raw("installation_repositories_removed", secret, "installation_repositories"),
+  )
+  assert_eq(
+    repo_removed.event.kind,
+    "installation_repositories",
+    "installation repositories event kind",
+  )
+  assert_eq(
+    repo_removed.event.payload.repositories_removed[0].full_name,
+    "octo-org/octo-repo",
+    "removed repo",
+  )
   let body = fixture_body("issues_opened")
   let tampered = github_normalize(
     {signing_secret: secret, body_text: body + " ", headers: github_headers(secret, body, "issues")},

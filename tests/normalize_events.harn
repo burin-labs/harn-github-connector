@@ -12,15 +12,39 @@ pipeline default() {
     ["workflow_run_completed", "workflow_run", "workflow_run.completed"],
     ["deployment_status_created", "deployment_status", "deployment_status.created"],
     ["check_run_completed", "check_run", "check_run.completed"],
+    ["check_suite_requested", "check_suite", "check_suite.requested"],
+    ["status_success", "status", "status"],
+    ["merge_group_checks_requested", "merge_group", "merge_group.checks_requested"],
+    ["installation_suspend", "installation", "installation.suspend"],
+    ["installation_deleted", "installation", "installation.deleted"],
+    [
+      "installation_repositories_removed",
+      "installation_repositories",
+      "installation_repositories.removed",
+    ],
   ]
   for [name, event, event_type] in cases {
     let normalized = github_normalize(fixture_raw(name, secret, event))
     assert_eq(normalized.type, "event", name + " envelope type")
     assert_eq(normalized.event.kind, event, name + " event kind")
+    assert_eq(normalized.event.payload.provider, "github", name + " provider")
+    assert_eq(normalized.event.payload.event, event, name + " payload event")
+    assert_eq(normalized.event.payload.delivery_id, "delivery-1", name + " delivery id")
+    assert_eq(
+      normalized.event.payload.raw.sender.login,
+      normalized.event.payload.sender.login,
+      name + " raw preserved",
+    )
     if contains(event_type, ".") {
       assert_eq(event + "." + normalized.event.payload.action, event_type, name + " payload event type")
+      assert_eq(normalized.event.topic, "github." + event_type, name + " topic")
+    } else {
+      assert_eq(normalized.event.topic, "github." + event_type, name + " topic")
     }
-    assert_eq(normalized.event.payload.repository.full_name, "octo-org/octo-repo", name + " repo")
+    if normalized.event.payload.repository != nil {
+      assert_eq(normalized.event.payload.repository.full_name, "octo-org/octo-repo", name + " repo")
+      assert_eq(normalized.event.payload.repo.full_name, "octo-org/octo-repo", name + " normalized repo")
+    }
   }
   let unsupported = github_normalize(fixture_raw("issues_opened", secret, "member"))
   assert_eq(unsupported.type, "reject", "unsupported events reject in v0")

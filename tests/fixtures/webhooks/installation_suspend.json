@@ -1,0 +1,14 @@
+{
+  "action": "suspend",
+  "installation": {
+    "id": 3001,
+    "account": {"id": 2001, "login": "octo-org", "type": "Organization"},
+    "repository_selection": "selected",
+    "suspended_at": "2026-04-20T18:00:00Z",
+    "suspended_by": {"id": 1003, "login": "admin", "type": "User"}
+  },
+  "repositories": [
+    {"id": 4001, "name": "octo-repo", "full_name": "octo-org/octo-repo", "private": false}
+  ],
+  "sender": {"id": 1003, "login": "admin", "type": "User"}
+}

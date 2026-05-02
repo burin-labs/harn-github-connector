@@ -1,22 +1,19 @@
 {
-  "action": "completed",
-  "check_run": {
-    "id": 8001,
-    "name": "Harn CI",
-    "status": "completed",
-    "conclusion": "success",
-    "html_url": "https://github.com/octo-org/octo-repo/runs/8001",
-    "head_sha": "cccccccccccccccccccccccccccccccccccccccc",
-    "check_suite": {"id": 8101},
+  "action": "checks_requested",
+  "merge_group": {
+    "id": 9201,
+    "head_ref": "gh-readonly-queue/main/pr-42-cccccccccccc",
+    "head_sha": "dddddddddddddddddddddddddddddddddddddddd",
+    "base_ref": "main",
+    "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "head_commit": {"timestamp": "2026-04-20T16:06:00Z"},
     "pull_requests": [
       {
         "number": 42,
         "head": {"ref": "feature/connector-fixture", "sha": "cccccccccccccccccccccccccccccccccccccccc"},
         "base": {"ref": "main", "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
       }
-    ],
-    "started_at": "2026-04-20T16:00:00Z",
-    "completed_at": "2026-04-20T16:03:00Z"
+    ]
   },
   "repository": {
     "name": "octo-repo",
