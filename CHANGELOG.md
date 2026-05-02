@@ -1,6 +1,19 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 - 2026-05-02
+
+- Add typed normalized webhook payloads and stable `github.<event>[.<action>]`
+  topics for Merge Captain and release workflow consumers.
+- Add inbound support for `check_suite`, `status`, `merge_group`,
+  `installation`, and `installation_repositories` webhooks.
+- Promote PR/check/workflow/status/merge-group identifiers such as
+  `pull_request_number`, `head_sha`, `base_ref`, `run_id`, `check_id`,
+  `check_suite_id`, and `merge_group_id`.
+- Promote installation suspension and revocation fields so hosted consumers can
+  pause affected captains cleanly.
+- Add deterministic replay fixtures and connector contract coverage for the new
+  event families.
+- Document stable GitHub webhook topics and promoted payload fields.
 
 - Add typed outbound methods for PR list/view/checks/merge/comment, Actions
   logs, merge queue entries/enqueue, issue create/comment, and branch
