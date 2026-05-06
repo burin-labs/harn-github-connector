@@ -148,6 +148,81 @@ Outbound methods:
 | `check_runs.update` | `PATCH /repos/{owner}/{repo}/check-runs/{check_run_id}` |
 | `graphql` | `POST /graphql` |
 
+## Orchestration helpers
+
+These higher-level helpers compose the low-level methods above for common
+harness flows. They return stable result envelopes so callers can branch on
+shape without inspecting raw GitHub responses.
+
+| Helper | Purpose |
+|---|---|
+| `github_dispatch_workflow_and_wait(owner, repo, workflow_id, ref, inputs, options)` | Dispatch a `workflow_dispatch` workflow and wait for the resulting run to reach `completed`. |
+| `github_wait_for_workflow_run(owner, repo, run_id_or_filter, options)` | Poll an existing workflow run, or one matching a filter dict, until it completes or the loop times out. |
+| `github_ensure_auto_merge(owner, repo, pull_number, options)` | Enable GitHub auto-merge through the GraphQL mutation, normalizing `merge`/`squash`/`rebase` and treating already-enabled as success. |
+| `github_wait_for_pr_checks(owner, repo, pull_number_or_ref, options)` | Wait for visible CI checks on a PR or commit to leave the queued/pending state. Optionally summarizes failing-check Actions logs. |
+| `github_find_open_pr(owner, repo, options)` | Find the first open PR matching simple `head_ref`/`base_ref`/`title`/`labels` filters. |
+| `github_close_pr(owner, repo, pull_number, comment, options)` | Close a PR, optionally posting a final comment first. |
+
+Common option fields:
+
+- Auth options (`installation_token`, `app_id`/`installation_id`/`private_key_secret`,
+  `api_base_url`, `allow_gh_auth_fallback`, ...) are accepted and forwarded
+  through the existing `call(...)` configuration path.
+- `poll_interval_ms`, `timeout_ms`, and `max_attempts` control the wait
+  helpers. `max_attempts` overrides the timeout when set, which keeps tests
+  deterministic without wall-clock dependence.
+- `github_dispatch_workflow_and_wait` accepts `event`, `branch`, `head_sha`,
+  `per_page`, and `created_after` as filters when locating the run that the
+  dispatch produced (used when GitHub does not return a run id directly).
+- `github_wait_for_pr_checks` accepts `include_logs: true` and an optional
+  `log_tail_lines` (default 200) to attach a tailed summary of Actions logs
+  for failing checks. Checks whose details URL does not point to an Actions
+  run are surfaced with `error: "no_actions_run_url"`.
+- `github_find_open_pr` accepts `head_ref`, `head_owner`, `base_ref`, `state`
+  (default `open`), `title` (substring match), and `labels` (all-must-match).
+
+Stable return shapes:
+
+```text
+github_dispatch_workflow_and_wait / github_wait_for_workflow_run →
+{
+  ok, status, conclusion, run_id, run_url, workflow_id,
+  created_at, started_at, updated_at,
+  attempts: [...],
+  timed_out, error,
+}
+# status ∈ {completed, timed_out, dispatch_failed, run_not_found, poll_failed}
+
+github_ensure_auto_merge →
+{
+  ok, state, already_enabled, requested_method, merge_method,
+  pull_number, url, strategy, error,
+}
+# state ∈ {enabled, already_enabled, failed}
+
+github_wait_for_pr_checks →
+{
+  ok, state, head_sha,
+  checks, failing_checks, pending_checks,
+  attempts: [...],
+  timed_out,
+  logs?: [{check_id, name, run_id, content, lines, truncated, error}],
+}
+# state ∈ {green, failing, pending, timed_out, unknown}
+
+github_find_open_pr →
+{ ok, found, pull_number, pull_request, total_matches, matches, error }
+
+github_close_pr →
+{ ok, pull_number, state, comment_posted, pull_request, error }
+```
+
+These helpers are orchestration-level building blocks for harness authors.
+For one-shot REST/GraphQL access prefer `call(method, args)` directly. For
+local-dev convenience the auth options still honor `allow_gh_auth_fallback:
+true` so a developer-scoped `gh auth token` can stand in for a configured
+GitHub App installation token; production harnesses should not depend on it.
+
 ## Supported methods for managed personas
 
 Managed personas should prefer the named helpers for high-level workflows and
