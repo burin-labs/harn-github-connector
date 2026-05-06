@@ -112,7 +112,11 @@ Outbound methods:
 | `github.pr.view` | Typed PR details plus branch protection summary |
 | `github.pr.checks` | Typed check-run rollup over `GET /repos/{owner}/{repo}/commits/{sha}/check-runs` |
 | `github.pr.merge` | Branch-protection-aware typed merge helper |
+| `github.pr.enable_auto_merge` | GraphQL auto-merge helper using `enablePullRequestAutoMerge` |
 | `github.pr.comment` | Typed PR comment helper over the issues comments endpoint |
+| `github.actions.workflow_dispatch` | Typed workflow dispatch helper for a repo slug |
+| `github.actions.runs` | Typed workflow-run list helper for a repo slug |
+| `github.actions.run` | Typed workflow-run fetch helper for a repo slug |
 | `github.actions.logs` | Fetch Actions logs by `run_id` or by `check_id` when the check links to an Actions run |
 | `github.merge_queue.entries` | Typed merge queue entries for a base branch |
 | `github.merge_queue.enqueue` | Enqueue a PR on the merge queue |
@@ -134,8 +138,12 @@ Outbound methods:
 | `pulls.list_files` | `GET /repos/{owner}/{repo}/pulls/{pull_number}/files` |
 | `pulls.list_reviews` | `GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews` |
 | `repos.get_content` | `GET /repos/{owner}/{repo}/contents/{path}` |
+| `repos.get_text` | Convenience wrapper over `repos.get_content` that decodes base64 file content |
 | `repos.get_branch_protection` | `GET /repos/{owner}/{repo}/branches/{branch}/protection` |
 | `git.delete_ref` | `DELETE /repos/{owner}/{repo}/git/refs/{ref}` |
+| `actions.workflow_dispatch` | `POST /repos/{owner}/{repo}/actions/workflows/{workflow_id}/dispatches` |
+| `actions.workflow_runs.list` | `GET /repos/{owner}/{repo}/actions/runs` or workflow-scoped runs |
+| `actions.workflow_run.get` | `GET /repos/{owner}/{repo}/actions/runs/{run_id}` |
 | `check_runs.create` | `POST /repos/{owner}/{repo}/check-runs` |
 | `check_runs.update` | `PATCH /repos/{owner}/{repo}/check-runs/{check_run_id}` |
 | `graphql` | `POST /graphql` |
@@ -150,6 +158,9 @@ use `call(method, args)` only for direct method dispatch.
 | List PRs as typed records | `call("github.pr.list", {repo: "owner/name", filters: {...}})` | Returns stable fields such as `number`, `state`, `base.sha`, `head.sha`, labels, and merge-queue presence. |
 | Fetch PR details with branch policy | `call("github.pr.view", {repo, number})` | Includes `base`, `head`, `mergeable_state`, `branch_protection`, and the raw payload for uncommon GitHub fields. |
 | Classify checks | `call("github.pr.checks", {repo, number})` or `{repo, head_sha}` | Returns `state` as `green`, `pending`, `failing`, `dirty`, `queued`, or `merged` where enough PR context is available, plus per-check timings. |
+| Enable auto-merge | `pulls_enable_auto_merge(owner, repo, number, options)` or `call("github.pr.enable_auto_merge", {repo, number})` | Uses GitHub GraphQL auto-merge, normalizes `merge`/`squash`/`rebase`, and passes the expected head OID when available. Merge-queue repositories ignore the requested merge method as GitHub does. |
+| Dispatch workflows | `actions_workflow_dispatch(owner, repo, workflow_id, ref, inputs, options)` | Requests `return_run_details` by default so callers can poll the exact run when GitHub returns it. |
+| List workflow runs | `actions_workflow_runs(owner, repo, options)` or `call("actions.workflow_runs.list", args)` | Supports repository-wide or workflow-scoped listing with common run filters such as `event`, `branch`, `status`, `head_sha`, and pagination. |
 | Fetch Actions logs | `call("github.actions.logs", {repo, run_id})` | `check_id` is also accepted when GitHub exposes an Actions run URL on the check run. |
 | Use merge queue | `call("github.merge_queue.entries", {repo, branch})` and `call("github.merge_queue.enqueue", {repo, branch, pr_number, method})` | Matches the mock playground merge queue surface used by managed captain workflows. |
 | List open PRs with merge state and CI rollup | `pulls_list_with_checks(owner, repo, state, limit, options)` or `call("pulls.list_with_checks", args)` | Uses GraphQL because `mergeStateStatus` and `statusCheckRollup` are GraphQL PR fields surfaced by `gh pr --json`; the REST list endpoint does not return the same check rollup shape. Returns `number`, `title`, `headRefName`, `baseRefName`, `isDraft`, `mergeStateStatus`, `statusCheckRollup`, and `url`. |
@@ -160,6 +171,7 @@ use `call(method, args)` only for direct method dispatch.
 | Update issues | `call("issues.update", args)` | Supports fields accepted by GitHub's issue update endpoint, such as `state`, `title`, `body`, `labels`, `assignees`, and `milestone`. |
 | Add issue or PR labels | `call("issues.add_labels", args)` | Uses the issue-labels endpoint; GitHub models PRs as issues for labels. |
 | Inspect branch protection | `call("repos.get_branch_protection", args)` | Used by `pulls.merge_safe` before admin merges. |
+| Read repository file text | `repos_get_text(owner, repo, path, ref, options)` or `call("repos.get_text", args)` | Decodes GitHub contents API base64 file payloads and rejects directory listings. |
 | List changed files | `call("pulls.list_files", args)` | Used by review/conflict workflows. |
 | List reviews | `call("pulls.list_reviews", args)` | Used by review workflows. |
 
@@ -208,10 +220,14 @@ Required GitHub App permissions depend on the outbound method:
   `pulls.list_files`, `pulls.list_reviews`: Pull requests read.
 - `pulls.merge`, `pulls.merge_safe`: Pull requests write, and administrator or
   bypass permissions when merging protected branches.
+- `github.pr.enable_auto_merge`: Pull requests write. GitHub GraphQL also
+  enforces repository auto-merge and merge-queue settings.
 - `pulls.create_review_comment`: Pull requests write.
-- `repos.get_content`: Contents read.
+- `repos.get_content`, `repos.get_text`: Contents read.
 - `repos.get_branch_protection`: Administration read.
 - `git.delete_ref`: Contents write.
+- `actions.workflow_dispatch`: Actions write.
+- `actions.workflow_runs.list`, `actions.workflow_run.get`: Actions read.
 - `check_runs.create`, `check_runs.update`: Checks read/write.
 - `graphql`: the installed app must have the permissions required by the query
   or mutation.

@@ -1,0 +1,155 @@
+import {
+  actions_workflow_dispatch,
+  actions_workflow_runs,
+  call,
+  pulls_enable_auto_merge,
+  repos_get_text,
+} from "../src/lib"
+
+pipeline test_repo_automation_methods(task) {
+  http_mock_clear()
+  let base = "https://github-api.test"
+  let token = "github-installation-token"
+  let auth = {api_base_url: base, installation_token: token}
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/contents/.harn-version?ref=main",
+    {
+      status: 200,
+      body: json_stringify(
+        {
+          name: ".harn-version",
+          path: ".harn-version",
+          sha: "file-sha",
+          size: 7,
+          encoding: "base64",
+          content: base64_encode("v0.7.59\n"),
+        },
+      ),
+      headers: {"x-ratelimit-remaining": "10"},
+    },
+  )
+  let text = repos_get_text("octo-org", "octo-repo", ".harn-version", "main", auth)
+  assert_eq(trim(text.text), "v0.7.59", "repos.get_text decodes base64 content")
+  http_mock(
+    "POST",
+    base + "/repos/octo-org/octo-repo/actions/workflows/bump-harn.yml/dispatches",
+    {
+      status: 200,
+      body: json_stringify(
+        {
+          workflow_run_id: 123,
+          run_url: base + "/repos/octo-org/octo-repo/actions/runs/123",
+          html_url: "https://github.com/octo-org/octo-repo/actions/runs/123",
+        },
+      ),
+      headers: {"x-ratelimit-remaining": "9"},
+    },
+  )
+  let dispatch = actions_workflow_dispatch(
+    "octo-org",
+    "octo-repo",
+    "bump-harn.yml",
+    "main",
+    {version: "v0.7.59"},
+    auth,
+  )
+  assert_eq(dispatch.workflow_run_id, 123, "workflow dispatch returns run id when GitHub provides it")
+  http_mock(
+    "GET",
+    base
+      + "/repos/octo-org/octo-repo/actions/workflows/bump-harn.yml/runs?event=workflow_dispatch&per_page=5",
+    {
+      status: 200,
+      body: json_stringify(
+        {
+          total_count: 1,
+          workflow_runs: [
+            {
+              id: 123,
+              status: "completed",
+              conclusion: "success",
+              html_url: "https://github.com/octo-org/octo-repo/actions/runs/123",
+            },
+          ],
+        },
+      ),
+      headers: {"x-ratelimit-remaining": "8"},
+    },
+  )
+  let runs = actions_workflow_runs(
+    "octo-org",
+    "octo-repo",
+    auth + {workflow_id: "bump-harn.yml", event: "workflow_dispatch", per_page: 5},
+  )
+  assert_eq(runs.workflow_runs[0].id, 123, "workflow runs list response")
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/actions/runs/123",
+    {
+      status: 200,
+      body: json_stringify({id: 123, status: "completed", conclusion: "success"}),
+      headers: {"x-ratelimit-remaining": "7"},
+    },
+  )
+  let run = call("actions.workflow_run.get", auth + {owner: "octo-org", repo: "octo-repo", run_id: 123})
+  assert_eq(run.conclusion, "success", "workflow run get response")
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/pulls/7",
+    {
+      status: 200,
+      body: json_stringify(
+        {
+          number: 7,
+          node_id: "PR_node_7",
+          head: {sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+          auto_merge: nil,
+        },
+      ),
+      headers: {"x-ratelimit-remaining": "6"},
+    },
+  )
+  http_mock(
+    "POST",
+    base + "/graphql",
+    {
+      status: 200,
+      body: json_stringify(
+        {
+          data: {
+            enablePullRequestAutoMerge: {
+              actor: {login: "octocat"},
+              pullRequest: {
+                number: 7,
+                url: "https://github.com/octo-org/octo-repo/pull/7",
+                mergeStateStatus: "CLEAN",
+                autoMergeRequest: {enabledAt: "2026-05-06T18:00:00Z", mergeMethod: "SQUASH"},
+              },
+            },
+          },
+        },
+      ),
+      headers: {"x-ratelimit-remaining": "5"},
+    },
+  )
+  let auto_merge = pulls_enable_auto_merge("octo-org", "octo-repo", 7, auth + {method: "squash"})
+  assert_eq(auto_merge.state, "enabled", "auto-merge enabled state")
+  assert_eq(auto_merge.requested_method, "SQUASH", "auto-merge merge method normalized")
+  let calls = http_mock_calls()
+  let dispatch_body = json_parse(calls[1].body)
+  let mutation_body = json_parse(calls[5].body)
+  let mutation_vars = mutation_body.get("variables")
+  assert_eq(dispatch_body.get("return_run_details"), true, "workflow dispatch asks for run details")
+  assert_eq(mutation_vars.get("pullRequestId"), "PR_node_7", "auto-merge mutation uses PR node id")
+  assert_eq(
+    mutation_vars.get("expectedHeadOid"),
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "auto-merge mutation uses expected head oid",
+  )
+  assert(
+    contains(mutation_body.get("query"), "enablePullRequestAutoMerge"),
+    "auto-merge mutation name",
+  )
+  http_mock_clear()
+}

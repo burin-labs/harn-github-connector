@@ -11,7 +11,11 @@ let GITHUB_OUTBOUND_METHODS = [
   "github.pr.view",
   "github.pr.checks",
   "github.pr.merge",
+  "github.pr.enable_auto_merge",
   "github.pr.comment",
+  "github.actions.workflow_dispatch",
+  "github.actions.runs",
+  "github.actions.run",
   "github.actions.logs",
   "github.merge_queue.entries",
   "github.merge_queue.enqueue",
@@ -33,8 +37,12 @@ let GITHUB_OUTBOUND_METHODS = [
   "pulls.list_files",
   "pulls.list_reviews",
   "repos.get_content",
+  "repos.get_text",
   "repos.get_branch_protection",
   "git.delete_ref",
+  "actions.workflow_dispatch",
+  "actions.workflow_runs.list",
+  "actions.workflow_run.get",
   "check_runs.create",
   "check_runs.update",
   "graphql",
@@ -210,8 +218,20 @@ pub fn call(method, args = {}) {
   if method == "github.pr.merge" {
     return __github_pr_merge(args, cfg)
   }
+  if method == "github.pr.enable_auto_merge" {
+    return __github_pr_enable_auto_merge(args, cfg)
+  }
   if method == "github.pr.comment" {
     return __github_issue_comment(args + {issue_number: args?.pr_number ?? args?.number}, cfg)
+  }
+  if method == "github.actions.workflow_dispatch" {
+    return __github_actions_workflow_dispatch(args, cfg)
+  }
+  if method == "github.actions.runs" {
+    return __github_actions_runs(args, cfg)
+  }
+  if method == "github.actions.run" {
+    return __github_actions_run(args, cfg)
   }
   if method == "github.actions.logs" {
     return __github_actions_logs(args, cfg)
@@ -386,6 +406,9 @@ pub fn call(method, args = {}) {
       cfg,
     )
   }
+  if method == "repos.get_text" {
+    return __repos_get_text(args, cfg)
+  }
   if method == "repos.get_branch_protection" {
     return __github_json(
       "GET",
@@ -409,6 +432,15 @@ pub fn call(method, args = {}) {
       nil,
       cfg,
     )
+  }
+  if method == "actions.workflow_dispatch" {
+    return __actions_workflow_dispatch(args, cfg)
+  }
+  if method == "actions.workflow_runs.list" {
+    return __actions_workflow_runs_list(args, cfg)
+  }
+  if method == "actions.workflow_run.get" {
+    return __actions_workflow_run_get(args, cfg)
   }
   if method == "check_runs.create" {
     return __github_json(
@@ -447,6 +479,45 @@ pub fn pulls_list_with_checks(owner, repo, state = "open", limit = 100, options 
 pub fn pulls_merge_safe(owner, repo, number, options = nil) {
   let opts = options ?? {}
   return call("pulls.merge_safe", opts + {owner: owner, repo: repo, pull_number: number})
+}
+
+/** Enable GitHub auto-merge for a PR through the GraphQL auto-merge mutation. */
+pub fn pulls_enable_auto_merge(owner, repo, number, options = nil) {
+  let opts = options ?? {}
+  return call("github.pr.enable_auto_merge", opts + {owner: owner, repo: repo, pull_number: number})
+}
+
+/** Dispatch a workflow_dispatch workflow and request run details when GitHub supports them. */
+pub fn actions_workflow_dispatch(
+  owner,
+  repo,
+  workflow_id,
+  ref = "main",
+  inputs = nil,
+  options = nil,
+) {
+  let opts = options ?? {}
+  return call(
+    "actions.workflow_dispatch",
+    opts
+      + {owner: owner, repo: repo, workflow_id: workflow_id, ref: ref, inputs: inputs ?? {}},
+  )
+}
+
+/** List workflow runs for a repository or one workflow file/id. */
+pub fn actions_workflow_runs(owner, repo, options = nil) {
+  let opts = options ?? {}
+  return call("actions.workflow_runs.list", opts + {owner: owner, repo: repo})
+}
+
+/** Read a repository file as decoded UTF-8 text at an optional ref. */
+pub fn repos_get_text(owner, repo, path, ref = nil, options = nil) {
+  let opts = options ?? {}
+  var args = opts + {owner: owner, repo: repo, path: path}
+  if ref != nil {
+    args["ref"] = ref
+  }
+  return call("repos.get_text", args)
 }
 
 /** Create an issue from a small title/body template and variables. */
@@ -593,6 +664,46 @@ fn __github_pr_merge(args, cfg) {
     return merged
   }
   return merged + {repo: r.full_name, pull_number: number, requested_method: method, state: "merged"}
+}
+
+fn __github_pr_enable_auto_merge(args, cfg) {
+  let repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  let r = unwrap(repo)
+  let number = args?.pr_number ?? args?.number ?? args?.pull_number
+  if number == nil {
+    return __err("schema_drift", "github.pr.enable_auto_merge requires number, pr_number, or pull_number")
+  }
+  return __pulls_enable_auto_merge(args + {owner: r.owner, repo: r.name, pull_number: number}, cfg)
+}
+
+fn __github_actions_workflow_dispatch(args, cfg) {
+  let repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  let r = unwrap(repo)
+  return __actions_workflow_dispatch(args + {owner: r.owner, repo: r.name}, cfg)
+}
+
+fn __github_actions_runs(args, cfg) {
+  let repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  let r = unwrap(repo)
+  return __actions_workflow_runs_list(args + {owner: r.owner, repo: r.name}, cfg)
+}
+
+fn __github_actions_run(args, cfg) {
+  let repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  let r = unwrap(repo)
+  return __actions_workflow_run_get(args + {owner: r.owner, repo: r.name}, cfg)
 }
 
 fn __github_actions_logs(args, cfg) {
@@ -929,6 +1040,170 @@ fn __pulls_merge_safe(args, cfg) {
   return result
 }
 
+fn __pulls_enable_auto_merge(args, cfg) {
+  let pull = __github_json(
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/pulls/" + to_string(args.pull_number),
+    ),
+    nil,
+    cfg,
+  )
+  if is_err(pull) {
+    return pull
+  }
+  if pull?.auto_merge != nil {
+    return {
+      repo: to_string(args.owner) + "/" + to_string(args.repo),
+      pull_number: args.pull_number,
+      state: "already_enabled",
+      auto_merge: pull.auto_merge,
+      pull_request: pull,
+    }
+  }
+  let node_id = pull?.node_id
+  if node_id == nil || trim(to_string(node_id)) == "" {
+    return __err("schema_drift", "GitHub PR response did not include node_id for auto-merge")
+  }
+  let method = __graphql_merge_method(args?.method ?? args?.merge_method ?? "MERGE")
+  if is_err(method) {
+    return method
+  }
+  let graph = __github_json(
+    "POST",
+    __github_api_url(cfg.api_base_url, "/graphql"),
+    {
+      query: __enable_auto_merge_mutation(),
+      variables: {
+        pullRequestId: node_id,
+        mergeMethod: unwrap(method),
+        commitHeadline: args?.commit_headline ?? args?.commit_title,
+        commitBody: args?.commit_body ?? args?.commit_message,
+        expectedHeadOid: args?.expected_head_oid ?? args?.expectedHeadOid ?? pull?.head?.sha,
+      },
+    },
+    cfg,
+  )
+  if is_err(graph) {
+    return graph
+  }
+  if graph?.errors != nil && len(graph.errors) > 0 {
+    return __err("graphql", "github GraphQL returned errors: " + json_stringify(graph.errors))
+  }
+  let enabled = graph?.data?.enablePullRequestAutoMerge ?? {}
+  return {
+    repo: to_string(args.owner) + "/" + to_string(args.repo),
+    pull_number: args.pull_number,
+    state: "enabled",
+    requested_method: unwrap(method),
+    pull_request: enabled?.pullRequest,
+    actor: enabled?.actor,
+    raw: enabled,
+  }
+}
+
+fn __repos_get_text(args, cfg) {
+  let content = __github_json(
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/contents/"
+        + __trim_leading_slash(args.path ?? "")
+        + __ref_query(args),
+    ),
+    nil,
+    cfg,
+  )
+  if is_err(content) {
+    return content
+  }
+  if type_of(content) == "list" {
+    return __err(
+      "schema_drift",
+      "repos.get_text requires a file path, but GitHub returned a directory listing",
+    )
+  }
+  let encoding = lowercase(content?.encoding ?? "")
+  if encoding != "base64" {
+    return __err("invalid_response", "repos.get_text only supports base64-encoded GitHub file content")
+  }
+  let encoded = (content?.content ?? "").replace("\n", "")
+  let decoded = try {
+    base64_decode(encoded)
+  }
+  if is_err(decoded) {
+    return __err("invalid_response", "repos.get_text could not decode base64 file content")
+  }
+  return {
+    name: content?.name,
+    path: content?.path,
+    sha: content?.sha,
+    size: content?.size,
+    encoding: encoding,
+    ref: args?.ref,
+    text: unwrap(decoded),
+    raw: if args?.include_raw ?? false {
+      content
+    } else {
+      nil
+    },
+  }
+}
+
+fn __actions_workflow_dispatch(args, cfg) {
+  let workflow_id = args?.workflow_id ?? args?.workflow ?? args?.workflow_file
+  if workflow_id == nil || trim(to_string(workflow_id)) == "" {
+    return __err("schema_drift", "actions.workflow_dispatch requires workflow_id, workflow, or workflow_file")
+  }
+  let ref = args?.ref ?? args?.branch ?? "main"
+  let body = {ref: ref, inputs: args?.inputs ?? {}, return_run_details: args?.return_run_details ?? true}
+  return __github_json(
+    "POST",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/actions/workflows/"
+        + url_encode(to_string(workflow_id))
+        + "/dispatches",
+    ),
+    body,
+    cfg,
+  )
+}
+
+fn __actions_workflow_runs_list(args, cfg) {
+  let workflow_id = args?.workflow_id ?? args?.workflow ?? args?.workflow_file
+  let path = if workflow_id == nil || trim(to_string(workflow_id)) == "" {
+    "/repos/" + args.owner + "/" + args.repo + "/actions/runs"
+  } else {
+    "/repos/" + args.owner + "/" + args.repo + "/actions/workflows/"
+      + url_encode(to_string(workflow_id))
+      + "/runs"
+  }
+  return __github_json(
+    "GET",
+    __github_api_url(cfg.api_base_url, path + __workflow_runs_query(args)),
+    nil,
+    cfg,
+  )
+}
+
+fn __actions_workflow_run_get(args, cfg) {
+  let run_id = args?.run_id ?? args?.id
+  if run_id == nil || trim(to_string(run_id)) == "" {
+    return __err("schema_drift", "actions.workflow_run.get requires run_id or id")
+  }
+  return __github_json(
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/actions/runs/" + to_string(run_id),
+    ),
+    nil,
+    cfg,
+  )
+}
+
 fn __render_template(template, vars) {
   var rendered = to_string(template ?? "")
   for entry in (vars ?? {}).entries() {
@@ -975,6 +1250,35 @@ query HarnGithubConnectorPullsWithChecks($owner: String!, $repo: String!, $state
   }
 }
 """
+}
+
+fn __enable_auto_merge_mutation() {
+  return """
+mutation HarnGithubConnectorEnableAutoMerge($pullRequestId: ID!, $mergeMethod: PullRequestMergeMethod, $commitHeadline: String, $commitBody: String, $expectedHeadOid: GitObjectID) {
+  enablePullRequestAutoMerge(input: {pullRequestId: $pullRequestId, mergeMethod: $mergeMethod, commitHeadline: $commitHeadline, commitBody: $commitBody, expectedHeadOid: $expectedHeadOid}) {
+    actor {
+      login
+    }
+    pullRequest {
+      number
+      url
+      mergeStateStatus
+      autoMergeRequest {
+        enabledAt
+        mergeMethod
+      }
+    }
+  }
+}
+"""
+}
+
+fn __graphql_merge_method(method) {
+  let normalized = uppercase(to_string(method ?? "MERGE"))
+  if normalized == "MERGE" || normalized == "SQUASH" || normalized == "REBASE" {
+    return Ok(normalized)
+  }
+  return __err("schema_drift", "merge method must be MERGE, SQUASH, or REBASE")
 }
 
 fn __normalize_graphql_pr(node) {
@@ -1653,7 +1957,7 @@ fn __build_event(event_kind, payload, raw, headers) {
     delivery_id: delivery_id,
     signature_status: {state: "verified"},
     payload: normalized_payload,
-    headers: {["x-github-event"]: event_kind, ["x-github-delivery"]: delivery_id},
+    headers: {"x-github-event": event_kind, "x-github-delivery": delivery_id},
   }
 }
 
@@ -2143,6 +2447,21 @@ fn __pagination_query(args) {
   return "?" + join(parts, "&")
 }
 
+fn __workflow_runs_query(args) {
+  var parts = []
+  let keys = ["actor", "branch", "event", "status", "created", "check_suite_id", "head_sha", "per_page", "page"]
+  for key in keys {
+    let value = args.get(key)
+    if value != nil {
+      parts = parts + [key + "=" + url_encode(to_string(value))]
+    }
+  }
+  if len(parts) == 0 {
+    return ""
+  }
+  return "?" + join(parts, "&")
+}
+
 fn __pulls_list_query(args) {
   var parts = []
   if args?.state != nil {
@@ -2197,8 +2516,8 @@ fn __github_request(method, url, body, cfg, accept, parse_json) {
     var options = {
       headers: {
         Accept: accept,
-        ["X-GitHub-Api-Version"]: GITHUB_API_VERSION,
-        ["User-Agent"]: GITHUB_USER_AGENT,
+        "X-GitHub-Api-Version": GITHUB_API_VERSION,
+        "User-Agent": GITHUB_USER_AGENT,
         Authorization: "Bearer " + current_token,
       },
       retry: {max: 0, backoff_ms: 0},
@@ -2369,10 +2688,10 @@ fn __exchange_installation_token(config) {
       {
         headers: {
           Accept: "application/vnd.github+json",
-          ["X-GitHub-Api-Version"]: GITHUB_API_VERSION,
-          ["User-Agent"]: GITHUB_USER_AGENT,
+          "X-GitHub-Api-Version": GITHUB_API_VERSION,
+          "User-Agent": GITHUB_USER_AGENT,
           Authorization: "Bearer " + jwt,
-          ["Content-Type"]: "application/json",
+          "Content-Type": "application/json",
         },
         body: "",
         timeout_ms: config?.timeout_ms ?? 30000,

@@ -58,7 +58,7 @@ pipeline default() {
           },
         ],
       ),
-      headers: {["x-ratelimit-remaining"]: "20"},
+      headers: {"x-ratelimit-remaining": "20"},
     },
   )
   let prs = call("github.pr.list", auth + {repo: "octo-org/octo-repo", filters: {state: "open", per_page: 4}})
@@ -90,12 +90,12 @@ pipeline default() {
               user: {id: 1001, login: "octocat", type: "User"},
             },
           ),
-          headers: {["x-ratelimit-remaining"]: "19"},
+          headers: {"x-ratelimit-remaining": "19"},
         },
         {
           status: 200,
           body: json_stringify({number: 101, base: {ref: "main"}, head: {sha: "green-sha"}}),
-          headers: {["x-ratelimit-remaining"]: "19"},
+          headers: {"x-ratelimit-remaining": "19"},
         },
       ],
     },
@@ -114,12 +114,12 @@ pipeline default() {
               required_conversation_resolution: {enabled: true},
             },
           ),
-          headers: {["x-ratelimit-remaining"]: "18"},
+          headers: {"x-ratelimit-remaining": "18"},
         },
         {
           status: 200,
           body: json_stringify({required_status_checks: {strict: true, contexts: ["Harn CI"]}}),
-          headers: {["x-ratelimit-remaining"]: "18"},
+          headers: {"x-ratelimit-remaining": "18"},
         },
       ],
     },
@@ -151,7 +151,7 @@ pipeline default() {
           ],
         },
       ),
-      headers: {["x-ratelimit-remaining"]: "17"},
+      headers: {"x-ratelimit-remaining": "17"},
     },
   )
   let green_checks = call("github.pr.checks", auth + {repo: "octo-org/octo-repo", head_sha: "green-sha"})
@@ -164,7 +164,7 @@ pipeline default() {
     {
       status: 200,
       body: json_stringify({check_runs: [{id: 8002, name: "Harn CI", status: "in_progress", conclusion: nil}]}),
-      headers: {["x-ratelimit-remaining"]: "16"},
+      headers: {"x-ratelimit-remaining": "16"},
     },
   )
   assert_eq(
@@ -180,7 +180,7 @@ pipeline default() {
       body: json_stringify(
         {check_runs: [{id: 8003, name: "Harn CI", status: "completed", conclusion: "failure"}]},
       ),
-      headers: {["x-ratelimit-remaining"]: "15"},
+      headers: {"x-ratelimit-remaining": "15"},
     },
   )
   assert_eq(
@@ -196,13 +196,13 @@ pipeline default() {
       body: json_stringify(
         {id: 8001, details_url: "https://github.com/octo-org/octo-repo/actions/runs/6001/job/1"},
       ),
-      headers: {["x-ratelimit-remaining"]: "14"},
+      headers: {"x-ratelimit-remaining": "14"},
     },
   )
   http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/actions/runs/6001/logs",
-    {status: 200, body: "step 1 / 1 succeeded\n", headers: {["x-ratelimit-remaining"]: "13"}},
+    {status: 200, body: "step 1 / 1 succeeded\n", headers: {"x-ratelimit-remaining": "13"}},
   )
   let logs = call("github.actions.logs", auth + {repo: "octo-org/octo-repo", check_id: 8001})
   assert_eq(logs.run_id, 6001, "check id resolves action run id")
@@ -218,7 +218,7 @@ pipeline default() {
           entries: [{pull_request_number: 103, status: "queued", head_branch: "feature/queued"}],
         },
       ),
-      headers: {["x-ratelimit-remaining"]: "12"},
+      headers: {"x-ratelimit-remaining": "12"},
     },
   )
   let queue = call("github.merge_queue.entries", auth + {repo: "octo-org/octo-repo", branch: "main"})
@@ -229,7 +229,7 @@ pipeline default() {
     {
       status: 201,
       body: json_stringify({pull_number: 105, status: "queued", priority: "normal"}),
-      headers: {["x-ratelimit-remaining"]: "11"},
+      headers: {"x-ratelimit-remaining": "11"},
     },
   )
   let enqueued = call(
@@ -244,7 +244,7 @@ pipeline default() {
     {
       status: 201,
       body: json_stringify({number: 77, title: "Follow up"}),
-      headers: {["x-ratelimit-remaining"]: "10"},
+      headers: {"x-ratelimit-remaining": "10"},
     },
   )
   assert_eq(
@@ -257,7 +257,7 @@ pipeline default() {
     {
       status: 201,
       body: json_stringify({id: 9001, body: "noted"}),
-      headers: {["x-ratelimit-remaining"]: "9"},
+      headers: {"x-ratelimit-remaining": "9"},
     },
   )
   assert_eq(
@@ -270,7 +270,7 @@ pipeline default() {
     {
       status: 201,
       body: json_stringify({id: 9002, body: "PR note"}),
-      headers: {["x-ratelimit-remaining"]: "8"},
+      headers: {"x-ratelimit-remaining": "8"},
     },
   )
   assert_eq(
@@ -283,7 +283,7 @@ pipeline default() {
     {
       status: 200,
       body: json_stringify({required_status_checks: {strict: false, contexts: []}}),
-      headers: {["x-ratelimit-remaining"]: "7"},
+      headers: {"x-ratelimit-remaining": "7"},
     },
   )
   assert(
@@ -295,7 +295,7 @@ pipeline default() {
   http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/pulls?state=open",
-    {status: 200, body: "[]", headers: {["x-ratelimit-remaining"]: "6"}},
+    {status: 200, body: "[]", headers: {"x-ratelimit-remaining": "6"}},
   )
   call(
     "github.pr.list",
