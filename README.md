@@ -4,8 +4,8 @@ Pure-Harn GitHub App connector for the Harn orchestrator. Verifies inbound
 webhook signatures, normalizes GitHub event payloads to the canonical
 `TriggerEvent` shape, and dispatches outbound REST/GraphQL calls.
 
-> **Status: v0.2.0** — production-ready first-party connector package,
-> verified with the published `harn-cli` 0.7.48 release.
+> **Status: v0.3.0** — production-ready first-party connector package,
+> verified with the published `harn-cli` 0.7.60 release.
 
 This is an **inbound + outbound** connector implementing the Harn Connector
 Contract v1 documented in the
@@ -23,7 +23,7 @@ harn --version
 Add the released connector package:
 
 ```sh
-harn add github.com/burin-labs/harn-github-connector@v0.2.0
+harn add github.com/burin-labs/harn-github-connector@v0.3.0
 ```
 
 For local multi-repo development, a path dependency is still useful:
