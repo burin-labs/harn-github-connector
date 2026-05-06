@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.0 - 2026-05-06
+
+- Add repository automation helpers for typed PR, Actions, merge queue, issue,
+  branch-protection, and repository-content workflows.
+- Add orchestration helpers for dispatching and waiting on workflows, waiting
+  for PR checks, enabling auto-merge, finding open PRs, and closing PRs.
+- Add deterministic conformance coverage for the new repository automation and
+  orchestration helper surfaces.
+- Add connector CI and release workflows, plus a scheduled Harn runtime bump
+  workflow.
+- Bump the verified Harn runtime to `harn-cli` 0.7.60.
+
 ## 0.2.0 - 2026-05-02
 
 - Add typed normalized webhook payloads and stable `github.<event>[.<action>]`
