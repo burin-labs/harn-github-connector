@@ -35,12 +35,12 @@ pipeline default() {
       responses: [
         {
           status: 201,
-          headers: {["x-ratelimit-remaining"]: "42"},
+          headers: {"x-ratelimit-remaining": "42"},
           body: "{\"token\":\"install-token-a\",\"expires_at\":\"2023-11-14T23:13:20Z\"}",
         },
         {
           status: 201,
-          headers: {["x-ratelimit-remaining"]: "42"},
+          headers: {"x-ratelimit-remaining": "42"},
           body: "{\"token\":\"install-token-b\",\"expires_at\":\"2023-11-15T00:13:20Z\"}",
         },
       ],
@@ -62,7 +62,7 @@ pipeline default() {
     "https://api.github.test/app/installations/77/access_tokens",
     {
       status: 201,
-      headers: {["x-ratelimit-remaining"]: "42"},
+      headers: {"x-ratelimit-remaining": "42"},
       body: "{\"token\":\"install-token-locked\",\"expires_at\":\"2023-11-14T23:13:20Z\"}",
     },
   )

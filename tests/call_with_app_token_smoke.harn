@@ -26,12 +26,12 @@ pipeline default() {
         {
           status: 201,
           body: "{\"token\":\"token-a\",\"expires_at\":\"2023-11-14T23:13:20Z\"}",
-          headers: {["x-ratelimit-remaining"]: "42"},
+          headers: {"x-ratelimit-remaining": "42"},
         },
         {
           status: 201,
           body: "{\"token\":\"token-b\",\"expires_at\":\"2023-11-14T23:13:20Z\"}",
-          headers: {["x-ratelimit-remaining"]: "42"},
+          headers: {"x-ratelimit-remaining": "42"},
         },
       ],
     },
@@ -39,7 +39,7 @@ pipeline default() {
   http_mock(
     "POST",
     "https://api.github.test/repos/octo/demo/issues/123/comments",
-    {status: 201, body: "{\"id\":99,\"body\":\"hello\"}", headers: {["x-ratelimit-remaining"]: "42"}},
+    {status: 201, body: "{\"id\":99,\"body\":\"hello\"}", headers: {"x-ratelimit-remaining": "42"}},
   )
   let comment = call(
     "issues.create_comment",
@@ -52,7 +52,7 @@ pipeline default() {
     {
       status: 200,
       body: "{\"number\":123,\"state\":\"closed\"}",
-      headers: {["x-ratelimit-remaining"]: "42"},
+      headers: {"x-ratelimit-remaining": "42"},
     },
   )
   let issue = call(
@@ -63,7 +63,7 @@ pipeline default() {
   http_mock(
     "POST",
     "https://api.github.test/repos/octo/demo/pulls/5/comments",
-    {status: 201, body: "{\"id\":55}", headers: {["x-ratelimit-remaining"]: "42"}},
+    {status: 201, body: "{\"id\":55}", headers: {"x-ratelimit-remaining": "42"}},
   )
   let review_comment = call(
     "pulls.create_review_comment",
@@ -86,7 +86,7 @@ pipeline default() {
     {
       status: 200,
       body: "{\"number\":5,\"head\":{\"sha\":\"abc\"}}",
-      headers: {["x-ratelimit-remaining"]: "42"},
+      headers: {"x-ratelimit-remaining": "42"},
     },
   )
   let pull = call("pulls.get", config(1700000000) + {owner: "octo", repo: "demo", pull_number: 5})
@@ -97,7 +97,7 @@ pipeline default() {
     {
       status: 200,
       body: "diff --git a/src/lib.harn b/src/lib.harn\n+let x = 1\n",
-      headers: {["x-ratelimit-remaining"]: "42"},
+      headers: {"x-ratelimit-remaining": "42"},
     },
   )
   let diff = call("pulls.get_diff", config(1700000000) + {owner: "octo", repo: "demo", pull_number: 5})
@@ -105,7 +105,7 @@ pipeline default() {
   http_mock(
     "GET",
     "https://api.github.test/repos/octo/demo/contents/README.md?ref=main",
-    {status: 200, body: "{\"name\":\"README.md\"}", headers: {["x-ratelimit-remaining"]: "42"}},
+    {status: 200, body: "{\"name\":\"README.md\"}", headers: {"x-ratelimit-remaining": "42"}},
   )
   let content = call(
     "repos.get_content",
@@ -115,7 +115,7 @@ pipeline default() {
   http_mock(
     "POST",
     "https://api.github.test/repos/octo/demo/check-runs",
-    {status: 201, body: "{\"id\":10,\"name\":\"ci\"}", headers: {["x-ratelimit-remaining"]: "42"}},
+    {status: 201, body: "{\"id\":10,\"name\":\"ci\"}", headers: {"x-ratelimit-remaining": "42"}},
   )
   let check_run = call(
     "check_runs.create",
@@ -129,7 +129,7 @@ pipeline default() {
     {
       status: 200,
       body: "{\"id\":10,\"status\":\"completed\"}",
-      headers: {["x-ratelimit-remaining"]: "42"},
+      headers: {"x-ratelimit-remaining": "42"},
     },
   )
   let updated_check = call(
@@ -143,7 +143,7 @@ pipeline default() {
     {
       status: 200,
       body: "{\"data\":{\"viewer\":{\"login\":\"octo\"}}}",
-      headers: {["x-ratelimit-remaining"]: "41"},
+      headers: {"x-ratelimit-remaining": "41"},
     },
   )
   let graph = call("graphql", config(1700000000) + {query: "query { viewer { login } }", variables: {}})
@@ -154,7 +154,7 @@ pipeline default() {
     {
       responses: [
         {status: 401, body: "{\"message\":\"bad credentials\"}"},
-        {status: 200, body: "[{\"filename\":\"src/lib.harn\"}]", headers: {["x-ratelimit-remaining"]: "42"}},
+        {status: 200, body: "[{\"filename\":\"src/lib.harn\"}]", headers: {"x-ratelimit-remaining": "42"}},
       ],
     },
   )

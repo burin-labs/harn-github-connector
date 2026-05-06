@@ -93,7 +93,7 @@ pipeline default() {
   )
   assert_eq(tampered.type, "reject", "tampered body rejects")
   assert_eq(tampered.reject.status, 401, "tampered body status")
-  let missing_signature = github_normalize({signing_secret: secret, body_text: body, headers: {["x-github-event"]: "issues"}})
+  let missing_signature = github_normalize({signing_secret: secret, body_text: body, headers: {"x-github-event": "issues"}})
   assert_eq(missing_signature.type, "reject", "missing signature rejects")
   let wrong_secret = github_normalize(
     {signing_secret: "wrong-secret", body_text: body, headers: github_headers(secret, body, "issues")},

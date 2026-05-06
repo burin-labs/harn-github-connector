@@ -11,9 +11,9 @@ import {
 
 pub fn github_headers(secret, body, event, delivery = "delivery-1") {
   return {
-    ["x-github-event"]: event,
-    ["x-github-delivery"]: delivery,
-    ["x-hub-signature-256"]: "sha256=" + hmac_sha256(secret, body),
+    "x-github-event": event,
+    "x-github-delivery": delivery,
+    "x-hub-signature-256": "sha256=" + hmac_sha256(secret, body),
   }
 }
 

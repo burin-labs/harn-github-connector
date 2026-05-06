@@ -55,7 +55,7 @@ pipeline default() {
           },
         },
       ),
-      headers: {["x-ratelimit-remaining"]: "10"},
+      headers: {"x-ratelimit-remaining": "10"},
     },
   )
   let pulls = pulls_list_with_checks("octo-org", "octo-repo", "open", 2, auth)
@@ -69,7 +69,7 @@ pipeline default() {
     {
       status: 200,
       body: json_stringify([{number: 101}, {number: 102}]),
-      headers: {["x-ratelimit-remaining"]: "9"},
+      headers: {"x-ratelimit-remaining": "9"},
     },
   )
   let rest_pulls = call("pulls.list", auth + {owner: "octo-org", repo: "octo-repo", state: "open", limit: 3})
@@ -80,7 +80,7 @@ pipeline default() {
     {
       status: 201,
       body: json_stringify({number: 77, title: "Conflict in #101"}),
-      headers: {["x-ratelimit-remaining"]: "8"},
+      headers: {"x-ratelimit-remaining": "8"},
     },
   )
   let issue = issues_create_with_template(
@@ -101,7 +101,7 @@ pipeline default() {
     {
       status: 200,
       body: json_stringify({number: 77, state: "closed"}),
-      headers: {["x-ratelimit-remaining"]: "7"},
+      headers: {"x-ratelimit-remaining": "7"},
     },
   )
   call(
@@ -114,7 +114,7 @@ pipeline default() {
     {
       status: 200,
       body: json_stringify([{name: "merge-captain"}]),
-      headers: {["x-ratelimit-remaining"]: "6"},
+      headers: {"x-ratelimit-remaining": "6"},
     },
   )
   let labels = call(
@@ -128,7 +128,7 @@ pipeline default() {
     {
       status: 200,
       body: json_stringify({required_status_checks: {strict: true}}),
-      headers: {["x-ratelimit-remaining"]: "5"},
+      headers: {"x-ratelimit-remaining": "5"},
     },
   )
   let protection = call(
@@ -142,7 +142,7 @@ pipeline default() {
     {
       status: 200,
       body: json_stringify([{filename: "src/lib.harn"}]),
-      headers: {["x-ratelimit-remaining"]: "4"},
+      headers: {"x-ratelimit-remaining": "4"},
     },
   )
   let files = call(
@@ -156,7 +156,7 @@ pipeline default() {
     {
       status: 200,
       body: json_stringify([{id: 9001, state: "APPROVED"}]),
-      headers: {["x-ratelimit-remaining"]: "3"},
+      headers: {"x-ratelimit-remaining": "3"},
     },
   )
   let reviews = call(
@@ -180,7 +180,7 @@ pipeline default() {
           },
         },
       ),
-      headers: {["x-ratelimit-remaining"]: "2"},
+      headers: {"x-ratelimit-remaining": "2"},
     },
   )
   http_mock(
@@ -189,7 +189,7 @@ pipeline default() {
     {
       status: 200,
       body: json_stringify({required_status_checks: {strict: true}}),
-      headers: {["x-ratelimit-remaining"]: "2"},
+      headers: {"x-ratelimit-remaining": "2"},
     },
   )
   http_mock(
@@ -198,13 +198,13 @@ pipeline default() {
     {
       status: 200,
       body: json_stringify({merged: true, message: "Pull Request successfully merged"}),
-      headers: {["x-ratelimit-remaining"]: "2"},
+      headers: {"x-ratelimit-remaining": "2"},
     },
   )
   http_mock(
     "DELETE",
     base + "/repos/octo-org/octo-repo/git/refs/heads/feature/mergeable",
-    {status: 204, body: "", headers: {["x-ratelimit-remaining"]: "2"}},
+    {status: 204, body: "", headers: {"x-ratelimit-remaining": "2"}},
   )
   let merged = pulls_merge_safe(
     "octo-org",
@@ -219,7 +219,7 @@ pipeline default() {
   http_mock(
     "PUT",
     base + "/repos/octo-org/octo-repo/pulls/102/merge",
-    {status: 200, body: json_stringify({merged: true}), headers: {["x-ratelimit-remaining"]: "2"}},
+    {status: 200, body: json_stringify({merged: true}), headers: {"x-ratelimit-remaining": "2"}},
   )
   let direct_merge = call(
     "pulls.merge",
