@@ -529,6 +529,719 @@ pub fn issues_create_with_template(owner, repo, template, vars = nil, options = 
   )
 }
 
+let DEFAULT_DISPATCH_POLL_INTERVAL_MS = 5000
+
+let DEFAULT_DISPATCH_TIMEOUT_MS = 600000
+
+let DEFAULT_CHECKS_POLL_INTERVAL_MS = 10000
+
+let DEFAULT_CHECKS_TIMEOUT_MS = 1800000
+
+let DEFAULT_LOG_TAIL_LINES = 200
+
+/**
+ * Dispatch a workflow_dispatch workflow and wait for it to finish. Returns a
+ * stable `{ok, status, conclusion, run_id, run_url, workflow_id, created_at,
+ * started_at, updated_at, attempts, timed_out, error}` envelope. `status` is
+ * one of `completed`, `timed_out`, `dispatch_failed`, `run_not_found`, or
+ * `poll_failed`.
+ */
+pub fn github_dispatch_workflow_and_wait(
+  owner,
+  repo,
+  workflow_id,
+  ref = "main",
+  inputs = nil,
+  options = nil,
+) {
+  let opts = options ?? {}
+  let auth = __auth_options(opts)
+  let dispatched_at_iso = opts?.created_after ?? date_now_iso()
+  let dispatch = actions_workflow_dispatch(owner, repo, workflow_id, ref, inputs ?? {}, auth)
+  if is_err(dispatch) {
+    return __workflow_wait_envelope(
+      false,
+      "dispatch_failed",
+      workflow_id,
+      nil,
+      [],
+      false,
+      unwrap_err(dispatch),
+    )
+  }
+  let dispatch_run_id = __extract_dispatch_run_id(dispatch)
+  let filter = {
+    workflow_id: workflow_id,
+    event: opts?.event ?? "workflow_dispatch",
+    branch: opts?.branch ?? ref,
+    head_sha: opts?.head_sha,
+    per_page: opts?.per_page ?? 10,
+    created_after: dispatched_at_iso,
+  }
+  let wait_options = opts + {workflow_id: workflow_id, filter: filter}
+  let target = dispatch_run_id ?? filter
+  return github_wait_for_workflow_run(owner, repo, target, wait_options)
+}
+
+/**
+ * Poll an existing workflow run, or locate one matching a filter dict, until
+ * it reaches `completed` or the loop times out. The third argument may be a
+ * run id or a filter `{workflow_id, event, branch, head_sha, created_after,
+ * per_page}`. Returns the same envelope as `github_dispatch_workflow_and_wait`.
+ */
+pub fn github_wait_for_workflow_run(owner, repo, run_id_or_filter, options = nil) {
+  let opts = options ?? {}
+  let cfg = __workflow_wait_config(opts, run_id_or_filter)
+  return __workflow_wait_loop(owner, repo, cfg)
+}
+
+/**
+ * Enable GitHub auto-merge for a PR through the GraphQL mutation, normalizing
+ * `merge`/`squash`/`rebase` and treating already-enabled as success. Returns
+ * a stable `{ok, state, already_enabled, requested_method, merge_method,
+ * pull_number, url, strategy, error}` envelope.
+ */
+pub fn github_ensure_auto_merge(owner, repo, pull_number, options = nil) {
+  let opts = options ?? {}
+  let requested_method = uppercase(to_string(opts?.method ?? opts?.merge_method ?? "merge"))
+  let result = pulls_enable_auto_merge(owner, repo, pull_number, opts)
+  if is_err(result) {
+    return __auto_merge_failed_envelope(requested_method, pull_number, unwrap_err(result))
+  }
+  return __auto_merge_success_envelope(result, requested_method, pull_number)
+}
+
+/**
+ * Wait for visible CI checks on a PR or commit to leave the queued/pending
+ * state, returning a stable `{ok, state, head_sha, checks, failing_checks,
+ * pending_checks, attempts, timed_out, logs?}` rollup. `state` is one of
+ * `green`, `failing`, `pending`, `timed_out`, or `unknown`. Pass
+ * `include_logs: true` to attach a tail of failing-check Actions logs.
+ */
+pub fn github_wait_for_pr_checks(owner, repo, pull_number_or_ref, options = nil) {
+  let opts = options ?? {}
+  let auth = __auth_options(opts)
+  let resolved = __resolve_check_target(pull_number_or_ref, opts)
+  let head_sha_result = __resolve_head_sha(owner, repo, resolved, auth)
+  if is_err(head_sha_result) {
+    return unwrap_err(head_sha_result)
+  }
+  let head_sha = unwrap(head_sha_result)
+  if head_sha == nil {
+    return __checks_envelope(false, "unknown", nil, [], [], [], [], false)
+  }
+  return __checks_wait_loop(owner, repo, head_sha, opts, auth)
+}
+
+/**
+ * Find the first open PR matching simple `head_ref`/`base_ref`/`title`/`labels`
+ * filters. Returns `{ok, found, pull_number, pull_request, total_matches,
+ * matches, error}`. `pull_request` is the typed PR summary (the same shape as
+ * `github.pr.list` entries) when found, otherwise `nil`.
+ */
+pub fn github_find_open_pr(owner, repo, options) {
+  let opts = options ?? {}
+  let auth = __auth_options(opts)
+  let query = __pr_finder_query(opts)
+  let prs = call("github.pr.list", auth + {owner: owner, repo: repo, filters: query})
+  if is_err(prs) {
+    return __find_open_pr_error_envelope(unwrap_err(prs))
+  }
+  return __find_open_pr_envelope(__filter_prs(prs ?? [], opts))
+}
+
+/**
+ * Close a PR, optionally posting a final comment first. Returns
+ * `{ok, pull_number, state, comment_posted, pull_request, error}`. PRs are
+ * closed via the issues update endpoint because GitHub models PR lifecycle
+ * through the issues resource.
+ */
+pub fn github_close_pr(owner, repo, pull_number, comment = nil, options = nil) {
+  let opts = options ?? {}
+  let auth = __auth_options(opts)
+  let comment_result = __post_close_comment_if_set(owner, repo, pull_number, comment, auth)
+  if is_err(comment_result) {
+    return __close_pr_envelope(false, pull_number, false, nil, unwrap_err(comment_result))
+  }
+  let comment_posted = unwrap(comment_result)
+  let updated = call("issues.update", auth + {owner: owner, repo: repo, issue_number: pull_number, state: "closed"})
+  if is_err(updated) {
+    return __close_pr_envelope(false, pull_number, comment_posted, nil, unwrap_err(updated))
+  }
+  return __close_pr_envelope(true, pull_number, comment_posted, updated, nil)
+}
+
+fn __workflow_wait_config(opts, run_id_or_filter) {
+  let poll_interval = __positive_int(opts?.poll_interval_ms, DEFAULT_DISPATCH_POLL_INTERVAL_MS)
+  let timeout_ms = __positive_int(opts?.timeout_ms, DEFAULT_DISPATCH_TIMEOUT_MS)
+  let target_is_dict = type_of(run_id_or_filter) == "dict"
+  let initial_run_id = if target_is_dict {
+    nil
+  } else {
+    run_id_or_filter
+  }
+  let workflow_id = opts?.workflow_id
+  let filter = if target_is_dict {
+    run_id_or_filter
+  } else {
+    opts?.filter ?? {workflow_id: workflow_id, event: "workflow_dispatch", per_page: 10}
+  }
+  return {
+    auth: __auth_options(opts),
+    poll_interval_ms: poll_interval,
+    max_attempts: __resolve_max_attempts(opts?.max_attempts, poll_interval, timeout_ms),
+    workflow_id: workflow_id,
+    initial_run_id: initial_run_id,
+    filter: filter,
+  }
+}
+
+fn __workflow_wait_loop(owner, repo, cfg) {
+  var attempts = []
+  var attempt = 0
+  var run_id = cfg.initial_run_id
+  var last_run = nil
+  while attempt < cfg.max_attempts {
+    attempt = attempt + 1
+    if run_id == nil {
+      let located = __workflow_wait_locate_step(owner, repo, cfg.filter, cfg.auth, attempt)
+      attempts = attempts + located.attempts
+      run_id = located.run_id
+    }
+    if run_id != nil {
+      let probed = __workflow_wait_probe_step(owner, repo, run_id, cfg.auth, attempt)
+      attempts = attempts + probed.attempts
+      if probed.run != nil {
+        last_run = probed.run
+      }
+      if probed.completed {
+        return __workflow_envelope_from_run(true, "completed", probed.run, attempts, false, nil)
+      }
+    }
+    if attempt < cfg.max_attempts && cfg.poll_interval_ms > 0 {
+      sleep(cfg.poll_interval_ms)
+    }
+  }
+  return __workflow_wait_loop_terminal(cfg, attempts, run_id, last_run)
+}
+
+fn __workflow_wait_loop_terminal(cfg, attempts, run_id, last_run) {
+  if last_run != nil {
+    return __workflow_envelope_from_run(false, "timed_out", last_run, attempts, true, nil)
+  }
+  if run_id == nil {
+    return __workflow_wait_envelope(false, "run_not_found", cfg.workflow_id, nil, attempts, true, nil)
+  }
+  return __workflow_wait_envelope(false, "timed_out", cfg.workflow_id, run_id, attempts, true, nil)
+}
+
+fn __workflow_wait_locate_step(owner, repo, filter, auth, attempt) {
+  let located = __locate_workflow_run(owner, repo, filter, auth)
+  if is_err(located) {
+    return {attempts: [{attempt: attempt, kind: "list_failed", error: unwrap_err(located)}], run_id: nil}
+  }
+  if located == nil {
+    return {attempts: [{attempt: attempt, kind: "run_not_found"}], run_id: nil}
+  }
+  return {
+    attempts: [{attempt: attempt, kind: "located", run_id: located.id, created_at: located?.created_at}],
+    run_id: located.id,
+  }
+}
+
+fn __workflow_wait_probe_step(owner, repo, run_id, auth, attempt) {
+  let run = call("actions.workflow_run.get", auth + {owner: owner, repo: repo, run_id: run_id})
+  if is_err(run) {
+    return {
+      attempts: [{attempt: attempt, kind: "get_failed", run_id: run_id, error: unwrap_err(run)}],
+      run: nil,
+      completed: false,
+    }
+  }
+  let status = lowercase(to_string(run?.status ?? ""))
+  return {
+    attempts: [{attempt: attempt, kind: "polled", run_id: run_id, status: status, conclusion: run?.conclusion}],
+    run: run,
+    completed: status == "completed",
+  }
+}
+
+fn __resolve_head_sha(owner, repo, resolved, auth) {
+  if resolved?.head_sha != nil && trim(to_string(resolved.head_sha)) != "" {
+    return Ok(resolved.head_sha)
+  }
+  if resolved?.pull_number == nil {
+    return Ok(nil)
+  }
+  let pr = call("pulls.get", auth + {owner: owner, repo: repo, pull_number: resolved.pull_number})
+  if is_err(pr) {
+    return Err(
+      __checks_envelope(
+        false,
+        "unknown",
+        nil,
+        [],
+        [],
+        [],
+        [{attempt: 0, kind: "pull_get_failed", error: unwrap_err(pr)}],
+        false,
+      ),
+    )
+  }
+  return Ok(pr?.head?.sha)
+}
+
+fn __checks_wait_loop(owner, repo, head_sha, opts, auth) {
+  let poll_interval = __positive_int(opts?.poll_interval_ms, DEFAULT_CHECKS_POLL_INTERVAL_MS)
+  let timeout_ms = __positive_int(opts?.timeout_ms, DEFAULT_CHECKS_TIMEOUT_MS)
+  let max_attempts = __resolve_max_attempts(opts?.max_attempts, poll_interval, timeout_ms)
+  var attempts = []
+  var attempt = 0
+  var last_payload = nil
+  while attempt < max_attempts {
+    attempt = attempt + 1
+    let probe = __checks_probe_step(owner, repo, head_sha, auth, attempt)
+    attempts = attempts + probe.attempts
+    if probe.payload != nil {
+      last_payload = probe.payload
+    }
+    if probe.terminal_state != nil {
+      return __finalize_checks_payload(owner, repo, probe.payload, attempts, probe.terminal_state, opts, auth)
+    }
+    if attempt < max_attempts && poll_interval > 0 {
+      sleep(poll_interval)
+    }
+  }
+  if last_payload != nil {
+    return __checks_envelope_from_payload(false, "timed_out", last_payload, attempts, true)
+  }
+  return __checks_envelope(false, "timed_out", head_sha, [], [], [], attempts, true)
+}
+
+fn __checks_probe_step(owner, repo, head_sha, auth, attempt) {
+  let probe = call("github.pr.checks", auth + {owner: owner, repo: repo, head_sha: head_sha})
+  if is_err(probe) {
+    return {
+      attempts: [{attempt: attempt, kind: "checks_failed", error: unwrap_err(probe)}],
+      payload: nil,
+      terminal_state: nil,
+    }
+  }
+  let rollup = probe?.rollup ?? {}
+  let rollup_state = rollup?.state ?? "unknown"
+  let terminal = if rollup_state == "green" || rollup_state == "failing" {
+    rollup_state
+  } else {
+    nil
+  }
+  return {
+    attempts: [{attempt: attempt, kind: "polled", state: rollup_state, total: rollup?.total ?? 0}],
+    payload: probe,
+    terminal_state: terminal,
+  }
+}
+
+fn __finalize_checks_payload(owner, repo, payload, attempts, state, opts, auth) {
+  let envelope = __checks_envelope_from_payload(true, state, payload, attempts, false)
+  if state == "failing" && opts?.include_logs ?? false {
+    return envelope + {logs: __failing_check_logs(owner, repo, envelope.failing_checks, opts, auth)}
+  }
+  return envelope
+}
+
+fn __pr_finder_query(opts) {
+  var query = {state: opts?.state ?? "open"}
+  if opts?.head_ref != nil {
+    let head = if opts?.head_owner != nil {
+      to_string(opts.head_owner) + ":" + to_string(opts.head_ref)
+    } else {
+      to_string(opts.head_ref)
+    }
+    query = query + {head: head}
+  }
+  if opts?.base_ref != nil {
+    query = query + {base: to_string(opts.base_ref)}
+  }
+  if opts?.per_page != nil {
+    query = query + {per_page: to_int(opts.per_page) ?? opts.per_page}
+  }
+  return query
+}
+
+fn __filter_prs(prs, opts) {
+  var matches = []
+  for pr in prs {
+    if __pr_matches(pr, opts) {
+      matches = matches + [pr]
+    }
+  }
+  return matches
+}
+
+fn __find_open_pr_error_envelope(err) {
+  return {
+    ok: false,
+    found: false,
+    pull_number: nil,
+    pull_request: nil,
+    total_matches: 0,
+    matches: [],
+    error: err,
+  }
+}
+
+fn __find_open_pr_envelope(matches) {
+  let first = if len(matches) > 0 {
+    matches[0]
+  } else {
+    nil
+  }
+  return {
+    ok: true,
+    found: first != nil,
+    pull_number: first?.number,
+    pull_request: first,
+    total_matches: len(matches),
+    matches: matches,
+    error: nil,
+  }
+}
+
+fn __post_close_comment_if_set(owner, repo, pull_number, comment, auth) {
+  if comment == nil || trim(to_string(comment)) == "" {
+    return Ok(false)
+  }
+  let posted = call(
+    "issues.create_comment",
+    auth + {owner: owner, repo: repo, issue_number: pull_number, body: to_string(comment)},
+  )
+  if is_err(posted) {
+    return posted
+  }
+  return Ok(true)
+}
+
+fn __close_pr_envelope(ok, pull_number, comment_posted, pull_request, error) {
+  return {
+    ok: ok,
+    pull_number: pull_number,
+    state: if ok {
+      "closed"
+    } else {
+      "open"
+    },
+    comment_posted: comment_posted,
+    pull_request: pull_request,
+    error: error,
+  }
+}
+
+fn __auto_merge_failed_envelope(requested_method, pull_number, error) {
+  return {
+    ok: false,
+    state: "failed",
+    already_enabled: false,
+    requested_method: requested_method,
+    merge_method: nil,
+    pull_number: pull_number,
+    url: nil,
+    strategy: "graphql_auto_merge",
+    error: error,
+  }
+}
+
+fn __auto_merge_success_envelope(result, requested_method, pull_number) {
+  let state = result?.state ?? "enabled"
+  let merge_method = result?.requested_method ?? result?.auto_merge?.merge_method
+    ?? result?.pull_request?.autoMergeRequest?.mergeMethod
+    ?? requested_method
+  return {
+    ok: true,
+    state: state,
+    already_enabled: state == "already_enabled",
+    requested_method: requested_method,
+    merge_method: to_string(merge_method),
+    pull_number: pull_number,
+    url: result?.pull_request?.html_url ?? result?.pull_request?.url,
+    strategy: "graphql_auto_merge",
+    error: nil,
+  }
+}
+
+fn __auth_options(options) {
+  var auth = {}
+  for key in __config_keys() {
+    let v = options.get(key)
+    if v != nil {
+      auth[key] = v
+    }
+  }
+  return auth
+}
+
+fn __positive_int(value, fallback) {
+  if value == nil {
+    return fallback
+  }
+  let parsed = to_int(value) ?? fallback
+  if parsed < 0 {
+    return 0
+  }
+  return parsed
+}
+
+fn __resolve_max_attempts(value, poll_interval_ms, timeout_ms) {
+  if value != nil {
+    return max(1, to_int(value) ?? 1)
+  }
+  if poll_interval_ms <= 0 {
+    return 60
+  }
+  return max(1, timeout_ms / poll_interval_ms + 1)
+}
+
+fn __extract_dispatch_run_id(dispatched) {
+  if dispatched == nil {
+    return nil
+  }
+  return dispatched?.workflow_run_id ?? dispatched?.run_id ?? dispatched?.id
+}
+
+fn __locate_workflow_run(owner, repo, filter, auth) {
+  let resp = actions_workflow_runs(owner, repo, auth + __locate_args(filter))
+  if is_err(resp) {
+    return resp
+  }
+  return __pick_newest_run(resp?.workflow_runs ?? [], filter)
+}
+
+fn __locate_args(filter) {
+  var args = {}
+  if filter?.workflow_id != nil {
+    args["workflow_id"] = filter.workflow_id
+  }
+  if filter?.event != nil {
+    args["event"] = to_string(filter.event)
+  }
+  if filter?.branch != nil {
+    args["branch"] = to_string(filter.branch)
+  }
+  if filter?.head_sha != nil {
+    args["head_sha"] = to_string(filter.head_sha)
+  }
+  if filter?.per_page != nil {
+    args["per_page"] = to_int(filter.per_page) ?? filter.per_page
+  }
+  return args
+}
+
+fn __pick_newest_run(runs, filter) {
+  let cutoff = filter?.created_after
+  let head_sha = filter?.head_sha
+  var best = nil
+  for r in runs {
+    if !__run_matches_filter(r, cutoff, head_sha) {
+      continue
+    }
+    if best == nil || __run_is_newer(r, best) {
+      best = r
+    }
+  }
+  return best
+}
+
+fn __run_matches_filter(run, cutoff, head_sha) {
+  let created_at = run?.created_at
+  if cutoff != nil && created_at != nil && to_string(created_at) < to_string(cutoff) {
+    return false
+  }
+  if head_sha != nil && run?.head_sha != head_sha {
+    return false
+  }
+  return true
+}
+
+fn __run_is_newer(candidate, best) {
+  let created_at = candidate?.created_at
+  if created_at == nil || best?.created_at == nil {
+    return false
+  }
+  return to_string(created_at) > to_string(best.created_at)
+}
+
+fn __workflow_wait_envelope(ok, status, workflow_id, run_id, attempts, timed_out, error) {
+  return {
+    ok: ok,
+    status: status,
+    conclusion: nil,
+    run_id: run_id,
+    run_url: nil,
+    workflow_id: workflow_id,
+    created_at: nil,
+    started_at: nil,
+    updated_at: nil,
+    attempts: attempts,
+    timed_out: timed_out,
+    error: error,
+  }
+}
+
+fn __workflow_envelope_from_run(ok, status, run, attempts, timed_out, error) {
+  return {
+    ok: ok,
+    status: status,
+    conclusion: run?.conclusion,
+    run_id: run?.id,
+    run_url: run?.html_url ?? run?.url,
+    workflow_id: run?.workflow_id,
+    created_at: run?.created_at,
+    started_at: run?.run_started_at ?? run?.started_at,
+    updated_at: run?.updated_at,
+    attempts: attempts,
+    timed_out: timed_out,
+    error: error,
+  }
+}
+
+fn __resolve_check_target(target, opts) {
+  if type_of(target) == "dict" {
+    return {
+      head_sha: target?.head_sha ?? target?.sha ?? opts?.head_sha,
+      pull_number: target?.pull_number ?? target?.number ?? opts?.pull_number,
+    }
+  }
+  if type_of(target) == "string" {
+    return {head_sha: target, pull_number: opts?.pull_number}
+  }
+  return {head_sha: opts?.head_sha, pull_number: target ?? opts?.pull_number}
+}
+
+fn __checks_envelope(ok, state, head_sha, checks, failing, pending, attempts, timed_out) {
+  return {
+    ok: ok,
+    state: state,
+    head_sha: head_sha,
+    checks: checks,
+    failing_checks: failing,
+    pending_checks: pending,
+    attempts: attempts,
+    timed_out: timed_out,
+  }
+}
+
+fn __checks_envelope_from_payload(ok, state, payload, attempts, timed_out) {
+  let buckets = __bucket_checks(payload?.checks ?? [])
+  return __checks_envelope(
+    ok,
+    state,
+    payload?.head_sha,
+    buckets.all,
+    buckets.failing,
+    buckets.pending,
+    attempts,
+    timed_out,
+  )
+}
+
+fn __bucket_checks(checks) {
+  var failing = []
+  var pending = []
+  for c in checks {
+    let bucket = __classify_check(c)
+    if bucket == "pending" {
+      pending = pending + [c]
+    } else if bucket == "failing" {
+      failing = failing + [c]
+    }
+  }
+  return {all: checks, failing: failing, pending: pending}
+}
+
+fn __classify_check(check) {
+  let status = lowercase(to_string(check?.status ?? ""))
+  if status != "completed" {
+    return "pending"
+  }
+  let conclusion = lowercase(to_string(check?.conclusion ?? ""))
+  if conclusion == "success" || conclusion == "neutral" || conclusion == "skipped" || conclusion == "" {
+    return "passing"
+  }
+  return "failing"
+}
+
+fn __failing_check_logs(owner, repo, failing_checks, opts, auth) {
+  let tail_lines = max(1, to_int(opts?.log_tail_lines ?? DEFAULT_LOG_TAIL_LINES) ?? DEFAULT_LOG_TAIL_LINES)
+  var summaries = []
+  for c in failing_checks ?? [] {
+    summaries = summaries + [__summarize_failing_check(owner, repo, c, tail_lines, auth)]
+  }
+  return summaries
+}
+
+fn __summarize_failing_check(owner, repo, check, tail_lines, auth) {
+  let url = check?.details_url ?? check?.html_url
+  let run_id = __extract_actions_run_id(url)
+  if run_id == nil {
+    return __log_summary(check, nil, nil, 0, false, "no_actions_run_url")
+  }
+  let logs = call("github.actions.logs", auth + {owner: owner, repo: repo, run_id: run_id})
+  if is_err(logs) {
+    return __log_summary(check, run_id, nil, 0, false, unwrap_err(logs))
+  }
+  let tailed = __tail_lines(to_string(logs?.content ?? ""), tail_lines)
+  return __log_summary(check, run_id, tailed.content, tailed.lines, tailed.truncated, nil)
+}
+
+fn __tail_lines(content, tail_lines) {
+  let lines = split(content, "\n")
+  let total = len(lines)
+  let kept = if total > tail_lines {
+    lines[total - tail_lines:total]
+  } else {
+    lines
+  }
+  return {content: join(kept, "\n"), lines: len(kept), truncated: total > tail_lines}
+}
+
+fn __log_summary(check, run_id, content, lines, truncated, error) {
+  return {
+    check_id: check?.id,
+    name: check?.name,
+    run_id: run_id,
+    content: content,
+    lines: lines,
+    truncated: truncated,
+    error: error,
+  }
+}
+
+fn __pr_matches(pr, opts) {
+  if !__pr_matches_title(pr, opts?.title) {
+    return false
+  }
+  return __pr_matches_labels(pr, opts?.labels)
+}
+
+fn __pr_matches_title(pr, title) {
+  if title == nil || trim(to_string(title)) == "" {
+    return true
+  }
+  return contains(to_string(pr?.title ?? ""), to_string(title))
+}
+
+fn __pr_matches_labels(pr, labels) {
+  if labels == nil {
+    return true
+  }
+  let have = pr?.labels ?? []
+  for lbl in labels {
+    if !contains(have, to_string(lbl)) {
+      return false
+    }
+  }
+  return true
+}
+
 fn __github_pr_list(args, cfg) {
   let repo = __repo_parts(args)
   if is_err(repo) {
