@@ -12,6 +12,31 @@ default = "src/lib.harn"
 id = "github"
 connector = { harn = "src/lib.harn" }
 
+[providers.setup]
+auth_type = "github-app"
+flow = "github-app"
+required_secrets = ["github/app-private-key", "github/webhook-secret"]
+setup_command = ["harn", "connect", "github"]
+validation_command = ["harn", "connect", "status", "--connector", "github", "--json"]
+
+[[providers.setup.health_checks]]
+id = "app-private-key"
+kind = "secret"
+secret = "github/app-private-key"
+
+[[providers.setup.health_checks]]
+id = "webhook-secret"
+kind = "secret"
+secret = "github/webhook-secret"
+
+[providers.setup.recovery]
+missing_auth = "Store github/app-private-key and github/webhook-secret before enabling GitHub App bindings."
+expired_credentials = "Rotate the GitHub App private key, update github/app-private-key, and rerun validation."
+revoked_credentials = "Install or reauthorize the GitHub App, then replace github/app-private-key if needed."
+missing_scopes = "Grant the GitHub App permissions required by the configured repository automation workflows."
+inaccessible_resource = "Confirm the GitHub App installation can access the target owner and repository."
+transient_provider_outage = "Retry after GitHub API and webhook delivery endpoints are healthy."
+
 [connector_contract]
 version = 1
 
