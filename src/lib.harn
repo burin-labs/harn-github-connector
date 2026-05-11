@@ -17,11 +17,14 @@ let GITHUB_OUTBOUND_METHODS = [
   "github.actions.runs",
   "github.actions.run",
   "github.actions.logs",
+  "github.release.latest",
+  "github.release.assets",
   "github.merge_queue.entries",
   "github.merge_queue.enqueue",
   "github.issue.create",
   "github.issue.comment",
   "github.branch.protection",
+  "api_call",
   "issues.create_comment",
   "issues.create",
   "issues.create_with_template",
@@ -38,6 +41,8 @@ let GITHUB_OUTBOUND_METHODS = [
   "pulls.list_reviews",
   "repos.get_content",
   "repos.get_text",
+  "repos.get_latest_release",
+  "repos.list_release_assets",
   "repos.get_branch_protection",
   "git.delete_ref",
   "actions.workflow_dispatch",
@@ -236,6 +241,12 @@ pub fn call(method, args = {}) {
   if method == "github.actions.logs" {
     return __github_actions_logs(args, cfg)
   }
+  if method == "github.release.latest" {
+    return __github_release_latest(args, cfg)
+  }
+  if method == "github.release.assets" {
+    return __github_release_assets(args, cfg)
+  }
   if method == "github.merge_queue.entries" {
     return __github_merge_queue_entries(args, cfg)
   }
@@ -250,6 +261,9 @@ pub fn call(method, args = {}) {
   }
   if method == "github.branch.protection" {
     return __github_branch_protection(args, cfg)
+  }
+  if method == "api_call" {
+    return __api_call(args, cfg)
   }
   if method == "issues.create_comment" {
     return __github_json(
@@ -409,6 +423,12 @@ pub fn call(method, args = {}) {
   if method == "repos.get_text" {
     return __repos_get_text(args, cfg)
   }
+  if method == "repos.get_latest_release" {
+    return __repos_get_latest_release(args, cfg)
+  }
+  if method == "repos.list_release_assets" {
+    return __repos_list_release_assets(args, cfg)
+  }
   if method == "repos.get_branch_protection" {
     return __github_json(
       "GET",
@@ -510,6 +530,12 @@ pub fn actions_workflow_runs(owner, repo, options = nil) {
   return call("actions.workflow_runs.list", opts + {owner: owner, repo: repo})
 }
 
+/** Dispatch one raw GitHub REST call. Prefer typed helpers when one exists. */
+pub fn api_call(path, method = "GET", body = nil, options = nil) {
+  let opts = options ?? {}
+  return call("api_call", opts + {path: path, method: method, body: body})
+}
+
 /** Read a repository file as decoded UTF-8 text at an optional ref. */
 pub fn repos_get_text(owner, repo, path, ref = nil, options = nil) {
   let opts = options ?? {}
@@ -518,6 +544,32 @@ pub fn repos_get_text(owner, repo, path, ref = nil, options = nil) {
     args["ref"] = ref
   }
   return call("repos.get_text", args)
+}
+
+/** Fetch the latest published release for a repository. */
+pub fn repos_get_latest_release(owner, repo, options = nil) {
+  let opts = options ?? {}
+  return call("repos.get_latest_release", opts + {owner: owner, repo: repo})
+}
+
+/** List assets for a release id. */
+pub fn repos_list_release_assets(owner, repo, release_id, options = nil) {
+  let opts = options ?? {}
+  return call("repos.list_release_assets", opts + {owner: owner, repo: repo, release_id: release_id})
+}
+
+/** Fetch latest release metadata as a stable automation envelope. */
+pub fn github_latest_release(owner, repo, options = nil) {
+  let opts = options ?? {}
+  return call("github.release.latest", opts + {owner: owner, repo: repo})
+}
+
+/**
+ * List release assets as a stable automation envelope. Defaults to latest release when no id is supplied.
+ */
+pub fn github_release_assets(owner, repo, release_id = nil, options = nil) {
+  let opts = options ?? {}
+  return call("github.release.assets", opts + {owner: owner, repo: repo, release_id: release_id})
 }
 
 /** Create an issue from a small title/body template and variables. */
@@ -1471,6 +1523,40 @@ fn __github_actions_logs(args, cfg) {
   }
 }
 
+fn __github_release_latest(args, cfg) {
+  let repo = __repo_parts(args)
+  if is_err(repo) {
+    return __release_error_envelope(nil, unwrap_err(repo))
+  }
+  let r = unwrap(repo)
+  let release = __repos_get_latest_release(args + {owner: r.owner, repo: r.name}, cfg)
+  if is_err(release) {
+    return __release_error_envelope(r.full_name, unwrap_err(release))
+  }
+  return __release_envelope(r.full_name, unwrap(release))
+}
+
+fn __github_release_assets(args, cfg) {
+  let repo = __repo_parts(args)
+  if is_err(repo) {
+    return __release_assets_error_envelope(nil, args?.release_id ?? args?.id, unwrap_err(repo))
+  }
+  let r = unwrap(repo)
+  var release_id = args?.release_id ?? args?.id
+  if release_id == nil || trim(to_string(release_id)) == "" {
+    let release = __repos_get_latest_release(args + {owner: r.owner, repo: r.name}, cfg)
+    if is_err(release) {
+      return __release_assets_error_envelope(r.full_name, nil, unwrap_err(release))
+    }
+    release_id = unwrap(release)?.id
+  }
+  let assets = __repos_list_release_assets(args + {owner: r.owner, repo: r.name, release_id: release_id}, cfg)
+  if is_err(assets) {
+    return __release_assets_error_envelope(r.full_name, release_id, unwrap_err(assets))
+  }
+  return __release_assets_envelope(r.full_name, release_id, unwrap(assets))
+}
+
 fn __github_merge_queue_entries(args, cfg) {
   let repo = __repo_parts(args)
   if is_err(repo) {
@@ -1862,6 +1948,33 @@ fn __repos_get_text(args, cfg) {
       nil
     },
   }
+}
+
+fn __repos_get_latest_release(args, cfg) {
+  return __github_json(
+    "GET",
+    __github_api_url(cfg.api_base_url, "/repos/" + args.owner + "/" + args.repo + "/releases/latest"),
+    nil,
+    cfg,
+  )
+}
+
+fn __repos_list_release_assets(args, cfg) {
+  let release_id = args?.release_id ?? args?.id
+  if release_id == nil || trim(to_string(release_id)) == "" {
+    return __err("schema_drift", "repos.list_release_assets requires release_id or id")
+  }
+  return __github_json(
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/releases/" + to_string(release_id)
+        + "/assets"
+        + __pagination_query(args),
+    ),
+    nil,
+    cfg,
+  )
 }
 
 fn __actions_workflow_dispatch(args, cfg) {
@@ -3209,6 +3322,83 @@ fn __ref_query(args) {
     return ""
   }
   return "?ref=" + url_encode(to_string(args.ref))
+}
+
+fn __api_call(args, cfg) {
+  let path = args?.path
+  if path == nil || trim(to_string(path)) == "" {
+    return __err("schema_drift", "api_call requires path")
+  }
+  let method = uppercase(to_string(args?.method ?? "GET"))
+  let body = args?.body
+  let accept = args?.accept ?? "application/vnd.github+json"
+  let parse_json = args?.parse_json ?? true
+  return __github_request(method, __github_api_url(cfg.api_base_url, path), body, cfg, accept, parse_json)
+}
+
+fn __release_asset_names(assets) {
+  var names = []
+  for asset in assets ?? [] {
+    if asset?.name != nil {
+      names = names + [to_string(asset.name)]
+    }
+  }
+  return names
+}
+
+fn __release_envelope(repo, release) {
+  let assets = release?.assets ?? []
+  return {
+    ok: true,
+    repo: repo,
+    release_id: release?.id,
+    tag_name: release?.tag_name,
+    name: release?.name,
+    draft: release?.draft ?? false,
+    prerelease: release?.prerelease ?? false,
+    url: release?.url,
+    html_url: release?.html_url,
+    published_at: release?.published_at,
+    assets: assets,
+    asset_names: __release_asset_names(assets),
+    raw: release,
+    error: nil,
+  }
+}
+
+fn __release_error_envelope(repo, error) {
+  return {
+    ok: false,
+    repo: repo,
+    release_id: nil,
+    tag_name: nil,
+    name: nil,
+    draft: false,
+    prerelease: false,
+    url: nil,
+    html_url: nil,
+    published_at: nil,
+    assets: [],
+    asset_names: [],
+    raw: nil,
+    error: error,
+  }
+}
+
+fn __release_assets_envelope(repo, release_id, assets) {
+  return {
+    ok: true,
+    repo: repo,
+    release_id: release_id,
+    assets: assets ?? [],
+    asset_names: __release_asset_names(assets ?? []),
+    raw: assets ?? [],
+    error: nil,
+  }
+}
+
+fn __release_assets_error_envelope(repo, release_id, error) {
+  return {ok: false, repo: repo, release_id: release_id, assets: [], asset_names: [], raw: nil, error: error}
 }
 
 @complexity(allow)

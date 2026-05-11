@@ -118,11 +118,14 @@ Outbound methods:
 | `github.actions.runs` | Typed workflow-run list helper for a repo slug |
 | `github.actions.run` | Typed workflow-run fetch helper for a repo slug |
 | `github.actions.logs` | Fetch Actions logs by `run_id` or by `check_id` when the check links to an Actions run |
+| `github.release.latest` | Stable latest-release envelope with tag and asset names |
+| `github.release.assets` | Stable release-assets envelope, defaulting to the latest release when no release id is supplied |
 | `github.merge_queue.entries` | Typed merge queue entries for a base branch |
 | `github.merge_queue.enqueue` | Enqueue a PR on the merge queue |
 | `github.issue.create` | Typed issue create helper |
 | `github.issue.comment` | Typed issue comment helper |
 | `github.branch.protection` | Typed branch protection summary |
+| `api_call` | Raw GitHub REST escape hatch for endpoints without typed helpers |
 | `issues.create_comment` | `POST /repos/{owner}/{repo}/issues/{issue_number}/comments` |
 | `issues.create` | `POST /repos/{owner}/{repo}/issues` |
 | `issues.create_with_template` | Convenience helper over `issues.create` |
@@ -139,6 +142,8 @@ Outbound methods:
 | `pulls.list_reviews` | `GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews` |
 | `repos.get_content` | `GET /repos/{owner}/{repo}/contents/{path}` |
 | `repos.get_text` | Convenience wrapper over `repos.get_content` that decodes base64 file content |
+| `repos.get_latest_release` | `GET /repos/{owner}/{repo}/releases/latest` |
+| `repos.list_release_assets` | `GET /repos/{owner}/{repo}/releases/{release_id}/assets` |
 | `repos.get_branch_protection` | `GET /repos/{owner}/{repo}/branches/{branch}/protection` |
 | `git.delete_ref` | `DELETE /repos/{owner}/{repo}/git/refs/{ref}` |
 | `actions.workflow_dispatch` | `POST /repos/{owner}/{repo}/actions/workflows/{workflow_id}/dispatches` |
@@ -162,6 +167,8 @@ shape without inspecting raw GitHub responses.
 | `github_wait_for_pr_checks(owner, repo, pull_number_or_ref, options)` | Wait for visible CI checks on a PR or commit to leave the queued/pending state. Optionally summarizes failing-check Actions logs. |
 | `github_find_open_pr(owner, repo, options)` | Find the first open PR matching simple `head_ref`/`base_ref`/`title`/`labels` filters. |
 | `github_close_pr(owner, repo, pull_number, comment, options)` | Close a PR, optionally posting a final comment first. |
+| `github_latest_release(owner, repo, options)` | Fetch latest release metadata and asset names as a stable envelope. |
+| `github_release_assets(owner, repo, release_id, options)` | List release assets as a stable envelope; when `release_id` is omitted it uses the latest release. |
 
 Common option fields:
 
@@ -215,6 +222,16 @@ github_find_open_pr →
 
 github_close_pr →
 { ok, pull_number, state, comment_posted, pull_request, error }
+
+github_latest_release →
+{
+  ok, repo, release_id, tag_name, name,
+  draft, prerelease, url, html_url, published_at,
+  assets, asset_names, raw, error,
+}
+
+github_release_assets →
+{ ok, repo, release_id, assets, asset_names, raw, error }
 ```
 
 These helpers are orchestration-level building blocks for harness authors.
@@ -236,6 +253,7 @@ use `call(method, args)` only for direct method dispatch.
 | Enable auto-merge | `pulls_enable_auto_merge(owner, repo, number, options)` or `call("github.pr.enable_auto_merge", {repo, number})` | Uses GitHub GraphQL auto-merge, normalizes `merge`/`squash`/`rebase`, and passes the expected head OID when available. Merge-queue repositories ignore the requested merge method as GitHub does. |
 | Dispatch workflows | `actions_workflow_dispatch(owner, repo, workflow_id, ref, inputs, options)` | Requests `return_run_details` by default so callers can poll the exact run when GitHub returns it. |
 | List workflow runs | `actions_workflow_runs(owner, repo, options)` or `call("actions.workflow_runs.list", args)` | Supports repository-wide or workflow-scoped listing with common run filters such as `event`, `branch`, `status`, `head_sha`, and pagination. |
+| Inspect latest release assets | `github_latest_release(owner, repo, options)` | Returns `tag_name`, `assets`, and `asset_names` without open-coding the releases endpoint. |
 | Fetch Actions logs | `call("github.actions.logs", {repo, run_id})` | `check_id` is also accepted when GitHub exposes an Actions run URL on the check run. |
 | Use merge queue | `call("github.merge_queue.entries", {repo, branch})` and `call("github.merge_queue.enqueue", {repo, branch, pr_number, method})` | Matches the mock playground merge queue surface used by managed captain workflows. |
 | List open PRs with merge state and CI rollup | `pulls_list_with_checks(owner, repo, state, limit, options)` or `call("pulls.list_with_checks", args)` | Uses GraphQL because `mergeStateStatus` and `statusCheckRollup` are GraphQL PR fields surfaced by `gh pr --json`; the REST list endpoint does not return the same check rollup shape. Returns `number`, `title`, `headRefName`, `baseRefName`, `isDraft`, `mergeStateStatus`, `statusCheckRollup`, and `url`. |
@@ -247,6 +265,7 @@ use `call(method, args)` only for direct method dispatch.
 | Add issue or PR labels | `call("issues.add_labels", args)` | Uses the issue-labels endpoint; GitHub models PRs as issues for labels. |
 | Inspect branch protection | `call("repos.get_branch_protection", args)` | Used by `pulls.merge_safe` before admin merges. |
 | Read repository file text | `repos_get_text(owner, repo, path, ref, options)` or `call("repos.get_text", args)` | Decodes GitHub contents API base64 file payloads and rejects directory listings. |
+| Use raw REST endpoints | `api_call(path, method, body, options)` or `call("api_call", args)` | Escape hatch for endpoints that do not yet justify a typed helper. |
 | List changed files | `call("pulls.list_files", args)` | Used by review/conflict workflows. |
 | List reviews | `call("pulls.list_reviews", args)` | Used by review workflows. |
 
@@ -299,6 +318,10 @@ Required GitHub App permissions depend on the outbound method:
   enforces repository auto-merge and merge-queue settings.
 - `pulls.create_review_comment`: Pull requests write.
 - `repos.get_content`, `repos.get_text`: Contents read.
+- `repos.get_latest_release`, `repos.list_release_assets`,
+  `github.release.latest`, `github.release.assets`: Contents read.
+- `api_call`: the installed app must have the permissions required by the
+  specific endpoint.
 - `repos.get_branch_protection`: Administration read.
 - `git.delete_ref`: Contents write.
 - `actions.workflow_dispatch`: Actions write.

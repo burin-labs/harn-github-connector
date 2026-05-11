@@ -1,9 +1,14 @@
 import {
   actions_workflow_dispatch,
   actions_workflow_runs,
+  api_call,
   call,
+  github_latest_release,
+  github_release_assets,
   pulls_enable_auto_merge,
+  repos_get_latest_release,
   repos_get_text,
+  repos_list_release_assets,
 } from "../src/lib"
 
 pipeline test_repo_automation_methods(task) {
@@ -96,6 +101,87 @@ pipeline test_repo_automation_methods(task) {
   assert_eq(run.conclusion, "success", "workflow run get response")
   http_mock(
     "GET",
+    base + "/repos/octo-org/octo-repo/releases/latest",
+    {
+      status: 200,
+      body: json_stringify(
+        {
+          id: 501,
+          tag_name: "v0.8.4",
+          name: "v0.8.4",
+          draft: false,
+          prerelease: false,
+          html_url: "https://github.com/octo-org/octo-repo/releases/tag/v0.8.4",
+          published_at: "2026-05-09T18:00:00Z",
+          assets: [
+            {id: 1, name: "harn-aarch64-apple-darwin.tar.gz"},
+            {id: 2, name: "harn-x86_64-unknown-linux-gnu.tar.gz"},
+          ],
+        },
+      ),
+      headers: {"x-ratelimit-remaining": "7"},
+    },
+  )
+  let raw_release = repos_get_latest_release("octo-org", "octo-repo", auth)
+  assert_eq(raw_release.tag_name, "v0.8.4", "raw latest release tag")
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/releases/latest",
+    {
+      status: 200,
+      body: json_stringify(
+        {
+          id: 501,
+          tag_name: "v0.8.4",
+          assets: [
+            {id: 1, name: "harn-aarch64-apple-darwin.tar.gz"},
+            {id: 2, name: "harn-x86_64-unknown-linux-gnu.tar.gz"},
+          ],
+        },
+      ),
+      headers: {"x-ratelimit-remaining": "7"},
+    },
+  )
+  let latest = github_latest_release("octo-org", "octo-repo", auth)
+  assert_eq(latest.ok, true, "latest release envelope ok")
+  assert_eq(latest.tag_name, "v0.8.4", "latest release envelope tag")
+  assert_eq(
+    latest.asset_names[1],
+    "harn-x86_64-unknown-linux-gnu.tar.gz",
+    "latest release asset names",
+  )
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/releases/501/assets?per_page=2",
+    {
+      status: 200,
+      body: json_stringify([{id: 1, name: "harn-aarch64-apple-darwin.tar.gz"}]),
+      headers: {"x-ratelimit-remaining": "7"},
+    },
+  )
+  let raw_assets = repos_list_release_assets("octo-org", "octo-repo", 501, auth + {per_page: 2})
+  assert_eq(raw_assets[0].name, "harn-aarch64-apple-darwin.tar.gz", "raw release assets")
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/releases/501/assets?per_page=2",
+    {
+      status: 200,
+      body: json_stringify([{id: 2, name: "harn-x86_64-unknown-linux-gnu.tar.gz"}]),
+      headers: {"x-ratelimit-remaining": "7"},
+    },
+  )
+  let assets = github_release_assets("octo-org", "octo-repo", 501, auth + {per_page: 2})
+  assert_eq(assets.ok, true, "release assets envelope ok")
+  assert_eq(assets.asset_names[0], "harn-x86_64-unknown-linux-gnu.tar.gz", "release assets names")
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/releases/latest",
+    {status: 200, body: json_stringify({tag_name: "v0.8.4"}), headers: {"x-ratelimit-remaining": "7"}},
+  )
+  let raw = api_call("/repos/octo-org/octo-repo/releases/latest", "GET", nil, auth)
+  assert_eq(raw.tag_name, "v0.8.4", "raw api_call works as compatibility escape hatch")
+  http_mock(
+    "GET",
     base + "/repos/octo-org/octo-repo/pulls/7",
     {
       status: 200,
@@ -138,7 +224,7 @@ pipeline test_repo_automation_methods(task) {
   assert_eq(auto_merge.requested_method, "SQUASH", "auto-merge merge method normalized")
   let calls = http_mock_calls()
   let dispatch_body = json_parse(calls[1].body)
-  let mutation_body = json_parse(calls[5].body)
+  let mutation_body = json_parse(calls[10].body)
   let mutation_vars = mutation_body.get("variables")
   assert_eq(dispatch_body.get("return_run_details"), true, "workflow dispatch asks for run details")
   assert_eq(mutation_vars.get("pullRequestId"), "PR_node_7", "auto-merge mutation uses PR node id")

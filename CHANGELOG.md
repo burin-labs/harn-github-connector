@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Add latest-release and release-asset helpers for release automation.
+- Add `api_call` as a raw REST compatibility escape hatch.
+
 ## 0.3.0 - 2026-05-06
 
 - Add repository automation helpers for typed PR, Actions, merge queue, issue,
