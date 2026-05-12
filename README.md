@@ -5,7 +5,7 @@ webhook signatures, normalizes GitHub event payloads to the canonical
 `TriggerEvent` shape, and dispatches outbound REST/GraphQL calls.
 
 > **Status: v0.3.0** — production-ready first-party connector package,
-> verified with the published `harn-cli` 0.7.60 release.
+> verified with the published `harn-cli` 0.8.10 release.
 
 This is an **inbound + outbound** connector implementing the Harn Connector
 Contract v1 documented in the
@@ -75,6 +75,7 @@ Inbound webhooks:
 - `merge_group`
 - `installation`
 - `installation_repositories`
+- `release`
 
 Normalized webhook payloads use a stable provider envelope:
 
@@ -87,7 +88,18 @@ Normalized webhook payloads use a stable provider envelope:
 | `delivery_id` | `X-GitHub-Delivery`, also used for the event dedupe key. |
 | `installation_id` | GitHub App installation id when present. |
 | `repository` / `repo` | Raw repository object plus normalized `{owner, name, full_name}`. |
+| `source` / `source_refs` | Provider-agnostic source refs with stable keys, repo slug, resource ids, and deep links. |
+| `triage_event` | `harn.triage_event.v1` dashboard inbox envelope for issues, PRs, comments, and reviews. |
+| `job_event` | `harn.job_event.v1` dashboard status envelope for checks, Actions runs, releases, pushes, deployments, and merge queue events. |
 | `raw` | Original GitHub payload for fields not promoted by the connector. |
+
+Dashboard envelopes keep GitHub-specific payloads under `raw` while promoting
+the fields Burin Home and Harn Cloud need to render source-linked task and job
+cards: source URL, source timestamp, actor list, summary, proposed action,
+priority/status, dedupe key, privacy flags, related refs, and action intents.
+Provider write intents are descriptive only and always carry
+`requires_approval: true`; hosts decide whether to approve and execute comment,
+label, workflow-dispatch, rerun, or release-mutation actions.
 
 Merge Captain and release workflow consumers should subscribe to these stable
 topics:
@@ -103,6 +115,7 @@ topics:
 | `github.push` | `ref`, `ref_name`, `before`, `after`, `head_sha`, `head_ref`, `commits`, `distinct_size`, `head_commit`, `pusher`, `created`, `deleted`, `forced` |
 | `github.installation.<action>` | `installation`, `account`, `installation_state`, `suspended`, `revoked`, `repositories` |
 | `github.installation_repositories.<action>` | `installation`, `account`, `installation_state`, `suspended`, `revoked`, `repository_selection`, `repositories_added`, `repositories_removed` |
+| `github.release.<action>` | `release`, `release_id`, `tag_name`, `name`, `draft`, `prerelease`, `target_commitish`, `published_at`, `assets` |
 
 Outbound methods:
 
@@ -333,6 +346,11 @@ Required GitHub App permissions depend on the outbound method:
 The connector signs a GitHub App JWT with Harn `jwt_sign`, exchanges it for an
 installation access token, caches that token until its refresh window, and
 invalidates the cache after a `401` response before retrying once.
+
+Outbound GitHub API failures return explicit error codes for hosts:
+`auth` for bad credentials, `missing_scopes` for permission/scope denials such
+as "Resource not accessible by integration", `inaccessible_resource` for hidden
+or missing resources, and `rate_limited` for exhausted rate limits.
 
 If a caller already has an installation token, it can pass
 `installation_token` directly. The JWT path is preferred for production because

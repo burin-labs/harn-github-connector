@@ -4,6 +4,11 @@
 
 - Add latest-release and release-asset helpers for release automation.
 - Add `api_call` as a raw REST compatibility escape hatch.
+- Add source refs plus `harn.triage_event.v1` and `harn.job_event.v1`
+  dashboard envelopes for GitHub webhook payloads.
+- Add release webhook normalization and deterministic dashboard fixture coverage.
+- Return explicit `missing_scopes` and `inaccessible_resource` errors for
+  GitHub permission and access failures.
 
 ## 0.3.0 - 2026-05-06
 

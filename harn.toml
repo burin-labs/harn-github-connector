@@ -4,6 +4,7 @@ version = "0.3.0"
 description = "Pure-Harn GitHub App connector: webhooks, installation token rotation, REST/GraphQL dispatch."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/burin-labs/harn-github-connector"
+harn = ">=0.8,<0.9"
 
 [exports]
 default = "src/lib.harn"

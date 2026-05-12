@@ -1,0 +1,139 @@
+import { call } from "../src/lib"
+import { fixture_raw, github_normalize } from "./helpers"
+
+fn find_intent(intents, name) {
+  for intent in intents ?? [] {
+    if intent?.name == name {
+      return intent
+    }
+  }
+  return nil
+}
+
+pipeline default() {
+  let secret = "test-signing-secret"
+  let issue = github_normalize(fixture_raw("issues_opened", secret, "issues"))
+  let issue_payload = issue.event.payload
+  assert_eq(issue_payload.source.kind, "github.issue", "issue primary source kind")
+  assert_eq(issue_payload.source.number, 7, "issue source number")
+  assert_eq(
+    issue_payload.source.url,
+    "https://github.com/octo-org/octo-repo/issues/7",
+    "issue source url",
+  )
+  assert_eq(issue_payload.triage_event.schema, "harn.triage_event.v1", "issue triage schema")
+  assert_eq(issue_payload.triage_event.source_url, issue_payload.source.url, "triage source url")
+  assert_eq(issue_payload.triage_event.source_timestamp, "2026-04-20T14:00:00Z", "triage timestamp")
+  assert_eq(issue_payload.triage_event.actor.handle, "octocat", "triage actor")
+  assert_eq(issue_payload.triage_event.proposed_action, "triage_issue", "issue proposed action")
+  assert_eq(issue_payload.triage_event.dedupe_key, issue.event.dedupe_key, "triage dedupe key")
+  assert(find_intent(issue_payload.triage_event.action_intents, "dismiss") != nil, "dismiss intent")
+  assert(
+    find_intent(issue_payload.triage_event.action_intents, "convert_to_task") != nil,
+    "convert intent",
+  )
+  let issue_comment_intent = find_intent(issue_payload.triage_event.action_intents, "comment")
+  assert_eq(issue_comment_intent.method, "github.issue.comment", "comment write intent")
+  assert(issue_comment_intent.requires_approval, "comment requires approval")
+  assert_eq(issue_payload.triage_event.raw, nil, "triage event keeps raw payload separate")
+  let pr = github_normalize(fixture_raw("pull_request_opened", secret, "pull_request"))
+  assert_eq(pr.event.payload.source.kind, "github.pull_request", "pr primary source kind")
+  assert_eq(
+    pr.event.payload.source.url,
+    "https://github.com/octo-org/octo-repo/pull/42",
+    "pr source url",
+  )
+  let auto_merge_intent = find_intent(pr.event.payload.triage_event.action_intents, "enable_auto_merge")
+  assert_eq(auto_merge_intent.method, "github.pr.enable_auto_merge", "pr auto-merge intent")
+  assert(auto_merge_intent.requires_approval, "pr auto-merge requires approval")
+  let check = github_normalize(fixture_raw("check_run_completed", secret, "check_run"))
+  assert_eq(check.event.payload.source.kind, "github.check_run", "check source kind")
+  assert_eq(check.event.payload.source_refs[1].kind, "github.pull_request", "check related pr")
+  assert_eq(check.event.payload.job_event.schema, "harn.job_event.v1", "check job schema")
+  assert_eq(check.event.payload.job_event.status, "completed", "check job status")
+  assert_eq(check.event.payload.job_event.conclusion, "success", "check job conclusion")
+  assert_eq(check.event.payload.job_event.check_id, 8001, "check job id")
+  let check_rerun_intent = find_intent(check.event.payload.job_event.action_intents, "rerun_check")
+  assert(check_rerun_intent != nil, "check rerun intent")
+  assert(check_rerun_intent.requires_approval, "check rerun requires approval")
+  let workflow = github_normalize(fixture_raw("workflow_run_completed", secret, "workflow_run"))
+  assert_eq(workflow.event.payload.job_event.run_id, 6001, "workflow run id")
+  assert_eq(workflow.event.payload.job_event.workflow_id, 6101, "workflow id")
+  let workflow_dispatch_intent = find_intent(workflow.event.payload.job_event.action_intents, "dispatch_workflow")
+  assert_eq(
+    workflow_dispatch_intent.method,
+    "github.actions.workflow_dispatch",
+    "workflow dispatch intent",
+  )
+  assert(workflow_dispatch_intent.requires_approval, "workflow dispatch requires approval")
+  let release = github_normalize(fixture_raw("release_published", secret, "release"))
+  assert_eq(release.event.payload.source.kind, "github.release", "release source kind")
+  assert_eq(release.event.payload.job_event.release_id, 501, "release job id")
+  assert_eq(release.event.payload.job_event.status, "published", "release job status")
+  let release_mutation_intent = find_intent(release.event.payload.job_event.action_intents, "mutate_release")
+  assert(release_mutation_intent != nil, "release mutation intent")
+  assert(release_mutation_intent.requires_approval, "release mutation requires approval")
+  assert_eq(release.event.payload.job_event.raw, nil, "job event keeps raw payload separate")
+  http_mock_clear()
+  let base = "https://github-api.test"
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/pulls?state=open",
+    {
+      status: 403,
+      body: json_stringify({message: "Resource not accessible by integration"}),
+      headers: {"x-ratelimit-remaining": "10"},
+    },
+  )
+  let missing_scope = call(
+    "github.pr.list",
+    {
+      api_base_url: base,
+      installation_token: "token",
+      repo: "octo-org/octo-repo",
+      filters: {state: "open"},
+    },
+  )
+  assert(is_err(missing_scope), "scope failure returns error")
+  assert_eq(unwrap_err(missing_scope).code, "missing_scopes", "scope failure code")
+  assert_eq(unwrap_err(missing_scope).category, "permission", "scope failure category")
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/auth-repo/pulls?state=open",
+    {
+      status: 401,
+      body: json_stringify({message: "Bad credentials"}),
+      headers: {"x-ratelimit-remaining": "9"},
+    },
+  )
+  let auth_failure = call(
+    "github.pr.list",
+    {
+      api_base_url: base,
+      installation_token: "bad-token",
+      repo: "octo-org/auth-repo",
+      filters: {state: "open"},
+    },
+  )
+  assert(is_err(auth_failure), "auth failure returns error")
+  assert_eq(unwrap_err(auth_failure).code, "auth", "auth failure code")
+  assert_eq(unwrap_err(auth_failure).category, "auth", "auth failure category")
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/hidden-repo/pulls?state=open",
+    {status: 404, body: json_stringify({message: "Not Found"}), headers: {"x-ratelimit-remaining": "9"}},
+  )
+  let inaccessible = call(
+    "github.pr.list",
+    {
+      api_base_url: base,
+      installation_token: "token",
+      repo: "octo-org/hidden-repo",
+      filters: {state: "open"},
+    },
+  )
+  assert(is_err(inaccessible), "inaccessible resource returns error")
+  assert_eq(unwrap_err(inaccessible).code, "inaccessible_resource", "inaccessible resource code")
+  assert_eq(unwrap_err(inaccessible).category, "permission", "inaccessible resource category")
+  http_mock_clear()
+}
