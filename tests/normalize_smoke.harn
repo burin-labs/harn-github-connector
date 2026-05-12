@@ -87,6 +87,15 @@ pipeline default() {
     "octo-org/octo-repo",
     "removed repo",
   )
+  let release = github_normalize(fixture_raw("release_published", secret, "release"))
+  assert_eq(release.event.kind, "release", "release event kind")
+  assert_eq(release.event.payload.release_id, 501, "release id")
+  assert_eq(release.event.payload.tag_name, "v0.4.0", "release tag")
+  assert_eq(
+    release.event.payload.source.url,
+    "https://github.com/octo-org/octo-repo/releases/tag/v0.4.0",
+    "release source url",
+  )
   let body = fixture_body("issues_opened")
   let tampered = github_normalize(
     {signing_secret: secret, body_text: body + " ", headers: github_headers(secret, body, "issues")},

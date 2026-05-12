@@ -22,6 +22,7 @@ pipeline default() {
       "installation_repositories",
       "installation_repositories.removed",
     ],
+    ["release_published", "release", "release.published"],
   ]
   for [name, event, event_type] in cases {
     let normalized = github_normalize(fixture_raw(name, secret, event))

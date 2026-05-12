@@ -67,6 +67,7 @@ let GITHUB_WEBHOOK_EVENTS = [
   "merge_group",
   "installation",
   "installation_repositories",
+  "release",
 ]
 
 let TOKEN_CACHE_KEY = "harn-github-connector.token_cache"
@@ -114,6 +115,11 @@ pub fn payload_schema() {
         check_id: {type: ["integer", "null"]},
         check_suite_id: {type: ["integer", "null"]},
         merge_group_id: {type: ["integer", "null", "string"]},
+        release_id: {type: ["integer", "null"]},
+        source: {type: ["object", "null"]},
+        source_refs: {type: ["array", "null"]},
+        triage_event: {type: ["object", "null"]},
+        job_event: {type: ["object", "null"]},
         raw: {type: "object"},
         issue: {type: ["object", "null"]},
         pull_request: {type: ["object", "null"]},
@@ -129,6 +135,7 @@ pub fn payload_schema() {
         commit_status: {type: ["object", "null"]},
         merge_group: {type: ["object", "null"]},
         installation: {type: ["object", "null"]},
+        release: {type: ["object", "null"]},
         repositories_added: {type: ["array", "null"]},
         repositories_removed: {type: ["array", "null"]},
       },
@@ -2582,7 +2589,7 @@ fn __error_category(code) {
     || code == "missing_app_id" {
     return "auth"
   }
-  if code == "permission" {
+  if code == "permission" || code == "missing_scopes" || code == "inaccessible_resource" {
     return "permission"
   }
   if code == "rate_limit" || code == "rate_limited" {
@@ -2774,12 +2781,13 @@ fn __build_event(event_kind, payload, raw, headers) {
   let repo = __repo(payload)
   let occurred_at = __occurred_at(event_kind, payload, raw)
   let delivery_id = __header(headers, "x-github-delivery")
-  let normalized_payload = __normalize_github_payload(event_kind, payload, delivery_id)
+  let dedupe_key = __dedupe_key(event_kind, payload, repo, delivery_id)
+  let normalized_payload = __normalize_github_payload(event_kind, payload, delivery_id, dedupe_key, occurred_at)
   return {
     kind: event_kind,
     topic: normalized_payload.topic,
     occurred_at: occurred_at,
-    dedupe_key: __dedupe_key(event_kind, payload, repo, delivery_id),
+    dedupe_key: dedupe_key,
     delivery_id: delivery_id,
     signature_status: {state: "verified"},
     payload: normalized_payload,
@@ -2808,6 +2816,7 @@ fn __dedupe_key(event_kind, payload, repo, delivery_id) {
       ?? payload?.check_suite?.id
       ?? payload?.merge_group?.id
       ?? payload?.installation?.id
+      ?? payload?.release?.id
       ?? payload?.sha
       ?? "",
   )
@@ -2815,7 +2824,7 @@ fn __dedupe_key(event_kind, payload, repo, delivery_id) {
 }
 
 @complexity(allow)
-fn __normalize_github_payload(event_kind, raw, delivery_id) {
+fn __normalize_github_payload(event_kind, raw, delivery_id, dedupe_key, occurred_at) {
   let common = {
     provider: GITHUB_PROVIDER_ID,
     event: event_kind,
@@ -2831,167 +2840,1175 @@ fn __normalize_github_payload(event_kind, raw, delivery_id) {
   }
   if event_kind == "pull_request" {
     let pr = raw?.pull_request ?? {}
-    return common
-      + {
-      pull_request: pr,
-      pull_request_id: pr?.id,
-      pull_request_number: raw?.number ?? pr?.number,
-      head_sha: pr?.head?.sha,
-      head_ref: pr?.head?.ref,
-      base_sha: pr?.base?.sha,
-      base_ref: pr?.base?.ref,
-      draft: pr?.draft,
-      merged: pr?.merged,
-      labels: pr?.labels ?? [],
-    }
+    return __decorate_dashboard_payload(
+      event_kind,
+      common
+        + {
+        pull_request: pr,
+        pull_request_id: pr?.id,
+        pull_request_number: raw?.number ?? pr?.number,
+        head_sha: pr?.head?.sha,
+        head_ref: pr?.head?.ref,
+        base_sha: pr?.base?.sha,
+        base_ref: pr?.base?.ref,
+        draft: pr?.draft,
+        merged: pr?.merged,
+        labels: pr?.labels ?? [],
+      },
+      dedupe_key,
+      occurred_at,
+    )
   }
   if event_kind == "check_run" {
     let check = raw?.check_run ?? {}
     let pr = __first(check?.pull_requests)
-    return common
-      + {
-      check_run: check,
-      check_id: check?.id,
-      check_run_id: check?.id,
-      check_suite_id: check?.check_suite?.id,
-      pull_request_number: pr?.number,
-      head_sha: check?.head_sha ?? pr?.head?.sha,
-      head_ref: pr?.head?.ref,
-      base_ref: pr?.base?.ref,
-      name: check?.name,
-      status: check?.status,
-      conclusion: check?.conclusion,
-    }
+    return __decorate_dashboard_payload(
+      event_kind,
+      common
+        + {
+        check_run: check,
+        check_id: check?.id,
+        check_run_id: check?.id,
+        check_suite_id: check?.check_suite?.id,
+        pull_request_number: pr?.number,
+        head_sha: check?.head_sha ?? pr?.head?.sha,
+        head_ref: pr?.head?.ref,
+        base_ref: pr?.base?.ref,
+        name: check?.name,
+        status: check?.status,
+        conclusion: check?.conclusion,
+      },
+      dedupe_key,
+      occurred_at,
+    )
   }
   if event_kind == "check_suite" {
     let suite = raw?.check_suite ?? {}
     let pr = __first(suite?.pull_requests)
-    return common
-      + {
-      check_suite: suite,
-      check_suite_id: suite?.id,
-      pull_request_number: pr?.number,
-      head_sha: suite?.head_sha,
-      head_ref: suite?.head_branch ?? pr?.head?.ref,
-      base_ref: pr?.base?.ref,
-      status: suite?.status,
-      conclusion: suite?.conclusion,
-    }
+    return __decorate_dashboard_payload(
+      event_kind,
+      common
+        + {
+        check_suite: suite,
+        check_suite_id: suite?.id,
+        pull_request_number: pr?.number,
+        head_sha: suite?.head_sha,
+        head_ref: suite?.head_branch ?? pr?.head?.ref,
+        base_ref: pr?.base?.ref,
+        status: suite?.status,
+        conclusion: suite?.conclusion,
+      },
+      dedupe_key,
+      occurred_at,
+    )
   }
   if event_kind == "workflow_run" {
     let run = raw?.workflow_run ?? {}
     let pr = __first(run?.pull_requests)
-    return common
-      + {
-      workflow_run: run,
-      run_id: run?.id,
-      run_number: run?.run_number,
-      workflow_id: run?.workflow_id,
-      check_suite_id: run?.check_suite_id,
-      pull_request_number: pr?.number,
-      head_sha: run?.head_sha ?? pr?.head?.sha,
-      head_ref: run?.head_branch ?? pr?.head?.ref,
-      base_ref: pr?.base?.ref,
-      name: run?.name,
-      status: run?.status,
-      conclusion: run?.conclusion,
-    }
+    return __decorate_dashboard_payload(
+      event_kind,
+      common
+        + {
+        workflow_run: run,
+        run_id: run?.id,
+        run_number: run?.run_number,
+        workflow_id: run?.workflow_id,
+        check_suite_id: run?.check_suite_id,
+        pull_request_number: pr?.number,
+        head_sha: run?.head_sha ?? pr?.head?.sha,
+        head_ref: run?.head_branch ?? pr?.head?.ref,
+        base_ref: pr?.base?.ref,
+        name: run?.name,
+        status: run?.status,
+        conclusion: run?.conclusion,
+      },
+      dedupe_key,
+      occurred_at,
+    )
   }
   if event_kind == "status" {
     let branch = __first(raw?.branches)
-    return common
-      + {
-      commit_status: raw,
-      status_id: raw?.id,
-      head_sha: raw?.sha,
-      head_ref: branch?.name,
-      base_ref: branch?.name,
-      state: raw?.state,
-      context: raw?.context,
-      target_url: raw?.target_url,
-    }
+    return __decorate_dashboard_payload(
+      event_kind,
+      common
+        + {
+        commit_status: raw,
+        status_id: raw?.id,
+        head_sha: raw?.sha,
+        head_ref: branch?.name,
+        base_ref: branch?.name,
+        state: raw?.state,
+        context: raw?.context,
+        target_url: raw?.target_url,
+      },
+      dedupe_key,
+      occurred_at,
+    )
   }
   if event_kind == "merge_group" {
     let group = raw?.merge_group ?? {}
-    return common
-      + {
-      merge_group: group,
-      merge_group_id: group?.id,
-      head_sha: group?.head_sha,
-      head_ref: group?.head_ref,
-      base_sha: group?.base_sha,
-      base_ref: group?.base_ref,
-      pull_requests: group?.pull_requests ?? raw?.pull_requests ?? [],
-      pull_request_numbers: __pull_request_numbers(group?.pull_requests ?? raw?.pull_requests),
-    }
+    return __decorate_dashboard_payload(
+      event_kind,
+      common
+        + {
+        merge_group: group,
+        merge_group_id: group?.id,
+        head_sha: group?.head_sha,
+        head_ref: group?.head_ref,
+        base_sha: group?.base_sha,
+        base_ref: group?.base_ref,
+        pull_requests: group?.pull_requests ?? raw?.pull_requests ?? [],
+        pull_request_numbers: __pull_request_numbers(group?.pull_requests ?? raw?.pull_requests),
+      },
+      dedupe_key,
+      occurred_at,
+    )
   }
   if event_kind == "push" {
-    return common
-      + {
-      ref: raw?.ref,
-      ref_name: __ref_name(raw?.ref),
-      before: raw?.before,
-      after: raw?.after,
-      head_sha: raw?.after,
-      head_ref: __ref_name(raw?.ref),
-      commits: raw?.commits ?? [],
-      distinct_size: raw?.distinct_size,
-      head_commit: raw?.head_commit,
-      pusher: raw?.pusher,
-      deleted: raw?.deleted ?? false,
-      forced: raw?.forced ?? false,
-      created: raw?.created ?? false,
-    }
+    return __decorate_dashboard_payload(
+      event_kind,
+      common
+        + {
+        ref: raw?.ref,
+        ref_name: __ref_name(raw?.ref),
+        before: raw?.before,
+        after: raw?.after,
+        head_sha: raw?.after,
+        head_ref: __ref_name(raw?.ref),
+        commits: raw?.commits ?? [],
+        distinct_size: raw?.distinct_size,
+        head_commit: raw?.head_commit,
+        pusher: raw?.pusher,
+        deleted: raw?.deleted ?? false,
+        forced: raw?.forced ?? false,
+        created: raw?.created ?? false,
+      },
+      dedupe_key,
+      occurred_at,
+    )
   }
   if event_kind == "installation" {
-    return common
-      + {
-      installation: raw?.installation,
-      account: raw?.installation?.account ?? raw?.account,
-      installation_id: raw?.installation?.id,
-      installation_state: __installation_state(raw?.action),
-      suspended: __is_suspension_action(raw?.action),
-      revoked: __is_revocation_action(raw?.action),
-      repositories: raw?.repositories ?? [],
-    }
+    return __decorate_dashboard_payload(
+      event_kind,
+      common
+        + {
+        installation: raw?.installation,
+        account: raw?.installation?.account ?? raw?.account,
+        installation_id: raw?.installation?.id,
+        installation_state: __installation_state(raw?.action),
+        suspended: __is_suspension_action(raw?.action),
+        revoked: __is_revocation_action(raw?.action),
+        repositories: raw?.repositories ?? [],
+      },
+      dedupe_key,
+      occurred_at,
+    )
   }
   if event_kind == "installation_repositories" {
-    return common
-      + {
-      installation: raw?.installation,
-      account: raw?.installation?.account ?? raw?.account,
-      installation_id: raw?.installation?.id,
-      installation_state: __installation_state(raw?.action),
-      suspended: __is_suspension_action(raw?.action),
-      revoked: __is_revocation_action(raw?.action),
-      repository_selection: raw?.repository_selection,
-      repositories_added: raw?.repositories_added ?? [],
-      repositories_removed: raw?.repositories_removed ?? [],
-    }
+    return __decorate_dashboard_payload(
+      event_kind,
+      common
+        + {
+        installation: raw?.installation,
+        account: raw?.installation?.account ?? raw?.account,
+        installation_id: raw?.installation?.id,
+        installation_state: __installation_state(raw?.action),
+        suspended: __is_suspension_action(raw?.action),
+        revoked: __is_revocation_action(raw?.action),
+        repository_selection: raw?.repository_selection,
+        repositories_added: raw?.repositories_added ?? [],
+        repositories_removed: raw?.repositories_removed ?? [],
+      },
+      dedupe_key,
+      occurred_at,
+    )
+  }
+  if event_kind == "release" {
+    let release = raw?.release ?? {}
+    return __decorate_dashboard_payload(
+      event_kind,
+      common
+        + {
+        release: release,
+        release_id: release?.id,
+        tag_name: release?.tag_name,
+        name: release?.name,
+        draft: release?.draft ?? false,
+        prerelease: release?.prerelease ?? false,
+        target_commitish: release?.target_commitish,
+        html_url: release?.html_url,
+        published_at: release?.published_at,
+        assets: release?.assets ?? [],
+      },
+      dedupe_key,
+      occurred_at,
+    )
   }
   if event_kind == "issues" {
-    return common + {issue: raw?.issue}
+    return __decorate_dashboard_payload(event_kind, common + {issue: raw?.issue}, dedupe_key, occurred_at)
   }
   if event_kind == "issue_comment" {
-    return common + {issue: raw?.issue, comment: raw?.comment}
+    return __decorate_dashboard_payload(
+      event_kind,
+      common + {issue: raw?.issue, comment: raw?.comment},
+      dedupe_key,
+      occurred_at,
+    )
   }
   if event_kind == "pull_request_review" {
     let pr = raw?.pull_request ?? {}
-    return common
-      + {
-      pull_request: pr,
-      review: raw?.review,
-      pull_request_number: pr?.number,
-      head_sha: pr?.head?.sha,
-      head_ref: pr?.head?.ref,
-      base_sha: pr?.base?.sha,
-      base_ref: pr?.base?.ref,
+    return __decorate_dashboard_payload(
+      event_kind,
+      common
+        + {
+        pull_request: pr,
+        review: raw?.review,
+        pull_request_number: pr?.number,
+        head_sha: pr?.head?.sha,
+        head_ref: pr?.head?.ref,
+        base_sha: pr?.base?.sha,
+        base_ref: pr?.base?.ref,
+      },
+      dedupe_key,
+      occurred_at,
+    )
+  }
+  if event_kind == "deployment_status" {
+    return __decorate_dashboard_payload(
+      event_kind,
+      common + {deployment_status: raw?.deployment_status, deployment: raw?.deployment},
+      dedupe_key,
+      occurred_at,
+    )
+  }
+  return __decorate_dashboard_payload(event_kind, common, dedupe_key, occurred_at)
+}
+
+@complexity(allow)
+fn __decorate_dashboard_payload(event_kind, payload, dedupe_key, occurred_at) {
+  let source_refs = __source_refs(event_kind, payload)
+  let source = __first(source_refs)
+  var out = payload + {source: source, source_refs: source_refs}
+  let triage = __triage_event(event_kind, out, source, source_refs, dedupe_key, occurred_at)
+  if triage != nil {
+    out["triage_event"] = triage
+  }
+  let job = __job_event(event_kind, out, source, source_refs, dedupe_key, occurred_at)
+  if job != nil {
+    out["job_event"] = job
+  }
+  return out
+}
+
+@complexity(allow)
+fn __source_refs(event_kind, payload) {
+  var refs = []
+  if event_kind == "issues" {
+    refs = __append_ref(refs, __issue_source_ref(payload))
+  }
+  if event_kind == "issue_comment" {
+    refs = __append_ref(refs, __comment_source_ref(payload))
+    refs = __append_ref(refs, __issue_source_ref(payload))
+  }
+  if event_kind == "pull_request" {
+    refs = __append_ref(refs, __pull_request_source_ref(payload))
+  }
+  if event_kind == "pull_request_review" {
+    refs = __append_ref(refs, __review_source_ref(payload))
+    refs = __append_ref(refs, __pull_request_source_ref(payload))
+  }
+  if event_kind == "check_run" {
+    refs = __append_ref(refs, __check_run_source_ref(payload))
+    refs = __append_ref(refs, __pull_request_number_source_ref(payload, payload?.pull_request_number))
+  }
+  if event_kind == "check_suite" {
+    refs = __append_ref(refs, __check_suite_source_ref(payload))
+    refs = __append_ref(refs, __pull_request_number_source_ref(payload, payload?.pull_request_number))
+  }
+  if event_kind == "workflow_run" {
+    refs = __append_ref(refs, __workflow_run_source_ref(payload))
+    refs = __append_ref(refs, __pull_request_number_source_ref(payload, payload?.pull_request_number))
+  }
+  if event_kind == "status" {
+    refs = __append_ref(refs, __status_source_ref(payload))
+  }
+  if event_kind == "merge_group" {
+    refs = __append_ref(refs, __merge_group_source_ref(payload))
+    for number in payload?.pull_request_numbers ?? [] {
+      refs = __append_ref(refs, __pull_request_number_source_ref(payload, number))
+    }
+  }
+  if event_kind == "push" {
+    refs = __append_ref(refs, __push_source_ref(payload))
+  }
+  if event_kind == "deployment_status" {
+    refs = __append_ref(refs, __deployment_source_ref(payload))
+  }
+  if event_kind == "installation" || event_kind == "installation_repositories" {
+    refs = __append_ref(refs, __installation_source_ref(payload))
+  }
+  if event_kind == "release" {
+    refs = __append_ref(refs, __release_source_ref(payload))
+  }
+  refs = __append_ref(refs, __repo_source_ref(payload))
+  return refs
+}
+
+fn __append_ref(refs, ref) {
+  if ref == nil {
+    return refs
+  }
+  return refs + [ref]
+}
+
+fn __source_ref(kind, id, payload, fields = nil) {
+  let data = fields ?? {}
+  let repo = payload?.repo ?? {}
+  let repo_name = repo?.full_name ?? ""
+  let url = data?.url ?? data?.html_url
+  return {
+    provider: GITHUB_PROVIDER_ID,
+    kind: kind,
+    id: if id == nil {
+      ""
+    } else {
+      to_string(id)
+    },
+    repo: repo_name,
+    key: __source_key(kind, repo_name, id),
+    url: url,
+    html_url: data?.html_url ?? url,
+    api_url: data?.api_url,
+  }
+    + data
+}
+
+fn __source_key(kind, repo, id) {
+  let value = if id == nil || trim(to_string(id)) == "" {
+    "unknown"
+  } else {
+    to_string(id)
+  }
+  let repo_part = if repo == nil || trim(to_string(repo)) == "" {
+    "unknown"
+  } else {
+    to_string(repo)
+  }
+  return "github:" + to_string(kind) + ":" + repo_part + ":" + value
+}
+
+fn __repo_source_ref(payload) {
+  let repo = payload?.repo ?? {}
+  if repo?.full_name == nil || repo.full_name == "" {
+    return nil
+  }
+  let url = __repo_url(payload)
+  return __source_ref(
+    "github.repository",
+    repo.full_name,
+    payload,
+    {name: repo?.name, owner: repo?.owner, full_name: repo.full_name, url: url, html_url: url},
+  )
+}
+
+fn __issue_source_ref(payload) {
+  let issue = payload?.issue
+  if issue == nil || issue?.number == nil {
+    return nil
+  }
+  return __source_ref(
+    "github.issue",
+    issue?.id ?? issue.number,
+    payload,
+    {
+      number: issue.number,
+      title: issue?.title,
+      state: issue?.state,
+      url: issue?.html_url ?? __issue_url(payload, issue.number),
+      html_url: issue?.html_url ?? __issue_url(payload, issue.number),
+      api_url: issue?.url,
+    },
+  )
+}
+
+fn __comment_source_ref(payload) {
+  let comment = payload?.comment
+  if comment == nil || comment?.id == nil {
+    return nil
+  }
+  let number = payload?.issue?.number
+  return __source_ref(
+    "github.comment",
+    comment.id,
+    payload,
+    {
+      issue_number: number,
+      url: comment?.html_url ?? __issue_url(payload, number),
+      html_url: comment?.html_url ?? __issue_url(payload, number),
+      api_url: comment?.url,
+    },
+  )
+}
+
+fn __pull_request_source_ref(payload) {
+  let pr = payload?.pull_request
+  let number = payload?.pull_request_number ?? pr?.number
+  if number == nil {
+    return nil
+  }
+  return __source_ref(
+    "github.pull_request",
+    pr?.id ?? number,
+    payload,
+    {
+      number: number,
+      title: pr?.title,
+      state: pr?.state,
+      url: pr?.html_url ?? __pull_request_url(payload, number),
+      html_url: pr?.html_url ?? __pull_request_url(payload, number),
+      api_url: pr?.url,
+    },
+  )
+}
+
+fn __pull_request_number_source_ref(payload, number) {
+  if number == nil {
+    return nil
+  }
+  return __source_ref(
+    "github.pull_request",
+    number,
+    payload,
+    {
+      number: number,
+      url: __pull_request_url(payload, number),
+      html_url: __pull_request_url(payload, number),
+    },
+  )
+}
+
+fn __review_source_ref(payload) {
+  let review = payload?.review
+  if review == nil || review?.id == nil {
+    return nil
+  }
+  return __source_ref(
+    "github.review",
+    review.id,
+    payload,
+    {
+      pull_request_number: payload?.pull_request_number,
+      state: review?.state,
+      url: review?.html_url ?? __pull_request_url(payload, payload?.pull_request_number),
+      html_url: review?.html_url ?? __pull_request_url(payload, payload?.pull_request_number),
+      api_url: review?.url,
+    },
+  )
+}
+
+fn __check_run_source_ref(payload) {
+  if payload?.check_id == nil {
+    return nil
+  }
+  let check = payload?.check_run ?? {}
+  return __source_ref(
+    "github.check_run",
+    payload.check_id,
+    payload,
+    {
+      name: check?.name ?? payload?.name,
+      status: payload?.status,
+      conclusion: payload?.conclusion,
+      sha: payload?.head_sha,
+      url: check?.html_url ?? check?.details_url ?? __commit_url(payload, payload?.head_sha),
+      html_url: check?.html_url ?? check?.details_url ?? __commit_url(payload, payload?.head_sha),
+      api_url: check?.url,
+    },
+  )
+}
+
+fn __check_suite_source_ref(payload) {
+  if payload?.check_suite_id == nil {
+    return nil
+  }
+  return __source_ref(
+    "github.check_suite",
+    payload.check_suite_id,
+    payload,
+    {
+      status: payload?.status,
+      conclusion: payload?.conclusion,
+      sha: payload?.head_sha,
+      url: __check_suite_url(payload, payload.check_suite_id),
+      html_url: __check_suite_url(payload, payload.check_suite_id),
+    },
+  )
+}
+
+fn __workflow_run_source_ref(payload) {
+  if payload?.run_id == nil {
+    return nil
+  }
+  let run = payload?.workflow_run ?? {}
+  return __source_ref(
+    "github.workflow_run",
+    payload.run_id,
+    payload,
+    {
+      name: payload?.name ?? run?.name,
+      run_number: payload?.run_number,
+      workflow_id: payload?.workflow_id,
+      status: payload?.status,
+      conclusion: payload?.conclusion,
+      sha: payload?.head_sha,
+      branch: payload?.head_ref,
+      url: run?.html_url ?? __actions_run_url(payload, payload.run_id),
+      html_url: run?.html_url ?? __actions_run_url(payload, payload.run_id),
+      api_url: run?.url,
+    },
+  )
+}
+
+fn __status_source_ref(payload) {
+  let id = payload?.status_id ?? payload?.head_sha
+  if id == nil {
+    return nil
+  }
+  return __source_ref(
+    "github.status",
+    id,
+    payload,
+    {
+      context: payload?.context,
+      state: payload?.state,
+      sha: payload?.head_sha,
+      url: payload?.target_url ?? __commit_url(payload, payload?.head_sha),
+      html_url: payload?.target_url ?? __commit_url(payload, payload?.head_sha),
+    },
+  )
+}
+
+fn __merge_group_source_ref(payload) {
+  if payload?.merge_group_id == nil {
+    return nil
+  }
+  return __source_ref(
+    "github.merge_group",
+    payload.merge_group_id,
+    payload,
+    {
+      branch: payload?.head_ref,
+      base_ref: payload?.base_ref,
+      sha: payload?.head_sha,
+      url: __commit_url(payload, payload?.head_sha) ?? __repo_url(payload),
+      html_url: __commit_url(payload, payload?.head_sha) ?? __repo_url(payload),
+    },
+  )
+}
+
+fn __push_source_ref(payload) {
+  let id = payload?.after ?? payload?.ref
+  if id == nil {
+    return nil
+  }
+  let url = payload?.raw?.compare ?? __branch_or_commit_url(payload, payload?.ref_name, payload?.after)
+  return __source_ref(
+    "github.push",
+    id,
+    payload,
+    {branch: payload?.ref_name, sha: payload?.after, url: url, html_url: url},
+  )
+}
+
+fn __deployment_source_ref(payload) {
+  let status = payload?.deployment_status ?? {}
+  let deployment = payload?.deployment ?? {}
+  let id = status?.id ?? deployment?.id
+  if id == nil {
+    return nil
+  }
+  let url = status?.target_url ?? status?.environment_url ?? __repo_url(payload)
+  return __source_ref(
+    "github.deployment_status",
+    id,
+    payload,
+    {
+      environment: deployment?.environment,
+      state: status?.state,
+      url: url,
+      html_url: url,
+      api_url: status?.url,
+    },
+  )
+}
+
+fn __installation_source_ref(payload) {
+  if payload?.installation_id == nil {
+    return nil
+  }
+  let account = payload?.account ?? payload?.installation?.account
+  return __source_ref(
+    "github.installation",
+    payload.installation_id,
+    payload,
+    {
+      account: account?.login ?? account?.name,
+      state: payload?.installation_state,
+      url: account?.html_url,
+      html_url: account?.html_url,
+      api_url: payload?.installation?.url,
+    },
+  )
+}
+
+fn __release_source_ref(payload) {
+  if payload?.release_id == nil {
+    return nil
+  }
+  let release = payload?.release ?? {}
+  return __source_ref(
+    "github.release",
+    payload.release_id,
+    payload,
+    {
+      tag_name: payload?.tag_name,
+      name: payload?.name,
+      draft: payload?.draft ?? false,
+      prerelease: payload?.prerelease ?? false,
+      url: release?.html_url ?? payload?.html_url ?? __release_url(payload, payload?.tag_name),
+      html_url: release?.html_url ?? payload?.html_url ?? __release_url(payload, payload?.tag_name),
+      api_url: release?.url,
+    },
+  )
+}
+
+fn __repo_url(payload) {
+  let explicit = payload?.repository?.html_url
+  if explicit != nil && explicit != "" {
+    return explicit
+  }
+  let full_name = payload?.repo?.full_name
+  if full_name == nil || full_name == "" {
+    return nil
+  }
+  return "https://github.com/" + full_name
+}
+
+fn __issue_url(payload, number) {
+  let repo_url = __repo_url(payload)
+  if repo_url == nil || number == nil {
+    return nil
+  }
+  return repo_url + "/issues/" + to_string(number)
+}
+
+fn __pull_request_url(payload, number) {
+  let repo_url = __repo_url(payload)
+  if repo_url == nil || number == nil {
+    return nil
+  }
+  return repo_url + "/pull/" + to_string(number)
+}
+
+fn __commit_url(payload, sha) {
+  let repo_url = __repo_url(payload)
+  if repo_url == nil || sha == nil || sha == "" {
+    return nil
+  }
+  return repo_url + "/commit/" + to_string(sha)
+}
+
+fn __branch_or_commit_url(payload, branch, sha) {
+  let repo_url = __repo_url(payload)
+  if repo_url == nil {
+    return nil
+  }
+  if branch != nil && branch != "" {
+    return repo_url + "/tree/" + url_encode(to_string(branch))
+  }
+  if sha != nil && sha != "" {
+    return __commit_url(payload, sha)
+  }
+  return repo_url
+}
+
+fn __actions_run_url(payload, run_id) {
+  let repo_url = __repo_url(payload)
+  if repo_url == nil || run_id == nil {
+    return nil
+  }
+  return repo_url + "/actions/runs/" + to_string(run_id)
+}
+
+fn __check_suite_url(payload, suite_id) {
+  let commit = __commit_url(payload, payload?.head_sha)
+  if commit == nil || suite_id == nil {
+    return commit
+  }
+  return commit + "/checks?check_suite_id=" + to_string(suite_id)
+}
+
+fn __release_url(payload, tag_name) {
+  let repo_url = __repo_url(payload)
+  if repo_url == nil || tag_name == nil || tag_name == "" {
+    return nil
+  }
+  return repo_url + "/releases/tag/" + url_encode(to_string(tag_name))
+}
+
+fn __triage_event(event_kind, payload, source, source_refs, dedupe_key, occurred_at) {
+  if !contains(["issues", "issue_comment", "pull_request", "pull_request_review"], event_kind) {
+    return nil
+  }
+  return {
+    schema: "harn.triage_event.v1",
+    kind: "triage_event",
+    provider: GITHUB_PROVIDER_ID,
+    source_kind: source?.kind,
+    source_ref: source,
+    source_url: source?.url,
+    source_timestamp: occurred_at,
+    actor: __primary_actor(payload),
+    actors: __actors(payload),
+    summary: __triage_summary(event_kind, payload),
+    why_it_matters: __triage_reason(event_kind, payload),
+    proposed_action: __triage_proposed_action(event_kind, payload),
+    urgency: __triage_urgency(event_kind, payload),
+    priority: __triage_priority(event_kind, payload),
+    confidence: 0.9,
+    related_refs: source_refs,
+    dedupe_key: dedupe_key,
+    privacy: __privacy(payload),
+    privacy_flags: __privacy_flags(payload),
+    action_intents: __read_action_intents(source, source_refs) + __host_task_action_intents(source, source_refs)
+      + __triage_write_action_intents(event_kind, payload),
+  }
+}
+
+fn __job_event(event_kind, payload, source, source_refs, dedupe_key, occurred_at) {
+  if !contains(
+    [
+      "workflow_run",
+      "check_run",
+      "check_suite",
+      "status",
+      "deployment_status",
+      "merge_group",
+      "push",
+      "release",
+    ],
+    event_kind,
+  ) {
+    return nil
+  }
+  return {
+    schema: "harn.job_event.v1",
+    kind: "job_event",
+    provider: GITHUB_PROVIDER_ID,
+    source_kind: source?.kind,
+    source_ref: source,
+    source_url: source?.url,
+    source_timestamp: occurred_at,
+    actor: __primary_actor(payload),
+    actors: __actors(payload),
+    summary: __job_summary(event_kind, payload),
+    status: __job_status(event_kind, payload),
+    conclusion: __job_conclusion(event_kind, payload),
+    repo: payload?.repo,
+    branch: payload?.head_ref ?? payload?.ref_name,
+    sha: payload?.head_sha ?? payload?.after,
+    run_id: payload?.run_id,
+    run_number: payload?.run_number,
+    workflow_id: payload?.workflow_id,
+    check_id: payload?.check_id,
+    check_suite_id: payload?.check_suite_id,
+    release_id: payload?.release_id,
+    pull_request_number: payload?.pull_request_number,
+    related_refs: source_refs,
+    dedupe_key: dedupe_key,
+    receipt_url: source?.url,
+    replay_url: source?.url,
+    privacy: __privacy(payload),
+    privacy_flags: __privacy_flags(payload),
+    action_intents: __read_action_intents(source, source_refs) + __host_task_action_intents(source, source_refs)
+      + __job_write_action_intents(event_kind, payload),
+  }
+}
+
+fn __read_action_intents(source, source_refs) {
+  if source == nil || source?.url == nil {
+    return []
+  }
+  return [
+    {
+      kind: "open_source",
+      name: "open_source",
+      requires_approval: false,
+      source_ref: source,
+      related_refs: source_refs,
+    },
+  ]
+}
+
+fn __host_task_action_intents(source, source_refs) {
+  return [
+    {kind: "host", name: "dismiss", requires_approval: false, source_ref: source},
+    {kind: "host", name: "snooze", requires_approval: false, source_ref: source},
+    {
+      kind: "host",
+      name: "convert_to_task",
+      requires_approval: false,
+      source_ref: source,
+      related_refs: source_refs,
+    },
+  ]
+}
+
+fn __triage_write_action_intents(event_kind, payload) {
+  var intents = []
+  let repo = payload?.repo ?? {}
+  let issue_number = payload?.issue?.number
+  let pr_number = payload?.pull_request_number ?? payload?.pull_request?.number
+  if event_kind == "issues" || event_kind == "issue_comment" {
+    intents = __append_intent(
+      intents,
+      __provider_write_intent(
+        "comment",
+        "github.issue.comment",
+        {repo: repo?.full_name, number: issue_number},
+      ),
+    )
+    intents = __append_intent(
+      intents,
+      __provider_write_intent(
+        "add_labels",
+        "issues.add_labels",
+        {owner: repo?.owner, repo: repo?.name, issue_number: issue_number},
+      ),
+    )
+  }
+  if event_kind == "pull_request" || event_kind == "pull_request_review" {
+    intents = __append_intent(
+      intents,
+      __provider_write_intent("comment", "github.pr.comment", {repo: repo?.full_name, number: pr_number}),
+    )
+    intents = __append_intent(
+      intents,
+      __provider_write_intent(
+        "enable_auto_merge",
+        "github.pr.enable_auto_merge",
+        {repo: repo?.full_name, number: pr_number},
+      ),
+    )
+  }
+  return intents
+}
+
+fn __job_write_action_intents(event_kind, payload) {
+  var intents = []
+  let repo = payload?.repo ?? {}
+  if event_kind == "workflow_run" && payload?.workflow_id != nil {
+    intents = __append_intent(
+      intents,
+      __provider_write_intent(
+        "dispatch_workflow",
+        "github.actions.workflow_dispatch",
+        {
+          repo: repo?.full_name,
+          workflow_id: payload.workflow_id,
+          ref: payload?.head_ref ?? payload?.base_ref,
+        },
+      ),
+    )
+    intents = __append_intent(
+      intents,
+      __provider_operation_intent("rerun_workflow", "actions.rerun_workflow", false),
+    )
+  }
+  if event_kind == "check_run" {
+    intents = __append_intent(intents, __provider_operation_intent("rerun_check", "checks.rerequest", false))
+  }
+  if event_kind == "release" {
+    intents = __append_intent(intents, __provider_operation_intent("mutate_release", "releases.mutate", false))
+  }
+  return intents
+}
+
+fn __append_intent(intents, intent) {
+  if intent == nil {
+    return intents
+  }
+  return intents + [intent]
+}
+
+fn __provider_write_intent(name, method, args) {
+  if args?.repo == nil {
+    return nil
+  }
+  return {
+    kind: "provider_write",
+    name: name,
+    provider: GITHUB_PROVIDER_ID,
+    requires_approval: true,
+    method: method,
+    args: args,
+  }
+}
+
+fn __provider_operation_intent(name, operation, available) {
+  return {
+    kind: "provider_write",
+    name: name,
+    provider: GITHUB_PROVIDER_ID,
+    requires_approval: true,
+    operation: operation,
+    available: available,
+  }
+}
+
+fn __primary_actor(payload) {
+  return __first(__actors(payload))
+}
+
+fn __actors(payload) {
+  var actors = []
+  actors = __append_actor(actors, payload?.sender)
+  actors = __append_actor(actors, payload?.issue?.user)
+  actors = __append_actor(actors, payload?.pull_request?.user)
+  actors = __append_actor(actors, payload?.comment?.user)
+  actors = __append_actor(actors, payload?.review?.user)
+  actors = __append_actor(actors, payload?.workflow_run?.actor)
+  actors = __append_actor(actors, payload?.workflow_run?.triggering_actor)
+  actors = __append_actor(actors, payload?.check_run?.app)
+  actors = __append_actor(actors, payload?.release?.author)
+  actors = __append_actor(actors, payload?.pusher)
+  return actors
+}
+
+fn __append_actor(actors, raw_actor) {
+  let actor = __actor(raw_actor)
+  if actor == nil || actor?.handle == nil || actor.handle == "" {
+    return actors
+  }
+  for existing in actors {
+    if existing?.handle == actor.handle {
+      return actors
+    }
+  }
+  return actors + [actor]
+}
+
+fn __actor(raw_actor) {
+  if raw_actor == nil {
+    return nil
+  }
+  let handle = raw_actor?.login ?? raw_actor?.slug ?? raw_actor?.name
+  if handle == nil || handle == "" {
+    return nil
+  }
+  return {
+    provider: GITHUB_PROVIDER_ID,
+    id: raw_actor?.id,
+    login: raw_actor?.login,
+    handle: handle,
+    type: raw_actor?.type,
+    url: raw_actor?.html_url,
+  }
+}
+
+fn __privacy(payload) {
+  return {redacted: false, contains_private_repo: payload?.repository?.private ?? false}
+}
+
+fn __privacy_flags(payload) {
+  if payload?.repository?.private ?? false {
+    return ["private_repository"]
+  }
+  return []
+}
+
+fn __triage_summary(event_kind, payload) {
+  if event_kind == "issues" {
+    return "Issue #" + to_string(payload?.issue?.number ?? "") + " "
+      + to_string(payload?.action ?? "updated")
+      + ": "
+      + to_string(payload?.issue?.title ?? "")
+  }
+  if event_kind == "issue_comment" {
+    return "Comment on issue #" + to_string(payload?.issue?.number ?? "") + ": "
+      + __truncate_summary(payload?.comment?.body)
+  }
+  if event_kind == "pull_request" {
+    return "PR #" + to_string(payload?.pull_request_number ?? "") + " "
+      + to_string(payload?.action ?? "updated")
+      + ": "
+      + to_string(payload?.pull_request?.title ?? "")
+  }
+  if event_kind == "pull_request_review" {
+    return "PR #" + to_string(payload?.pull_request_number ?? "") + " review "
+      + to_string(payload?.action ?? "updated")
+      + ": "
+      + to_string(payload?.review?.state ?? "")
+  }
+  return "GitHub item updated"
+}
+
+fn __triage_reason(event_kind, payload) {
+  if event_kind == "issues" {
+    return "A tracked GitHub issue changed and may need triage or conversion into a task."
+  }
+  if event_kind == "pull_request" {
+    return "A pull request changed and may need review, merge, or follow-up work."
+  }
+  if event_kind == "issue_comment" || event_kind == "pull_request_review" {
+    return "A GitHub conversation changed and may need a response."
+  }
+  return "A GitHub source item changed."
+}
+
+fn __triage_proposed_action(event_kind, payload) {
+  if event_kind == "issues" {
+    return "triage_issue"
+  }
+  if event_kind == "pull_request" {
+    if payload?.draft ?? false {
+      return "watch_pr"
+    }
+    return "review_pr"
+  }
+  if event_kind == "issue_comment" {
+    return "review_comment"
+  }
+  if event_kind == "pull_request_review" {
+    return "review_pr_feedback"
+  }
+  return "review"
+}
+
+fn __triage_urgency(event_kind, payload) {
+  if event_kind == "pull_request_review"
+    && lowercase(to_string(payload?.review?.state ?? "")) == "changes_requested" {
+    return "high"
+  }
+  if event_kind == "issues" && __labels_include(payload?.labels ?? payload?.issue?.labels, "urgent") {
+    return "high"
+  }
+  return "normal"
+}
+
+fn __triage_priority(event_kind, payload) {
+  if __triage_urgency(event_kind, payload) == "high" {
+    return "high"
+  }
+  return "normal"
+}
+
+fn __labels_include(labels, wanted) {
+  for label in labels ?? [] {
+    let name = lowercase(to_string(label?.name ?? label))
+    if name == lowercase(to_string(wanted)) {
+      return true
+    }
+  }
+  return false
+}
+
+fn __job_summary(event_kind, payload) {
+  if event_kind == "workflow_run" {
+    return "Workflow " + to_string(payload?.name ?? payload?.workflow_id ?? "") + " "
+      + to_string(payload?.status ?? "updated")
+      + ": "
+      + to_string(payload?.conclusion ?? "pending")
+  }
+  if event_kind == "check_run" {
+    return "Check " + to_string(payload?.name ?? payload?.check_id ?? "") + " "
+      + to_string(payload?.status ?? "updated")
+      + ": "
+      + to_string(payload?.conclusion ?? "pending")
+  }
+  if event_kind == "check_suite" {
+    return "Check suite " + to_string(payload?.status ?? "updated") + ": "
+      + to_string(payload?.conclusion ?? "pending")
+  }
+  if event_kind == "status" {
+    return "Status " + to_string(payload?.context ?? "") + ": " + to_string(payload?.state ?? "")
+  }
+  if event_kind == "deployment_status" {
+    return "Deployment " + to_string(payload?.deployment?.environment ?? "") + ": "
+      + to_string(payload?.deployment_status?.state ?? "")
+  }
+  if event_kind == "merge_group" {
+    return "Merge queue group " + to_string(payload?.merge_group_id ?? "") + " for "
+      + to_string(payload?.base_ref ?? "")
+  }
+  if event_kind == "push" {
+    return "Push to " + to_string(payload?.ref_name ?? payload?.ref ?? "") + ": "
+      + to_string(payload?.distinct_size ?? len(payload?.commits ?? []))
+      + " commit(s)"
+  }
+  if event_kind == "release" {
+    return "Release " + to_string(payload?.tag_name ?? payload?.name ?? "") + " "
+      + to_string(payload?.action ?? "updated")
+  }
+  return "GitHub job updated"
+}
+
+fn __job_status(event_kind, payload) {
+  if payload?.status != nil {
+    return payload.status
+  }
+  if payload?.state != nil {
+    return payload.state
+  }
+  if event_kind == "deployment_status" {
+    return payload?.deployment_status?.state
+  }
+  if event_kind == "push" {
+    if payload?.deleted ?? false {
+      return "deleted"
+    }
+    return "pushed"
+  }
+  if event_kind == "release" {
+    return payload?.action ?? "release"
+  }
+  if event_kind == "merge_group" {
+    return payload?.action ?? "queued"
+  }
+  return "updated"
+}
+
+fn __job_conclusion(event_kind, payload) {
+  if payload?.conclusion != nil {
+    return payload.conclusion
+  }
+  if event_kind == "status" {
+    let state = lowercase(to_string(payload?.state ?? ""))
+    if state == "success" {
+      return "success"
+    }
+    if state == "failure" || state == "error" {
+      return "failure"
     }
   }
   if event_kind == "deployment_status" {
-    return common + {deployment_status: raw?.deployment_status, deployment: raw?.deployment}
+    let state = lowercase(to_string(payload?.deployment_status?.state ?? ""))
+    if state == "success" {
+      return "success"
+    }
+    if state == "failure" || state == "error" || state == "inactive" {
+      return "failure"
+    }
   }
-  return common
+  return nil
+}
+
+fn __truncate_summary(value) {
+  let text = to_string(value ?? "")
+  if len(text) <= 80 {
+    return text
+  }
+  return text[0:77] + "..."
 }
 
 fn __topic(event_kind, action) {
@@ -3113,6 +4130,9 @@ fn __occurred_at(event_kind, payload, raw) {
   if event_kind == "installation" || event_kind == "installation_repositories" {
     return payload?.installation?.updated_at ?? payload?.installation?.created_at
       ?? payload?.installation?.suspended_at
+  }
+  if event_kind == "release" {
+    return payload?.release?.published_at ?? payload?.release?.updated_at ?? payload?.release?.created_at
   }
   return payload?.check_run?.completed_at ?? payload?.check_run?.started_at
     ?? payload?.check_run?.created_at
@@ -3455,22 +4475,11 @@ fn __github_request(method, url, body, cfg, accept, parse_json) {
       continue
     }
     if response.status < 200 || response.status >= 300 {
-      let code = if response.status == 401 {
-        "auth"
-      } else {
-        if response.status == 403 || response.status == 429 {
-          if __is_rate_limit_response(response) {
-            "rate_limited"
-          } else {
-            "permission"
-          }
-        } else {
-          "network"
-        }
-      }
+      let code = __github_error_code(response)
       return __err(
         code,
-        "github API request failed with status " + to_string(response.status) + ": " + response.body,
+        "github API request failed with status " + to_string(response.status) + ": "
+          + __github_error_message(response),
       )
     }
     if trim(response.body ?? "") == "" {
@@ -3487,6 +4496,40 @@ fn __github_request(method, url, body, cfg, accept, parse_json) {
     }
     return unwrap(parsed)
   }
+}
+
+fn __github_error_code(response) {
+  if response.status == 401 {
+    return "auth"
+  }
+  if response.status == 403 || response.status == 429 {
+    if __is_rate_limit_response(response) {
+      return "rate_limited"
+    }
+    let message = lowercase(__github_error_message(response))
+    if contains(message, "resource not accessible by integration") || contains(message, "scope")
+      || contains(message, "permission") {
+      return "missing_scopes"
+    }
+    return "permission"
+  }
+  if response.status == 404 {
+    return "inaccessible_resource"
+  }
+  return "network"
+}
+
+fn __github_error_message(response) {
+  let parsed = try {
+    json_parse(response.body ?? "")
+  }
+  if !is_err(parsed) {
+    let body = unwrap(parsed)
+    if body?.message != nil {
+      return to_string(body.message)
+    }
+  }
+  return to_string(response.body ?? "")
 }
 
 fn __is_rate_limit_response(response) {
