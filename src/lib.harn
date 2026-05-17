@@ -2350,12 +2350,10 @@ fn __check_rollup(checks) {
   }
   let state = if failed > 0 {
     "failing"
+  } else if pending > 0 || len(checks ?? []) == 0 {
+    "pending"
   } else {
-    if pending > 0 || len(checks ?? []) == 0 {
-      "pending"
-    } else {
-      "green"
-    }
+    "green"
   }
   return {
     state: state,
@@ -2366,12 +2364,10 @@ fn __check_rollup(checks) {
     skipped: skipped,
     conclusion: if state == "green" {
       "success"
+    } else if state == "failing" {
+      "failure"
     } else {
-      if state == "failing" {
-        "failure"
-      } else {
-        nil
-      }
+      nil
     },
   }
 }
