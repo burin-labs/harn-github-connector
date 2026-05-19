@@ -188,6 +188,9 @@ Common option fields:
 - Auth options (`installation_token`, `app_id`/`installation_id`/`private_key_secret`,
   `api_base_url`, `allow_gh_auth_fallback`, ...) are accepted and forwarded
   through the existing `call(...)` configuration path.
+- `timeout_ms` is forwarded to outbound GitHub HTTP requests, and
+  `rate_limit_max_sleep_seconds` caps any single rate-limit reset wait
+  (default `60`; set `0` in CI to fail fast instead of sleeping).
 - `poll_interval_ms`, `timeout_ms`, and `max_attempts` control the wait
   helpers. `max_attempts` overrides the timeout when set, which keeps tests
   deterministic without wall-clock dependence.
@@ -373,8 +376,8 @@ silently depend on a user-scoped local CLI session.
 - Installation tokens are cached until the configured refresh window, refreshed
   under a mutex, invalidated after a `401`, and retried once.
 - GitHub primary rate-limit responses with short reset windows are retried once;
-  long reset windows return a `rate_limited` error instead of sleeping in CI or
-  webhook paths.
+  resets beyond `rate_limit_max_sleep_seconds` return a `rate_limited` error
+  instead of sleeping in CI or webhook paths.
 - Outbound errors carry deterministic `category` values for typed callers:
   `auth`, `permission`, `rate_limit`, `branch_protection`, `merge_queue`,
   `checks_pending`, `checks_failed`, `network`, and `schema_drift`.

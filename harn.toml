@@ -12,6 +12,7 @@ default = "src/lib.harn"
 [[providers]]
 id = "github"
 connector = { harn = "src/lib.harn" }
+capabilities = ["webhook", "rate_limit", "pagination", "graphql"]
 
 [providers.setup]
 auth_type = "github-app"

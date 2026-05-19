@@ -157,7 +157,7 @@ pipeline default() {
         {
           status: 403,
           body: "{\"message\":\"rate limited\"}",
-          headers: {"x-ratelimit-remaining": "0", "x-ratelimit-reset": to_string(to_int(timestamp()) - 1)},
+          headers: {"x-ratelimit-remaining": "0", "x-ratelimit-reset": "1"},
         },
         {status: 200, body: "[{\"filename\":\"src/lib.rs\"}]", headers: {"x-ratelimit-remaining": "8"}},
       ],
@@ -181,7 +181,7 @@ pipeline default() {
     {
       status: 403,
       body: "{\"message\":\"rate limited\"}",
-      headers: {"x-ratelimit-remaining": "0", "x-ratelimit-reset": to_string(to_int(timestamp()) + 120)},
+      headers: {"x-ratelimit-remaining": "0", "x-ratelimit-reset": "1700000001"},
     },
   )
   let capped = call(
@@ -192,6 +192,8 @@ pipeline default() {
       owner: "octo-org",
       repo: "octo-repo",
       path: "README.md",
+      rate_limit_max_sleep_seconds: 0,
+      now: 1700000000,
     },
   )
   assert(is_err(capped), "rate-limit cap rejects")
