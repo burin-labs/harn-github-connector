@@ -78,6 +78,8 @@ let DEFAULT_JWT_BACKDATE_SECONDS = 60
 
 let DEFAULT_JWT_TTL_SECONDS = 600
 
+let DEFAULT_RATE_LIMIT_MAX_SLEEP_SECONDS = 60
+
 var GITHUB_STATE = {initialized: false, active: false, bindings: {}, ctx: {}}
 
 /** Return this connector's Harn provider id. */
@@ -4146,6 +4148,10 @@ fn __outbound_config(args) {
         installation_token: to_string(direct_token),
         token_mode: "direct",
         installation_id: args?.installation_id,
+        now: args?.now,
+        timeout_ms: args?.timeout_ms,
+        rate_limit_max_sleep_seconds: args?.rate_limit_max_sleep_seconds
+          ?? DEFAULT_RATE_LIMIT_MAX_SLEEP_SECONDS,
       },
     )
   }
@@ -4164,6 +4170,10 @@ fn __outbound_config(args) {
           installation_token: to_string(unwrap(gh_token)),
           token_mode: "gh_auth",
           installation_id: nil,
+          now: args?.now,
+          timeout_ms: args?.timeout_ms,
+          rate_limit_max_sleep_seconds: args?.rate_limit_max_sleep_seconds
+            ?? DEFAULT_RATE_LIMIT_MAX_SLEEP_SECONDS,
         },
       )
     }
@@ -4184,6 +4194,8 @@ fn __outbound_config(args) {
     token_refresh_skew_seconds: args?.token_refresh_skew_seconds ?? DEFAULT_TOKEN_REFRESH_SKEW_SECONDS,
     now: args?.now,
     timeout_ms: args?.timeout_ms,
+    rate_limit_max_sleep_seconds: args?.rate_limit_max_sleep_seconds
+      ?? DEFAULT_RATE_LIMIT_MAX_SLEEP_SECONDS,
   }
   let token_result = installation_token(resolved)
   if is_err(token_result) {
@@ -4209,6 +4221,7 @@ fn __config_keys() {
     "token_refresh_skew_seconds",
     "now",
     "timeout_ms",
+    "rate_limit_max_sleep_seconds",
     "allow_gh_auth_fallback",
     "gh_auth_fallback",
     "gh_token",
@@ -4445,6 +4458,9 @@ fn __github_request(method, url, body, cfg, accept, parse_json) {
       options["body"] = json_stringify(body)
       options.headers["Content-Type"] = "application/json"
     }
+    if cfg?.timeout_ms != nil {
+      options["timeout_ms"] = cfg.timeout_ms
+    }
     let response_result = try {
       http_request(method, url, options)
     }
@@ -4462,7 +4478,7 @@ fn __github_request(method, url, body, cfg, accept, parse_json) {
       current_token = to_string(refreshed)
       continue
     }
-    let limited = __maybe_wait_for_rate_limit(response)
+    let limited = __maybe_wait_for_rate_limit(response, cfg)
     if is_err(limited) {
       return limited
     }
@@ -4536,7 +4552,7 @@ fn __is_rate_limit_response(response) {
   return remaining != nil && trim(to_string(remaining)) == "0"
 }
 
-fn __maybe_wait_for_rate_limit(response) {
+fn __maybe_wait_for_rate_limit(response, cfg) {
   let remaining = __response_header(response.headers ?? {}, "x-ratelimit-remaining")
   if remaining == nil || trim(to_string(remaining)) != "0" {
     return Ok(false)
@@ -4551,9 +4567,17 @@ fn __maybe_wait_for_rate_limit(response) {
   if is_err(parsed_reset) {
     return Ok(true)
   }
-  let wait_seconds = unwrap(parsed_reset) - to_int(timestamp())
-  if wait_seconds > 60 {
-    return __err("rate_limited", "github API rate limit reset is more than 60 seconds away")
+  let wait_seconds = unwrap(parsed_reset) - __now_seconds(cfg ?? {})
+  let max_sleep = max(
+    0,
+    to_int(cfg?.rate_limit_max_sleep_seconds ?? DEFAULT_RATE_LIMIT_MAX_SLEEP_SECONDS)
+      ?? DEFAULT_RATE_LIMIT_MAX_SLEEP_SECONDS,
+  )
+  if wait_seconds > max_sleep {
+    return __err(
+      "rate_limited",
+      "github API rate limit reset is more than " + to_string(max_sleep) + " seconds away",
+    )
   }
   if wait_seconds > 0 {
     sleep(wait_seconds * 1000)
@@ -4585,6 +4609,8 @@ fn __resolve_token_config(config) {
       token_refresh_skew_seconds: config?.token_refresh_skew_seconds ?? DEFAULT_TOKEN_REFRESH_SKEW_SECONDS,
       now: config?.now,
       timeout_ms: config?.timeout_ms,
+      rate_limit_max_sleep_seconds: config?.rate_limit_max_sleep_seconds
+        ?? DEFAULT_RATE_LIMIT_MAX_SLEEP_SECONDS,
     },
   )
 }
@@ -4687,5 +4713,5 @@ fn __now_seconds(config) {
   if config?.now != nil {
     return to_int(config.now)
   }
-  return to_int(timestamp())
+  return to_int(date_parse(date_now_iso()))
 }
