@@ -22,12 +22,12 @@ pub fn signed_raw(secret, body, event, extra = nil) {
     + {signing_secret: secret, body_text: body, headers: github_headers(secret, body, event)}
 }
 
-pub fn fixture_body(name) {
-  return read_file(source_dir() + "/fixtures/webhooks/" + name + ".json")
+pub fn fixture_body(harness: Harness, name) {
+  return harness.fs.read_text(source_dir() + "/fixtures/webhooks/" + name + ".json")
 }
 
-pub fn fixture_raw(name, secret, event, extra = nil) {
-  return signed_raw(secret, fixture_body(name), event, extra)
+pub fn fixture_raw(harness: Harness, name, secret, event, extra = nil) {
+  return signed_raw(secret, fixture_body(harness, name), event, extra)
 }
 
 pub fn assert_github_interface() {
@@ -36,7 +36,7 @@ pub fn assert_github_interface() {
   assert_eq(kinds()[0], "webhook", "webhook kind")
   assert_eq(payload_schema().harn_schema_name, "GitHubEventPayload", "payload schema name")
   let initialized = init({signing_secret: "test-secret"})
-  assert(initialized.initialized == true, "init stores state")
+  assert(initialized.initialized, "init stores state")
   let activated = activate([{id: "primary", path: "/github/events", secrets: {signing_secret: "test-secret"}}])
   assert_eq(activated.bindings, 1, "activate counts bindings")
 }

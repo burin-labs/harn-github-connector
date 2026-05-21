@@ -1,15 +1,15 @@
 import { installation_token, mint_app_jwt, reset_token_cache } from "../src/lib"
 
-fn fixture_key() {
-  return read_file(path_join(cwd(), "tests/fixtures/github_app_test_key.pem"))
+fn fixture_key(harness: Harness) {
+  return harness.fs.read_text(path_join(cwd(), "tests/fixtures/github_app_test_key.pem"))
 }
 
-fn base_config(now) {
+fn base_config(harness: Harness, now) {
   return {
     app_id: 12345,
     installation_id: 77,
     api_base_url: "https://api.github.test",
-    private_key_pem: fixture_key(),
+    private_key_pem: fixture_key(harness),
     now: now,
   }
 }
@@ -17,7 +17,7 @@ fn base_config(now) {
 pipeline default() {
   reset_token_cache()
   http_mock_clear()
-  let config = base_config(1700000000)
+  let config = base_config(harness, 1700000000)
   let jwt = mint_app_jwt(config)
   let parts = split(jwt, ".")
   assert_eq(len(parts), 3)
@@ -52,7 +52,7 @@ pipeline default() {
   assert_eq(len(calls), 1)
   assert_eq(calls[0].headers.authorization, "[redacted]")
   assert_eq(calls[0].headers.accept, "application/vnd.github+json")
-  assert_eq(installation_token(base_config(1700003700)), "install-token-b")
+  assert_eq(installation_token(base_config(harness, 1700003700)), "install-token-b")
   calls = http_mock_calls()
   assert_eq(len(calls), 2)
   http_mock_clear()
@@ -81,5 +81,5 @@ pipeline default() {
   let failed = installation_token(config)
   assert(is_err(failed), "token endpoint errors should propagate")
   assert_eq(unwrap_err(failed).code, "installation_token_failed", "token endpoint error code")
-  println("token_rotation_smoke_ok")
+  harness.stdio.println("token_rotation_smoke_ok")
 }

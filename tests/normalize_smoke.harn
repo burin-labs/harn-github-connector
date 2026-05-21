@@ -10,7 +10,7 @@ import {
 pipeline default() {
   let secret = "test-signing-secret"
   assert_github_interface()
-  let pr = github_normalize(fixture_raw("pull_request_opened", secret, "pull_request"))
+  let pr = github_normalize(fixture_raw(harness, "pull_request_opened", secret, "pull_request"))
   assert_eq(pr.type, "event", "pull request envelope type")
   assert_eq(pr.event.kind, "pull_request", "pull request event kind")
   assert_eq(pr.event.signature_status.state, "verified", "pr signed")
@@ -26,56 +26,58 @@ pipeline default() {
   assert_eq(pr.event.payload.topic, "github.pull_request.opened", "normalized pr topic")
   assert_eq(pr.event.payload.sender.login, "octocat", "pull request actor")
   assert(pr.event.dedupe_key != "" && pr.event.dedupe_key != nil, "pr dedupe key populated")
-  let push = github_normalize(fixture_raw("push", secret, "push"))
+  let push = github_normalize(fixture_raw(harness, "push", secret, "push"))
   assert_eq(push.event.kind, "push", "push event kind")
   assert_eq(push.event.payload.after, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "push after")
   assert_eq(push.event.payload.head_sha, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "push head sha")
   assert_eq(push.event.payload.head_ref, "main", "push ref name")
-  let issues = github_normalize(fixture_raw("issues_opened", secret, "issues"))
+  let issues = github_normalize(fixture_raw(harness, "issues_opened", secret, "issues"))
   assert_eq(issues.event.kind, "issues", "issues event kind")
   assert_eq(issues.event.payload.issue.number, 7, "issue number")
-  let comment = github_normalize(fixture_raw("issue_comment_created", secret, "issue_comment"))
+  let comment = github_normalize(fixture_raw(harness, "issue_comment_created", secret, "issue_comment"))
   assert_eq(comment.event.kind, "issue_comment", "comment event kind")
   assert_eq(comment.event.payload.comment.body, "Looks good from the fixture.", "comment body")
-  let review = github_normalize(fixture_raw("pull_request_review_submitted", secret, "pull_request_review"))
+  let review = github_normalize(
+    fixture_raw(harness, "pull_request_review_submitted", secret, "pull_request_review"),
+  )
   assert_eq(review.event.kind, "pull_request_review", "review event kind")
   assert_eq(review.event.payload.review.state, "approved", "review state")
-  let workflow = github_normalize(fixture_raw("workflow_run_completed", secret, "workflow_run"))
+  let workflow = github_normalize(fixture_raw(harness, "workflow_run_completed", secret, "workflow_run"))
   assert_eq(workflow.event.kind, "workflow_run", "workflow run event kind")
   assert_eq(workflow.event.payload.workflow_run.conclusion, "success", "workflow conclusion")
   assert_eq(workflow.event.payload.run_id, 6001, "workflow run id")
   assert_eq(workflow.event.payload.check_suite_id, 8101, "workflow suite id")
   assert_eq(workflow.event.payload.pull_request_number, 42, "workflow pr number")
-  let deployment = github_normalize(fixture_raw("deployment_status_created", secret, "deployment_status"))
+  let deployment = github_normalize(fixture_raw(harness, "deployment_status_created", secret, "deployment_status"))
   assert_eq(deployment.event.kind, "deployment_status", "deployment status event kind")
   assert_eq(deployment.event.payload.deployment.environment, "staging", "deployment environment")
-  let check = github_normalize(fixture_raw("check_run_completed", secret, "check_run"))
+  let check = github_normalize(fixture_raw(harness, "check_run_completed", secret, "check_run"))
   assert_eq(check.event.kind, "check_run", "check run event kind")
   assert_eq(check.event.payload.check_run.conclusion, "success", "check conclusion")
   assert_eq(check.event.payload.check_id, 8001, "check run id")
   assert_eq(check.event.payload.check_suite_id, 8101, "check suite id")
   assert_eq(check.event.payload.pull_request_number, 42, "check pr number")
-  let suite = github_normalize(fixture_raw("check_suite_requested", secret, "check_suite"))
+  let suite = github_normalize(fixture_raw(harness, "check_suite_requested", secret, "check_suite"))
   assert_eq(suite.event.kind, "check_suite", "check suite event kind")
   assert_eq(suite.event.payload.check_suite_id, 8101, "check suite normalized id")
   assert_eq(suite.event.payload.head_ref, "feature/connector-fixture", "check suite head ref")
-  let status = github_normalize(fixture_raw("status_success", secret, "status"))
+  let status = github_normalize(fixture_raw(harness, "status_success", secret, "status"))
   assert_eq(status.event.kind, "status", "status event kind")
   assert_eq(status.event.payload.status_id, 9101, "status normalized id")
   assert_eq(status.event.payload.head_sha, "cccccccccccccccccccccccccccccccccccccccc", "status sha")
-  let group = github_normalize(fixture_raw("merge_group_checks_requested", secret, "merge_group"))
+  let group = github_normalize(fixture_raw(harness, "merge_group_checks_requested", secret, "merge_group"))
   assert_eq(group.event.kind, "merge_group", "merge group event kind")
   assert_eq(group.event.payload.merge_group_id, 9201, "merge group id")
   assert_eq(group.event.payload.pull_request_numbers[0], 42, "merge group pull number")
-  let suspended = github_normalize(fixture_raw("installation_suspend", secret, "installation"))
+  let suspended = github_normalize(fixture_raw(harness, "installation_suspend", secret, "installation"))
   assert_eq(suspended.event.kind, "installation", "installation event kind")
   assert_eq(suspended.event.payload.installation_state, "suspended", "installation suspension state")
   assert(suspended.event.payload.suspended, "installation suspension flag")
-  let deleted = github_normalize(fixture_raw("installation_deleted", secret, "installation"))
+  let deleted = github_normalize(fixture_raw(harness, "installation_deleted", secret, "installation"))
   assert_eq(deleted.event.payload.installation_state, "revoked", "installation revocation state")
   assert(deleted.event.payload.revoked, "installation revocation flag")
   let repo_removed = github_normalize(
-    fixture_raw("installation_repositories_removed", secret, "installation_repositories"),
+    fixture_raw(harness, "installation_repositories_removed", secret, "installation_repositories"),
   )
   assert_eq(
     repo_removed.event.kind,
@@ -87,7 +89,7 @@ pipeline default() {
     "octo-org/octo-repo",
     "removed repo",
   )
-  let release = github_normalize(fixture_raw("release_published", secret, "release"))
+  let release = github_normalize(fixture_raw(harness, "release_published", secret, "release"))
   assert_eq(release.event.kind, "release", "release event kind")
   assert_eq(release.event.payload.release_id, 501, "release id")
   assert_eq(release.event.payload.tag_name, "v0.4.0", "release tag")
@@ -96,7 +98,7 @@ pipeline default() {
     "https://github.com/octo-org/octo-repo/releases/tag/v0.4.0",
     "release source url",
   )
-  let body = fixture_body("issues_opened")
+  let body = fixture_body(harness, "issues_opened")
   let tampered = github_normalize(
     {signing_secret: secret, body_text: body + " ", headers: github_headers(secret, body, "issues")},
   )

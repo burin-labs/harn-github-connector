@@ -12,7 +12,7 @@ fn find_intent(intents, name) {
 
 pipeline default() {
   let secret = "test-signing-secret"
-  let issue = github_normalize(fixture_raw("issues_opened", secret, "issues"))
+  let issue = github_normalize(fixture_raw(harness, "issues_opened", secret, "issues"))
   let issue_payload = issue.event.payload
   assert_eq(issue_payload.source.kind, "github.issue", "issue primary source kind")
   assert_eq(issue_payload.source.number, 7, "issue source number")
@@ -36,7 +36,7 @@ pipeline default() {
   assert_eq(issue_comment_intent.method, "github.issue.comment", "comment write intent")
   assert(issue_comment_intent.requires_approval, "comment requires approval")
   assert_eq(issue_payload.triage_event.raw, nil, "triage event keeps raw payload separate")
-  let pr = github_normalize(fixture_raw("pull_request_opened", secret, "pull_request"))
+  let pr = github_normalize(fixture_raw(harness, "pull_request_opened", secret, "pull_request"))
   assert_eq(pr.event.payload.source.kind, "github.pull_request", "pr primary source kind")
   assert_eq(
     pr.event.payload.source.url,
@@ -46,7 +46,7 @@ pipeline default() {
   let auto_merge_intent = find_intent(pr.event.payload.triage_event.action_intents, "enable_auto_merge")
   assert_eq(auto_merge_intent.method, "github.pr.enable_auto_merge", "pr auto-merge intent")
   assert(auto_merge_intent.requires_approval, "pr auto-merge requires approval")
-  let check = github_normalize(fixture_raw("check_run_completed", secret, "check_run"))
+  let check = github_normalize(fixture_raw(harness, "check_run_completed", secret, "check_run"))
   assert_eq(check.event.payload.source.kind, "github.check_run", "check source kind")
   assert_eq(check.event.payload.source_refs[1].kind, "github.pull_request", "check related pr")
   assert_eq(check.event.payload.job_event.schema, "harn.job_event.v1", "check job schema")
@@ -56,7 +56,7 @@ pipeline default() {
   let check_rerun_intent = find_intent(check.event.payload.job_event.action_intents, "rerun_check")
   assert(check_rerun_intent != nil, "check rerun intent")
   assert(check_rerun_intent.requires_approval, "check rerun requires approval")
-  let workflow = github_normalize(fixture_raw("workflow_run_completed", secret, "workflow_run"))
+  let workflow = github_normalize(fixture_raw(harness, "workflow_run_completed", secret, "workflow_run"))
   assert_eq(workflow.event.payload.job_event.run_id, 6001, "workflow run id")
   assert_eq(workflow.event.payload.job_event.workflow_id, 6101, "workflow id")
   let workflow_dispatch_intent = find_intent(workflow.event.payload.job_event.action_intents, "dispatch_workflow")
@@ -66,7 +66,7 @@ pipeline default() {
     "workflow dispatch intent",
   )
   assert(workflow_dispatch_intent.requires_approval, "workflow dispatch requires approval")
-  let release = github_normalize(fixture_raw("release_published", secret, "release"))
+  let release = github_normalize(fixture_raw(harness, "release_published", secret, "release"))
   assert_eq(release.event.payload.source.kind, "github.release", "release source kind")
   assert_eq(release.event.payload.job_event.release_id, 501, "release job id")
   assert_eq(release.event.payload.job_event.status, "published", "release job status")
