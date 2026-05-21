@@ -1,15 +1,15 @@
 import { call, reset_token_cache } from "../src/lib"
 
-fn fixture_key() {
-  return read_file(path_join(cwd(), "tests/fixtures/github_app_test_key.pem"))
+fn fixture_key(harness: Harness) {
+  return harness.fs.read_text(path_join(cwd(), "tests/fixtures/github_app_test_key.pem"))
 }
 
-fn config(now) {
+fn config(harness: Harness, now) {
   return {
     app_id: 12345,
     installation_id: 77,
     api_base_url: "https://api.github.test",
-    private_key_pem: fixture_key(),
+    private_key_pem: fixture_key(harness),
     now: now,
     rate_limit_max_sleep_seconds: 0,
   }
@@ -43,7 +43,7 @@ pipeline default() {
   )
   let comment = call(
     "issues.create_comment",
-    config(1700000000) + {owner: "octo", repo: "demo", issue_number: 123, body: "hello"},
+    config(harness, 1700000000) + {owner: "octo", repo: "demo", issue_number: 123, body: "hello"},
   )
   assert_eq(comment.id, 99, "issues.create_comment id")
   http_mock(
@@ -57,7 +57,7 @@ pipeline default() {
   )
   let issue = call(
     "issues.update",
-    config(1700000000) + {owner: "octo", repo: "demo", issue_number: 123, state: "closed"},
+    config(harness, 1700000000) + {owner: "octo", repo: "demo", issue_number: 123, state: "closed"},
   )
   assert_eq(issue.state, "closed", "issues.update state")
   http_mock(
@@ -67,7 +67,7 @@ pipeline default() {
   )
   let review_comment = call(
     "pulls.create_review_comment",
-    config(1700000000)
+    config(harness, 1700000000)
       + {
       owner: "octo",
       repo: "demo",
@@ -89,7 +89,7 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "42"},
     },
   )
-  let pull = call("pulls.get", config(1700000000) + {owner: "octo", repo: "demo", pull_number: 5})
+  let pull = call("pulls.get", config(harness, 1700000000) + {owner: "octo", repo: "demo", pull_number: 5})
   assert_eq(pull.head.sha, "abc", "pulls.get head sha")
   http_mock(
     "GET",
@@ -100,7 +100,7 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "42"},
     },
   )
-  let diff = call("pulls.get_diff", config(1700000000) + {owner: "octo", repo: "demo", pull_number: 5})
+  let diff = call("pulls.get_diff", config(harness, 1700000000) + {owner: "octo", repo: "demo", pull_number: 5})
   assert(diff.contains("src/lib.harn"), "pulls.get_diff raw diff")
   http_mock(
     "GET",
@@ -109,7 +109,7 @@ pipeline default() {
   )
   let content = call(
     "repos.get_content",
-    config(1700000000) + {owner: "octo", repo: "demo", path: "README.md", ref: "main"},
+    config(harness, 1700000000) + {owner: "octo", repo: "demo", path: "README.md", ref: "main"},
   )
   assert_eq(content.name, "README.md", "repos.get_content name")
   http_mock(
@@ -119,7 +119,7 @@ pipeline default() {
   )
   let check_run = call(
     "check_runs.create",
-    config(1700000000)
+    config(harness, 1700000000)
       + {owner: "octo", repo: "demo", name: "ci", head_sha: "abc", status: "queued"},
   )
   assert_eq(check_run.id, 10, "check_runs.create id")
@@ -134,7 +134,8 @@ pipeline default() {
   )
   let updated_check = call(
     "check_runs.update",
-    config(1700000000) + {owner: "octo", repo: "demo", check_run_id: 10, status: "completed"},
+    config(harness, 1700000000)
+      + {owner: "octo", repo: "demo", check_run_id: 10, status: "completed"},
   )
   assert_eq(updated_check.status, "completed", "check_runs.update status")
   http_mock(
@@ -146,7 +147,7 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "41"},
     },
   )
-  let graph = call("graphql", config(1700000000) + {query: "query { viewer { login } }", variables: {}})
+  let graph = call("graphql", config(harness, 1700000000) + {query: "query { viewer { login } }", variables: {}})
   assert_eq(graph.data.viewer.login, "octo", "graphql viewer login")
   http_mock(
     "GET",
@@ -158,7 +159,10 @@ pipeline default() {
       ],
     },
   )
-  let files = call("pulls.list_files", config(1700000000) + {owner: "octo", repo: "demo", pull_number: 5})
+  let files = call(
+    "pulls.list_files",
+    config(harness, 1700000000) + {owner: "octo", repo: "demo", pull_number: 5},
+  )
   assert_eq(files[0].filename, "src/lib.harn", "list files filename after 401 retry")
   let calls = http_mock_calls()
   assert_eq(calls[1].headers.authorization, "[redacted]", "first request bearer token is redacted")
