@@ -180,7 +180,7 @@ pub fn activate(bindings = []) {
 
 /**
  * Clear connector lifecycle state. Cached installation tokens persist
- * across restarts so subsequent runs can refresh them lazily — call
+ * across restarts so subsequent runs can refresh them lazily. Call
  * `reset_token_cache()` explicitly to invalidate the persistent cache.
  */
 pub fn shutdown() {
