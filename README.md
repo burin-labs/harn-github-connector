@@ -1,32 +1,31 @@
 # harn-github-connector
 
-Pure-Harn GitHub App connector for the Harn orchestrator. Verifies inbound
-webhook signatures, normalizes GitHub event payloads to the canonical
-`TriggerEvent` shape, and dispatches outbound REST/GraphQL calls.
+Pure-Harn GitHub App connector for the Harn orchestrator. It verifies inbound
+webhook signatures, normalizes GitHub events to Harn `TriggerEvent` payloads,
+and dispatches outbound REST and GraphQL calls.
 
-> **Status: v0.3.0** — production-ready first-party connector package,
-> verified with the published `harn-cli` 0.8.10 release.
-
-This is an **inbound + outbound** connector implementing the Harn Connector
-Contract v1 documented in the
+The package implements the Harn Connector Contract v1. Shared connector rules
+live in the
 [Harn connector authoring guide](https://github.com/burin-labs/harn/blob/main/docs/src/connectors/authoring.md).
+
+Use `.harn-version` as the source of truth for the tested `harn-cli` release.
 
 ## Install
 
-Install the pinned Harn CLI used by this package:
+Install the pinned Harn CLI:
 
 ```sh
 cargo install harn-cli --version "$(cat .harn-version)" --locked
 harn --version
 ```
 
-Add the released connector package:
+Add the released connector:
 
 ```sh
 harn add github.com/burin-labs/harn-github-connector@v0.3.0
 ```
 
-For local multi-repo development, a path dependency is still useful:
+For local multi-repo development, use a path dependency:
 
 ```toml
 [dependencies]
@@ -45,6 +44,7 @@ trigger pr_review on github {
     installation_id: env("GITHUB_INSTALLATION_ID"),
     events: ["pull_request"],
   }
+
   on event {
     if event.kind == "pull_request" && event.payload.action == "opened" {
       github_connector.call("issues.create_comment", {
@@ -58,51 +58,51 @@ trigger pr_review on github {
 }
 ```
 
-## Supported surface
+## Inbound webhooks
 
-Inbound webhooks:
+Supported GitHub events:
 
-- `issues`
-- `pull_request`
-- `issue_comment`
-- `pull_request_review`
-- `push`
-- `workflow_run`
-- `deployment_status`
-- `check_run`
-- `check_suite`
-- `status`
-- `merge_group`
-- `installation`
-- `installation_repositories`
-- `release`
+```text
+issues
+pull_request
+issue_comment
+pull_request_review
+push
+workflow_run
+deployment_status
+check_run
+check_suite
+status
+merge_group
+installation
+installation_repositories
+release
+```
 
-Normalized webhook payloads use a stable provider envelope:
+Normalized payloads keep the raw GitHub payload under `raw` and promote stable
+fields for Harn consumers:
 
 | Field | Notes |
 |---|---|
 | `provider` | Always `github`. |
-| `event` | GitHub webhook event kind, such as `pull_request` or `merge_group`. |
-| `topic` | Stable subscription topic in the form `github.<event>` or `github.<event>.<action>`. |
+| `event` | GitHub event kind, such as `pull_request` or `merge_group`. |
+| `topic` | `github.<event>` or `github.<event>.<action>`. |
 | `action` | GitHub payload action when present. |
-| `delivery_id` | `X-GitHub-Delivery`, also used for the event dedupe key. |
+| `delivery_id` | `X-GitHub-Delivery`; also used for the dedupe key. |
 | `installation_id` | GitHub App installation id when present. |
-| `repository` / `repo` | Raw repository object plus normalized `{owner, name, full_name}`. |
-| `source` / `source_refs` | Provider-agnostic source refs with stable keys, repo slug, resource ids, and deep links. |
-| `triage_event` | `harn.triage_event.v1` dashboard inbox envelope for issues, PRs, comments, and reviews. |
-| `job_event` | `harn.job_event.v1` dashboard status envelope for checks, Actions runs, releases, pushes, deployments, and merge queue events. |
+| `repository` / `repo` | Raw repository plus normalized `{owner, name, full_name}`. |
+| `source` / `source_refs` | Provider-neutral source refs with repo slugs, resource ids, and links. |
+| `triage_event` | `harn.triage_event.v1` envelope for issues, PRs, comments, and reviews. |
+| `job_event` | `harn.job_event.v1` envelope for checks, runs, releases, pushes, deployments, and merge queue events. |
 | `raw` | Original GitHub payload for fields not promoted by the connector. |
 
-Dashboard envelopes keep GitHub-specific payloads under `raw` while promoting
-the fields Burin Home and Harn Cloud need to render source-linked task and job
-cards: source URL, source timestamp, actor list, summary, proposed action,
-priority/status, dedupe key, privacy flags, related refs, and action intents.
-Provider write intents are descriptive only and always carry
-`requires_approval: true`; hosts decide whether to approve and execute comment,
-label, workflow-dispatch, rerun, or release-mutation actions.
+Dashboard envelopes promote the fields Burin Home and Harn Cloud need to render
+source-linked task and job cards: URL, timestamp, actors, summary, proposed
+action, priority/status, dedupe key, privacy flags, related refs, and action
+intents. Provider write intents are descriptive and carry
+`requires_approval: true`; hosts decide whether to approve and execute them.
 
-Merge Captain and release workflow consumers should subscribe to these stable
-topics:
+Merge Captain and release consumers should subscribe to these topics:
 
 | Topic | Promoted fields |
 |---|---|
@@ -117,191 +117,71 @@ topics:
 | `github.installation_repositories.<action>` | `installation`, `account`, `installation_state`, `suspended`, `revoked`, `repository_selection`, `repositories_added`, `repositories_removed` |
 | `github.release.<action>` | `release`, `release_id`, `tag_name`, `name`, `draft`, `prerelease`, `target_commitish`, `published_at`, `assets` |
 
-Outbound methods:
+## Outbound calls
 
-| Method | GitHub API |
+Call methods through `call(method, args)` unless a named helper fits better.
+
+| Area | Methods |
 |---|---|
-| `github.pr.list` | Typed PR list over `GET /repos/{owner}/{repo}/pulls` |
-| `github.pr.view` | Typed PR details plus branch protection summary |
-| `github.pr.checks` | Typed check-run rollup over `GET /repos/{owner}/{repo}/commits/{sha}/check-runs` |
-| `github.pr.merge` | Branch-protection-aware typed merge helper |
-| `github.pr.enable_auto_merge` | GraphQL auto-merge helper using `enablePullRequestAutoMerge` |
-| `github.pr.comment` | Typed PR comment helper over the issues comments endpoint |
-| `github.actions.workflow_dispatch` | Typed workflow dispatch helper for a repo slug |
-| `github.actions.runs` | Typed workflow-run list helper for a repo slug |
-| `github.actions.run` | Typed workflow-run fetch helper for a repo slug |
-| `github.actions.logs` | Fetch Actions logs by `run_id` or by `check_id` when the check links to an Actions run |
-| `github.release.latest` | Stable latest-release envelope with tag and asset names |
-| `github.release.assets` | Stable release-assets envelope, defaulting to the latest release when no release id is supplied |
-| `github.merge_queue.entries` | Typed merge queue entries for a base branch |
-| `github.merge_queue.enqueue` | Enqueue a PR on the merge queue |
-| `github.issue.create` | Typed issue create helper |
-| `github.issue.comment` | Typed issue comment helper |
-| `github.branch.protection` | Typed branch protection summary |
-| `api_call` | Raw GitHub REST escape hatch for endpoints without typed helpers |
-| `issues.create_comment` | `POST /repos/{owner}/{repo}/issues/{issue_number}/comments` |
-| `issues.create` | `POST /repos/{owner}/{repo}/issues` |
-| `issues.create_with_template` | Convenience helper over `issues.create` |
-| `issues.update` | `PATCH /repos/{owner}/{repo}/issues/{issue_number}` |
-| `issues.add_labels` | `POST /repos/{owner}/{repo}/issues/{issue_number}/labels` |
-| `pulls.list` | `GET /repos/{owner}/{repo}/pulls` |
-| `pulls.list_with_checks` | GraphQL `repository.pullRequests` query with `mergeStateStatus` and `statusCheckRollup` |
-| `pulls.get` | `GET /repos/{owner}/{repo}/pulls/{pull_number}` |
-| `pulls.merge` | `PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge` |
-| `pulls.merge_safe` | Convenience helper over branch protection, pull details, merge, and optional branch deletion |
-| `pulls.create_review_comment` | `POST /repos/{owner}/{repo}/pulls/{pull_number}/comments` |
-| `pulls.get_diff` | `GET /repos/{owner}/{repo}/pulls/{pull_number}` with a diff `Accept` header |
-| `pulls.list_files` | `GET /repos/{owner}/{repo}/pulls/{pull_number}/files` |
-| `pulls.list_reviews` | `GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews` |
-| `repos.get_content` | `GET /repos/{owner}/{repo}/contents/{path}` |
-| `repos.get_text` | Convenience wrapper over `repos.get_content` that decodes base64 file content |
-| `repos.get_latest_release` | `GET /repos/{owner}/{repo}/releases/latest` |
-| `repos.list_release_assets` | `GET /repos/{owner}/{repo}/releases/{release_id}/assets` |
-| `repos.get_branch_protection` | `GET /repos/{owner}/{repo}/branches/{branch}/protection` |
-| `git.delete_ref` | `DELETE /repos/{owner}/{repo}/git/refs/{ref}` |
-| `actions.workflow_dispatch` | `POST /repos/{owner}/{repo}/actions/workflows/{workflow_id}/dispatches` |
-| `actions.workflow_runs.list` | `GET /repos/{owner}/{repo}/actions/runs` or workflow-scoped runs |
-| `actions.workflow_run.get` | `GET /repos/{owner}/{repo}/actions/runs/{run_id}` |
-| `check_runs.create` | `POST /repos/{owner}/{repo}/check-runs` |
-| `check_runs.update` | `PATCH /repos/{owner}/{repo}/check-runs/{check_run_id}` |
-| `graphql` | `POST /graphql` |
+| Pull requests | `github.pr.list`, `github.pr.view`, `github.pr.checks`, `github.pr.merge`, `github.pr.enable_auto_merge`, `github.pr.comment`, `pulls.list`, `pulls.list_with_checks`, `pulls.get`, `pulls.merge`, `pulls.merge_safe`, `pulls.create_review_comment`, `pulls.get_diff`, `pulls.list_files`, `pulls.list_reviews` |
+| Actions and checks | `github.actions.workflow_dispatch`, `github.actions.runs`, `github.actions.run`, `github.actions.logs`, `actions.workflow_dispatch`, `actions.workflow_runs.list`, `actions.workflow_run.get`, `check_runs.create`, `check_runs.update` |
+| Issues | `github.issue.create`, `github.issue.comment`, `issues.create_comment`, `issues.create`, `issues.create_with_template`, `issues.update`, `issues.add_labels` |
+| Repository and release data | `github.release.latest`, `github.release.assets`, `github.branch.protection`, `repos.get_content`, `repos.get_text`, `repos.get_latest_release`, `repos.list_release_assets`, `repos.get_branch_protection`, `git.delete_ref` |
+| Merge queue | `github.merge_queue.entries`, `github.merge_queue.enqueue` |
+| Raw access | `api_call`, `graphql` |
 
-## Orchestration helpers
-
-These higher-level helpers compose the low-level methods above for common
-harness flows. They return stable result envelopes so callers can branch on
-shape without inspecting raw GitHub responses.
+Named helpers:
 
 | Helper | Purpose |
 |---|---|
-| `github_dispatch_workflow_and_wait(owner, repo, workflow_id, ref, inputs, options)` | Dispatch a `workflow_dispatch` workflow and wait for the resulting run to reach `completed`. |
-| `github_wait_for_workflow_run(owner, repo, run_id_or_filter, options)` | Poll an existing workflow run, or one matching a filter dict, until it completes or the loop times out. |
-| `github_ensure_auto_merge(owner, repo, pull_number, options)` | Enable GitHub auto-merge through the GraphQL mutation, normalizing `merge`/`squash`/`rebase` and treating already-enabled as success. |
-| `github_wait_for_pr_checks(owner, repo, pull_number_or_ref, options)` | Wait for visible CI checks on a PR or commit to leave the queued/pending state. Optionally summarizes failing-check Actions logs. |
-| `github_find_open_pr(owner, repo, options)` | Find the first open PR matching simple `head_ref`/`base_ref`/`title`/`labels` filters. |
-| `github_close_pr(owner, repo, pull_number, comment, options)` | Close a PR, optionally posting a final comment first. |
-| `github_latest_release(owner, repo, options)` | Fetch latest release metadata and asset names as a stable envelope. |
-| `github_release_assets(owner, repo, release_id, options)` | List release assets as a stable envelope; when `release_id` is omitted it uses the latest release. |
+| `pulls_list_with_checks(owner, repo, state, limit, options)` | List PRs with merge state and CI rollup. |
+| `pulls_merge_safe(owner, repo, number, options)` | Merge after checking branch protection. |
+| `pulls_enable_auto_merge(owner, repo, number, options)` | Enable GitHub auto-merge. |
+| `actions_workflow_dispatch(owner, repo, workflow_id, ref, inputs, options)` | Dispatch a workflow. |
+| `actions_workflow_runs(owner, repo, options)` | List workflow runs. |
+| `api_call(path, method, body, options)` | Call one REST endpoint. Prefer typed helpers when available. |
+| `repos_get_text(owner, repo, path, ref, options)` | Decode repository file content as UTF-8 text. |
+| `repos_get_latest_release(owner, repo, options)` | Fetch latest release metadata. |
+| `repos_list_release_assets(owner, repo, release_id, options)` | List assets for a release id. |
+| `github_latest_release(owner, repo, options)` | Fetch latest release metadata in a stable envelope. |
+| `github_release_assets(owner, repo, release_id, options)` | List release assets in a stable envelope; defaults to the latest release. |
+| `issues_create_with_template(owner, repo, template, vars, options)` | Render a small title/body template, then create an issue. |
+| `github_dispatch_workflow_and_wait(owner, repo, workflow_id, ref, inputs, options)` | Dispatch a workflow and wait for completion. |
+| `github_wait_for_workflow_run(owner, repo, run_id_or_filter, options)` | Poll an existing workflow run or a filtered run lookup. |
+| `github_ensure_auto_merge(owner, repo, pull_number, options)` | Enable auto-merge and normalize already-enabled responses. |
+| `github_wait_for_pr_checks(owner, repo, pull_number_or_ref, options)` | Wait for visible PR or commit checks; optionally attach failing Actions log tails. |
+| `github_find_open_pr(owner, repo, options)` | Find the first open PR matching `head_ref`, `base_ref`, `title`, or `labels`. |
+| `github_close_pr(owner, repo, pull_number, comment, options)` | Close a PR and optionally post a final comment. |
 
-Common option fields:
+Token helpers:
 
-- Auth options (`installation_token`, `app_id`/`installation_id`/`private_key_secret`,
-  `api_base_url`, `allow_gh_auth_fallback`, ...) are accepted and forwarded
-  through the existing `call(...)` configuration path.
-- `timeout_ms` is forwarded to outbound GitHub HTTP requests, and
-  `rate_limit_max_sleep_seconds` caps any single rate-limit reset wait
-  (default `60`; set `0` in CI to fail fast instead of sleeping).
-- `poll_interval_ms`, `timeout_ms`, and `max_attempts` control the wait
-  helpers. `max_attempts` overrides the timeout when set, which keeps tests
-  deterministic without wall-clock dependence.
-- `github_dispatch_workflow_and_wait` accepts `event`, `branch`, `head_sha`,
-  `per_page`, and `created_after` as filters when locating the run that the
-  dispatch produced (used when GitHub does not return a run id directly).
-- `github_wait_for_pr_checks` accepts `include_logs: true` and an optional
-  `log_tail_lines` (default 200) to attach a tailed summary of Actions logs
-  for failing checks. Checks whose details URL does not point to an Actions
-  run are surfaced with `error: "no_actions_run_url"`.
-- `github_find_open_pr` accepts `head_ref`, `head_owner`, `base_ref`, `state`
-  (default `open`), `title` (substring match), and `labels` (all-must-match).
+| Helper | Purpose |
+|---|---|
+| `mint_app_jwt(config)` | Mint a GitHub App JWT with Harn `jwt_sign`. |
+| `installation_token(config)` | Return a cached installation token or refresh it when stale. |
+| `reset_token_cache()` | Clear all cached installation tokens. |
+| `invalidate_installation_token(installation_id)` | Remove one cached installation token. |
 
-Stable return shapes:
-
-```text
-github_dispatch_workflow_and_wait / github_wait_for_workflow_run →
-{
-  ok, status, conclusion, run_id, run_url, workflow_id,
-  created_at, started_at, updated_at,
-  attempts: [...],
-  timed_out, error,
-}
-# status ∈ {completed, timed_out, dispatch_failed, run_not_found, poll_failed}
-
-github_ensure_auto_merge →
-{
-  ok, state, already_enabled, requested_method, merge_method,
-  pull_number, url, strategy, error,
-}
-# state ∈ {enabled, already_enabled, failed}
-
-github_wait_for_pr_checks →
-{
-  ok, state, head_sha,
-  checks, failing_checks, pending_checks,
-  attempts: [...],
-  timed_out,
-  logs?: [{check_id, name, run_id, content, lines, truncated, error}],
-}
-# state ∈ {green, failing, pending, timed_out, unknown}
-
-github_find_open_pr →
-{ ok, found, pull_number, pull_request, total_matches, matches, error }
-
-github_close_pr →
-{ ok, pull_number, state, comment_posted, pull_request, error }
-
-github_latest_release →
-{
-  ok, repo, release_id, tag_name, name,
-  draft, prerelease, url, html_url, published_at,
-  assets, asset_names, raw, error,
-}
-
-github_release_assets →
-{ ok, repo, release_id, assets, asset_names, raw, error }
-```
-
-These helpers are orchestration-level building blocks for harness authors.
-For one-shot REST/GraphQL access prefer `call(method, args)` directly. For
-local-dev convenience the auth options still honor `allow_gh_auth_fallback:
-true` so a developer-scoped `gh auth token` can stand in for a configured
-GitHub App installation token; production harnesses should not depend on it.
-
-## Supported methods for managed personas
-
-Managed personas should prefer the named helpers for high-level workflows and
-use `call(method, args)` only for direct method dispatch.
-
-| Persona need | Helper or method | Notes |
-|---|---|---|
-| List PRs as typed records | `call("github.pr.list", {repo: "owner/name", filters: {...}})` | Returns stable fields such as `number`, `state`, `base.sha`, `head.sha`, labels, and merge-queue presence. |
-| Fetch PR details with branch policy | `call("github.pr.view", {repo, number})` | Includes `base`, `head`, `mergeable_state`, `branch_protection`, and the raw payload for uncommon GitHub fields. |
-| Classify checks | `call("github.pr.checks", {repo, number})` or `{repo, head_sha}` | Returns `state` as `green`, `pending`, `failing`, `dirty`, `queued`, or `merged` where enough PR context is available, plus per-check timings. |
-| Enable auto-merge | `pulls_enable_auto_merge(owner, repo, number, options)` or `call("github.pr.enable_auto_merge", {repo, number})` | Uses GitHub GraphQL auto-merge, normalizes `merge`/`squash`/`rebase`, and passes the expected head OID when available. Merge-queue repositories ignore the requested merge method as GitHub does. |
-| Dispatch workflows | `actions_workflow_dispatch(owner, repo, workflow_id, ref, inputs, options)` | Requests `return_run_details` by default so callers can poll the exact run when GitHub returns it. |
-| List workflow runs | `actions_workflow_runs(owner, repo, options)` or `call("actions.workflow_runs.list", args)` | Supports repository-wide or workflow-scoped listing with common run filters such as `event`, `branch`, `status`, `head_sha`, and pagination. |
-| Inspect latest release assets | `github_latest_release(owner, repo, options)` | Returns `tag_name`, `assets`, and `asset_names` without open-coding the releases endpoint. |
-| Fetch Actions logs | `call("github.actions.logs", {repo, run_id})` | `check_id` is also accepted when GitHub exposes an Actions run URL on the check run. |
-| Use merge queue | `call("github.merge_queue.entries", {repo, branch})` and `call("github.merge_queue.enqueue", {repo, branch, pr_number, method})` | Matches the mock playground merge queue surface used by managed captain workflows. |
-| List open PRs with merge state and CI rollup | `pulls_list_with_checks(owner, repo, state, limit, options)` or `call("pulls.list_with_checks", args)` | Uses GraphQL because `mergeStateStatus` and `statusCheckRollup` are GraphQL PR fields surfaced by `gh pr --json`; the REST list endpoint does not return the same check rollup shape. Returns `number`, `title`, `headRefName`, `baseRefName`, `isDraft`, `mergeStateStatus`, `statusCheckRollup`, and `url`. |
-| Fetch PR details | `call("pulls.get", args)` | REST PR details for a specific PR number. |
-| Merge a PR directly | `call("pulls.merge", args)` | Sends `merge_method`, `sha`, `commit_title`, and `commit_message` through to GitHub's merge endpoint. If `admin_override` is present, the response is annotated with `admin_override_requested`; GitHub still enforces the installation token's permissions. |
-| Merge with branch-protection awareness | `pulls_merge_safe(owner, repo, number, options)` or `call("pulls.merge_safe", args)` | Fetches PR details, checks base branch protection, requires `admin_override` when the branch is protected, merges with the PR head SHA, and optionally deletes the head branch when `delete_branch` is true. |
-| Create conflict/follow-up issues | `issues_create_with_template(owner, repo, template, vars, options)` or `call("issues.create_with_template", args)` | Renders `{{name}}` placeholders in `title` and `body`, then calls `issues.create`. |
-| Update issues | `call("issues.update", args)` | Supports fields accepted by GitHub's issue update endpoint, such as `state`, `title`, `body`, `labels`, `assignees`, and `milestone`. |
-| Add issue or PR labels | `call("issues.add_labels", args)` | Uses the issue-labels endpoint; GitHub models PRs as issues for labels. |
-| Inspect branch protection | `call("repos.get_branch_protection", args)` | Used by `pulls.merge_safe` before admin merges. |
-| Read repository file text | `repos_get_text(owner, repo, path, ref, options)` or `call("repos.get_text", args)` | Decodes GitHub contents API base64 file payloads and rejects directory listings. |
-| Use raw REST endpoints | `api_call(path, method, body, options)` or `call("api_call", args)` | Escape hatch for endpoints that do not yet justify a typed helper. |
-| List changed files | `call("pulls.list_files", args)` | Used by review/conflict workflows. |
-| List reviews | `call("pulls.list_reviews", args)` | Used by review workflows. |
+Common auth options include `installation_token`,
+`app_id`/`installation_id`/`private_key_secret`, `api_base_url`, and
+`allow_gh_auth_fallback`. Wait helpers accept `poll_interval_ms`, `timeout_ms`,
+and `max_attempts`; `max_attempts` wins over wall-clock timeout to keep tests
+deterministic.
 
 ## GitHub App setup
 
 Create a GitHub App and install it into the target account or repository set.
 Record the App ID and Installation ID, configure a webhook secret, then store
 the private key PEM in a Harn SecretProvider. Do not commit real GitHub App
-private keys or webhook secrets to this repository or to consumer repos.
+private keys or webhook secrets.
 
 Inbound webhooks must include GitHub's `X-GitHub-Event`,
 `X-GitHub-Delivery`, and `X-Hub-Signature-256` headers. The connector verifies
-the signature against the exact raw request body using the configured
-`signing_secret`.
+the signature against the raw request body with `signing_secret`.
 
 Managed ingress hosts can pass the webhook secret by value as `signing_secret`
 or by secret-provider alias through `signing_secret_id`,
-`secret_ids.signing_secret`, or a binding `config.secrets.signing_secret`
-mapping. In the secret-provider path, the connector reads the secret with
-Harn `secret_get` during normalization.
+`secret_ids.signing_secret`, or `config.secrets.signing_secret`.
 
 Example outbound call configuration:
 
@@ -317,77 +197,53 @@ github_connector.call("issues.create_comment", {
 })
 ```
 
-For local fixture tests only, `private_key_pem` can be passed inline. Production
-setup should use `private_key_secret` so the PEM is resolved through
-`secret_get`.
+For local fixture tests only, `private_key_pem` can be passed inline.
+Production setup should use `private_key_secret` so Harn resolves the PEM
+through `secret_get`.
 
-Required GitHub App permissions depend on the outbound method:
+Required GitHub App permissions depend on the method:
 
-- `issues.create_comment`, `issues.create`, `issues.create_with_template`,
-  `issues.update`, `issues.add_labels`: Issues read/write, or Pull requests
-  read/write when acting on pull requests.
-- `pulls.list`, `pulls.list_with_checks`, `pulls.get`, `pulls.get_diff`,
-  `pulls.list_files`, `pulls.list_reviews`: Pull requests read.
-- `pulls.merge`, `pulls.merge_safe`: Pull requests write, and administrator or
-  bypass permissions when merging protected branches.
-- `github.pr.enable_auto_merge`: Pull requests write. GitHub GraphQL also
-  enforces repository auto-merge and merge-queue settings.
-- `pulls.create_review_comment`: Pull requests write.
-- `repos.get_content`, `repos.get_text`: Contents read.
-- `repos.get_latest_release`, `repos.list_release_assets`,
-  `github.release.latest`, `github.release.assets`: Contents read.
-- `api_call`: the installed app must have the permissions required by the
-  specific endpoint.
-- `repos.get_branch_protection`: Administration read.
-- `git.delete_ref`: Contents write.
-- `actions.workflow_dispatch`: Actions write.
-- `actions.workflow_runs.list`, `actions.workflow_run.get`: Actions read.
-- `check_runs.create`, `check_runs.update`: Checks read/write.
-- `graphql`: the installed app must have the permissions required by the query
-  or mutation.
+| Methods | GitHub App permission |
+|---|---|
+| Issue helpers and issue comments | Issues read/write, or Pull requests read/write when acting on PRs. |
+| PR read helpers, diffs, files, and reviews | Pull requests read. |
+| PR merge, safe merge, auto-merge, and review comments | Pull requests write; protected branches may also require administrator or bypass permissions. |
+| Repository content and release helpers | Contents read. |
+| `git.delete_ref` | Contents write. |
+| Branch protection helpers | Administration read. |
+| Actions dispatch | Actions write. |
+| Actions run and log reads | Actions read. |
+| Check run create/update | Checks read/write. |
+| `api_call` and `graphql` | Whatever the endpoint, query, or mutation requires. |
 
 The connector signs a GitHub App JWT with Harn `jwt_sign`, exchanges it for an
 installation access token, caches that token until its refresh window, and
-invalidates the cache after a `401` response before retrying once.
+invalidates the cache after a `401` before retrying once.
 
-Outbound GitHub API failures return explicit error codes for hosts:
-`auth` for bad credentials, `missing_scopes` for permission/scope denials such
-as "Resource not accessible by integration", `inaccessible_resource` for hidden
-or missing resources, and `rate_limited` for exhausted rate limits.
-
-If a caller already has an installation token, it can pass
-`installation_token` directly. The JWT path is preferred for production because
-the connector can refresh stale tokens itself.
-
+Callers that already have an installation token can pass `installation_token`.
 For local development only, callers may pass `allow_gh_auth_fallback: true`.
 When enabled and no installation credentials are present, the connector uses an
-explicit `gh_token`, `GH_TOKEN`, `GITHUB_TOKEN`, or `gh auth token` as the bearer
-token. This fallback is intentionally gated so production workflows do not
-silently depend on a user-scoped local CLI session.
+explicit `gh_token`, `GH_TOKEN`, `GITHUB_TOKEN`, or `gh auth token`.
 
-## Operational limits
+## Operational notes
 
-- Webhook normalization verifies `X-Hub-Signature-256` against the exact raw
-  request body and rejects missing, unsupported, or invalid signatures.
+- Webhook normalization rejects missing, unsupported, or invalid signatures.
 - Webhook signing secrets may be supplied directly for local tests or resolved
-  from the active Harn SecretProvider for managed ingress.
+  from the active Harn SecretProvider.
 - Outbound calls use GitHub App installation tokens or a caller-provided
-  installation token. OAuth user-token setup is not part of this package.
-- Installation tokens are cached until the configured refresh window, refreshed
-  under a mutex, invalidated after a `401`, and retried once.
+  installation token. OAuth user-token setup is out of scope.
 - Outbound HTTP dispatch uses Harn's shared connector policy layer for request
-  envelopes, configured transient retries, idempotency-aware unsafe write retry
-  gating, standard rate-limit header extraction, and JSON parse categorization.
-- GitHub primary rate-limit responses with short reset windows are retried once;
-  resets beyond `rate_limit_max_sleep_seconds` return a `rate_limited` error
-  instead of sleeping in CI or webhook paths.
-- Configured generic retries never replay `POST`/`PATCH` requests unless the
-  caller supplies `idempotency_key` or explicitly opts into `retry_unsafe`.
+  envelopes, retries, rate-limit header extraction, and JSON parse categories.
+- GitHub primary rate-limit responses with short reset windows are retried
+  once. Longer waits return `rate_limited` instead of sleeping in CI or webhook
+  paths.
+- Generic retries do not replay `POST` or `PATCH` requests unless the caller
+  supplies `idempotency_key` or opts into `retry_unsafe`.
 - Outbound errors carry deterministic `category` values for typed callers:
   `auth`, `permission`, `rate_limit`, `branch_protection`, `merge_queue`,
   `checks_pending`, `checks_failed`, `network`, and `schema_drift`.
-- The connector intentionally exposes a focused REST/GraphQL surface rather than
-  vendoring a generated GitHub SDK.
+- The connector exposes a focused REST/GraphQL surface rather than vendoring a
+  generated GitHub SDK.
 
 ## Development
 
@@ -398,23 +254,23 @@ cargo install harn-cli --version "$(cat .harn-version)" --locked
 harn --version
 ```
 
-Run the local CI equivalent from this repo:
+Run the local CI equivalent:
 
 ```sh
-harn check src/lib.harn
-harn lint src/lib.harn
+harn install
+harn check src
+harn lint src
 harn fmt --check src tests
-harn connector check . --provider github
+harn connector check .
 for test in tests/*.harn; do
   harn run "$test" || exit 1
 done
 ```
 
-`harn connector check . --provider github` runs the deterministic webhook
-fixtures declared in `harn.toml`, including the supported webhook event variants
-and a signature rejection case. The `tests/fixtures/webhooks/` payloads are
-synthetic compatibility fixtures; they should stay free of live GitHub secrets
-or private repository data.
+`harn connector check .` runs the deterministic webhook fixtures declared in
+`harn.toml`, including supported event variants and a signature rejection case.
+The `tests/fixtures/webhooks/` payloads are synthetic compatibility fixtures;
+they should stay free of live GitHub secrets or private repository data.
 
 For the package install/import smoke used by CI:
 
@@ -448,9 +304,8 @@ git push origin vX.Y.Z
 ```
 
 The Release workflow verifies that the tag, manifest version, and changelog
-heading match, reruns the Harn connector gate, performs a clean consumer
-install/import smoke, and creates or updates the GitHub Release from the
-matching changelog section.
+heading match, reruns the Harn connector gate, performs a clean consumer smoke,
+and creates or updates the GitHub Release from the matching changelog section.
 
 ## License
 

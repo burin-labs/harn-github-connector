@@ -62,18 +62,11 @@ jobs:
 
       - name: Install harn-cli
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          version="${{ steps.harn-version.outputs.version }}"
-          harn_root="${HOME}/.harn-cli/${version}"
-          if [[ ! -x "${harn_root}/bin/harn" ]]; then
-            mkdir -p "${harn_root}/bin"
-            curl -fsSL \
-              -o "${RUNNER_TEMP}/harn.tar.gz" \
-              "https://github.com/burin-labs/harn/releases/download/v${version}/harn-x86_64-unknown-linux-gnu.tar.gz"
-            tar -xzf "${RUNNER_TEMP}/harn.tar.gz" -C "${harn_root}/bin"
-          fi
-          echo "${harn_root}/bin" >> "${GITHUB_PATH}"
+          bash .github/scripts/install-harn.sh "${{ steps.harn-version.outputs.version }}"
 
       - name: Show Harn version
         run: harn --version

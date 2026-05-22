@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Tighten repo-local agent guidance and README runtime notes.
 - Add latest-release and release-asset helpers for release automation.
 - Add `api_call` as a raw REST compatibility escape hatch.
 - Add source refs plus `harn.triage_event.v1` and `harn.job_event.v1`
@@ -47,7 +48,7 @@
 
 ## 0.1.0 - 2026-04-29
 
-- Ship the first production-ready pure-Harn GitHub connector release.
+- Ship the first pure-Harn GitHub connector release.
 - Implement connector contract v1 exports, NormalizeResult v1 webhook
   normalization, and deterministic connector fixtures for supported GitHub
   webhook events.

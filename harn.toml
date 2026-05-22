@@ -247,5 +247,5 @@ body = '''{"action":"opened","issue":{"number":7,"title":"Connector fixture issu
 expect_type = "reject"
 expect_event_count = 0
 
-# Harn-side package dependencies live here. This package currently has none.
+# No Harn-side package dependencies.
 [dependencies]
