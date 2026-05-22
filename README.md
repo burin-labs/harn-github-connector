@@ -375,9 +375,14 @@ silently depend on a user-scoped local CLI session.
   installation token. OAuth user-token setup is not part of this package.
 - Installation tokens are cached until the configured refresh window, refreshed
   under a mutex, invalidated after a `401`, and retried once.
+- Outbound HTTP dispatch uses Harn's shared connector policy layer for request
+  envelopes, configured transient retries, idempotency-aware unsafe write retry
+  gating, standard rate-limit header extraction, and JSON parse categorization.
 - GitHub primary rate-limit responses with short reset windows are retried once;
   resets beyond `rate_limit_max_sleep_seconds` return a `rate_limited` error
   instead of sleeping in CI or webhook paths.
+- Configured generic retries never replay `POST`/`PATCH` requests unless the
+  caller supplies `idempotency_key` or explicitly opts into `retry_unsafe`.
 - Outbound errors carry deterministic `category` values for typed callers:
   `auth`, `permission`, `rate_limit`, `branch_protection`, `merge_queue`,
   `checks_pending`, `checks_failed`, `network`, and `schema_drift`.

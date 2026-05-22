@@ -1,3 +1,9 @@
+import {
+  connector_http_json,
+  connector_http_rate_limit,
+  connector_http_request,
+} from "std/connectors/shared"
+
 let GITHUB_PROVIDER_ID = "github"
 
 let GITHUB_API_BASE_URL = "https://api.github.com"
@@ -4137,10 +4143,10 @@ fn __occurred_at(event_kind, payload, raw) {
 }
 
 fn __outbound_config(args) {
-  let api_base_url = args?.api_base_url ?? env_or("GITHUB_API_BASE_URL", GITHUB_API_BASE_URL)
+  let api_base_url = args?.api_base_url ?? harness.env.get_or("GITHUB_API_BASE_URL", GITHUB_API_BASE_URL)
   let direct_token = args?.installation_token ?? args?.token ?? args?.bindings?.installation_token
     ?? args?.secrets?.installation_token
-    ?? env("GITHUB_INSTALLATION_TOKEN")
+    ?? harness.env.get("GITHUB_INSTALLATION_TOKEN")
   if direct_token != nil && trim(to_string(direct_token)) != "" {
     return Ok(
       {
@@ -4152,11 +4158,12 @@ fn __outbound_config(args) {
         timeout_ms: args?.timeout_ms,
         rate_limit_max_sleep_seconds: args?.rate_limit_max_sleep_seconds
           ?? DEFAULT_RATE_LIMIT_MAX_SLEEP_SECONDS,
-      },
+      }
+        + __http_policy_config(args),
     )
   }
-  let app_id = args?.app_id ?? env("GITHUB_APP_ID")
-  let installation_id = args?.installation_id ?? env("GITHUB_INSTALLATION_ID")
+  let app_id = args?.app_id ?? harness.env.get("GITHUB_APP_ID")
+  let installation_id = args?.installation_id ?? harness.env.get("GITHUB_INSTALLATION_ID")
   if app_id == nil || trim(to_string(app_id)) == "" || installation_id == nil
     || trim(to_string(installation_id)) == "" {
     if __allow_gh_auth_fallback(args) {
@@ -4174,7 +4181,8 @@ fn __outbound_config(args) {
           timeout_ms: args?.timeout_ms,
           rate_limit_max_sleep_seconds: args?.rate_limit_max_sleep_seconds
             ?? DEFAULT_RATE_LIMIT_MAX_SLEEP_SECONDS,
-        },
+        }
+          + __http_policy_config(args),
       )
     }
     return __err(
@@ -4197,11 +4205,27 @@ fn __outbound_config(args) {
     rate_limit_max_sleep_seconds: args?.rate_limit_max_sleep_seconds
       ?? DEFAULT_RATE_LIMIT_MAX_SLEEP_SECONDS,
   }
+    + __http_policy_config(args)
   let token_result = installation_token(resolved)
   if is_err(token_result) {
     return token_result
   }
   return Ok(resolved + {installation_token: to_string(token_result), token_mode: "jwt"})
+}
+
+fn __http_policy_config(args) {
+  return {
+    retry: args?.retry,
+    retry_policy: args?.retry_policy,
+    retry_on: args?.retry_on,
+    retry_unsafe: args?.retry_unsafe,
+    idempotency_key: args?.idempotency_key,
+    max_attempts: args?.max_attempts,
+    base_ms: args?.base_ms,
+    backoff_ms: args?.backoff_ms,
+    cap_ms: args?.cap_ms,
+    respect_retry_after: args?.respect_retry_after,
+  }
 }
 
 fn __config_keys() {
@@ -4222,6 +4246,16 @@ fn __config_keys() {
     "now",
     "timeout_ms",
     "rate_limit_max_sleep_seconds",
+    "retry",
+    "retry_policy",
+    "retry_on",
+    "retry_unsafe",
+    "idempotency_key",
+    "max_attempts",
+    "base_ms",
+    "backoff_ms",
+    "cap_ms",
+    "respect_retry_after",
     "allow_gh_auth_fallback",
     "gh_auth_fallback",
     "gh_token",
@@ -4231,11 +4265,11 @@ fn __config_keys() {
 fn __allow_gh_auth_fallback(args) {
   let direct = args?.allow_gh_auth_fallback ?? false
   let alias = args?.gh_auth_fallback ?? false
-  return direct || alias || env_or("HARN_GITHUB_ALLOW_GH_AUTH_FALLBACK", "") == "1"
+  return direct || alias || harness.env.get_or("HARN_GITHUB_ALLOW_GH_AUTH_FALLBACK", "") == "1"
 }
 
 fn __gh_auth_token(args) {
-  let env_token = args?.gh_token ?? env("GH_TOKEN") ?? env("GITHUB_TOKEN")
+  let env_token = args?.gh_token ?? harness.env.get("GH_TOKEN") ?? harness.env.get("GITHUB_TOKEN")
   if env_token != nil && trim(to_string(env_token)) != "" {
     return Ok(to_string(env_token))
   }
@@ -4445,29 +4479,7 @@ fn __github_request(method, url, body, cfg, accept, parse_json) {
   var retried_rate_limit = false
   var retried_auth = false
   while true {
-    var options = {
-      headers: {
-        Accept: accept,
-        "X-GitHub-Api-Version": GITHUB_API_VERSION,
-        "User-Agent": GITHUB_USER_AGENT,
-        Authorization: "Bearer " + current_token,
-      },
-      retry: {max: 0, backoff_ms: 0},
-    }
-    if body != nil {
-      options["body"] = json_stringify(body)
-      options.headers["Content-Type"] = "application/json"
-    }
-    if cfg?.timeout_ms != nil {
-      options["timeout_ms"] = cfg.timeout_ms
-    }
-    let response_result = try {
-      http_request(method, url, options)
-    }
-    if is_err(response_result) {
-      return __err("network", to_string(unwrap_err(response_result)))
-    }
-    let response = unwrap(response_result)
+    let response = __github_policy_request(method, url, body, cfg, current_token, accept, parse_json)
     if response.status == 401 && cfg.token_mode == "jwt" && !retried_auth {
       retried_auth = true
       invalidate_installation_token(cfg.installation_id)
@@ -4486,13 +4498,8 @@ fn __github_request(method, url, body, cfg, accept, parse_json) {
       retried_rate_limit = true
       continue
     }
-    if response.status < 200 || response.status >= 300 {
-      let code = __github_error_code(response)
-      return __err(
-        code,
-        "github API request failed with status " + to_string(response.status) + ": "
-          + __github_error_message(response),
-      )
+    if !(response.ok ?? false) {
+      return __github_request_error(response)
     }
     if trim(response.body ?? "") == "" {
       return {status: response.status, headers: response.headers, body: ""}
@@ -4500,14 +4507,97 @@ fn __github_request(method, url, body, cfg, accept, parse_json) {
     if !parse_json {
       return response.body
     }
-    let parsed = try {
-      json_parse(response.body)
-    }
-    if is_err(parsed) {
-      return __err("invalid_response", "GitHub API returned invalid JSON")
-    }
-    return unwrap(parsed)
+    return response.json
   }
+}
+
+fn __github_policy_request(method, url, body, cfg, current_token, accept, parse_json) {
+  let options = __github_policy_request_options(body, cfg, current_token, accept)
+  if parse_json {
+    return connector_http_json(method, url, options)
+  }
+  return connector_http_request(method, url, options)
+}
+
+fn __github_policy_request_options(body, cfg, current_token, accept) {
+  var options = {
+    provider: "github",
+    headers: {
+      Accept: accept,
+      "X-GitHub-Api-Version": GITHUB_API_VERSION,
+      "User-Agent": GITHUB_USER_AGENT,
+      Authorization: "Bearer " + current_token,
+    },
+    retry: __github_retry_policy(cfg),
+  }
+  if body != nil {
+    options["body"] = json_stringify(body)
+    options.headers["Content-Type"] = "application/json"
+  }
+  if cfg?.timeout_ms != nil {
+    options["timeout_ms"] = cfg.timeout_ms
+  }
+  if cfg?.idempotency_key != nil {
+    options["idempotency_key"] = cfg.idempotency_key
+  }
+  if cfg?.retry_unsafe != nil {
+    options["retry_unsafe"] = cfg.retry_unsafe
+  }
+  return options
+}
+
+fn __github_retry_policy(cfg) {
+  let source = cfg?.retry_policy ?? cfg?.retry ?? {}
+  var policy = {}
+  for entry in source.entries() {
+    policy[entry.key] = entry.value
+  }
+  if cfg?.max_attempts != nil && policy?.max_attempts == nil {
+    policy["max_attempts"] = cfg.max_attempts
+  }
+  if cfg?.base_ms != nil && policy?.base_ms == nil {
+    policy["base_ms"] = cfg.base_ms
+  }
+  if cfg?.backoff_ms != nil && policy?.backoff_ms == nil {
+    policy["backoff_ms"] = cfg.backoff_ms
+  }
+  if cfg?.cap_ms != nil && policy?.cap_ms == nil {
+    policy["cap_ms"] = cfg.cap_ms
+  }
+  if cfg?.respect_retry_after != nil && policy?.respect_retry_after == nil {
+    policy["respect_retry_after"] = cfg.respect_retry_after
+  }
+  if policy?.max_attempts == nil && policy?.max == nil {
+    policy["max_attempts"] = 1
+  }
+  policy["retry_on"] = __github_generic_retry_statuses(policy?.retry_on ?? cfg?.retry_on ?? [408, 500, 502, 503, 504])
+  return policy
+}
+
+fn __github_generic_retry_statuses(statuses) {
+  var out = []
+  for status in statuses ?? [] {
+    let code = to_int(status)
+    if code != nil && code != 403 && code != 429 {
+      out = out + [code]
+    }
+  }
+  return out
+}
+
+fn __github_request_error(response) {
+  if response?.error?.category == "invalid_json" {
+    return __err("invalid_response", "GitHub API returned invalid JSON")
+  }
+  if response?.status == nil || to_int(response.status) == 0 {
+    return __err("network", response?.error?.message ?? to_string(response?.error ?? response))
+  }
+  let code = __github_error_code(response)
+  return __err(
+    code,
+    "github API request failed with status " + to_string(response.status) + ": "
+      + __github_error_message(response),
+  )
 }
 
 fn __github_error_code(response) {
@@ -4532,8 +4622,9 @@ fn __github_error_code(response) {
 }
 
 fn __github_error_message(response) {
+  let body_text = response?.body ?? response?.error?.body ?? ""
   let parsed = try {
-    json_parse(response.body ?? "")
+    json_parse(body_text)
   }
   if !is_err(parsed) {
     let body = unwrap(parsed)
@@ -4541,23 +4632,23 @@ fn __github_error_message(response) {
       return to_string(body.message)
     }
   }
-  return to_string(response.body ?? "")
+  return to_string(body_text ?? response?.error?.message ?? "")
 }
 
 fn __is_rate_limit_response(response) {
   if response.status == 429 {
     return true
   }
-  let remaining = __response_header(response.headers ?? {}, "x-ratelimit-remaining")
-  return remaining != nil && trim(to_string(remaining)) == "0"
+  return trim(to_string(connector_http_rate_limit(response)?.remaining ?? "")) == "0"
 }
 
 fn __maybe_wait_for_rate_limit(response, cfg) {
-  let remaining = __response_header(response.headers ?? {}, "x-ratelimit-remaining")
+  let rate_limit = connector_http_rate_limit(response)
+  let remaining = rate_limit?.remaining
   if remaining == nil || trim(to_string(remaining)) != "0" {
     return Ok(false)
   }
-  let reset = __response_header(response.headers ?? {}, "x-ratelimit-reset")
+  let reset = rate_limit?.x_ratelimit_reset ?? rate_limit?.reset
   if reset == nil || trim(to_string(reset)) == "" {
     return Ok(true)
   }
@@ -4585,10 +4676,6 @@ fn __maybe_wait_for_rate_limit(response, cfg) {
   return Ok(true)
 }
 
-fn __response_header(headers, name) {
-  return __header(headers, name)
-}
-
 fn __resolve_token_config(config) {
   let api_base_url = config?.api_base_url ?? GITHUB_API_BASE_URL
   let app_id = config?.app_id
@@ -4611,7 +4698,8 @@ fn __resolve_token_config(config) {
       timeout_ms: config?.timeout_ms,
       rate_limit_max_sleep_seconds: config?.rate_limit_max_sleep_seconds
         ?? DEFAULT_RATE_LIMIT_MAX_SLEEP_SECONDS,
-    },
+    }
+      + __http_policy_config(config),
   )
 }
 
@@ -4649,42 +4737,38 @@ fn __exchange_installation_token(config) {
     config.api_base_url,
     "/app/installations/" + to_string(config.installation_id) + "/access_tokens",
   )
-  let response_result = try {
-    http_request(
-      "POST",
-      url,
-      {
-        headers: {
-          Accept: "application/vnd.github+json",
-          "X-GitHub-Api-Version": GITHUB_API_VERSION,
-          "User-Agent": GITHUB_USER_AGENT,
-          Authorization: "Bearer " + jwt,
-          "Content-Type": "application/json",
-        },
-        body: "",
-        timeout_ms: config?.timeout_ms ?? 30000,
-        retry: {max: 0, backoff_ms: 0},
+  let response = connector_http_json(
+    "POST",
+    url,
+    {
+      provider: "github",
+      operation: "installation_token",
+      headers: {
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": GITHUB_API_VERSION,
+        "User-Agent": GITHUB_USER_AGENT,
+        Authorization: "Bearer " + jwt,
+        "Content-Type": "application/json",
       },
-    )
-  }
-  if is_err(response_result) {
-    return __err("transport", to_string(unwrap_err(response_result)))
-  }
-  let response = unwrap(response_result)
-  if response.status < 200 || response.status >= 300 {
+      body: "",
+      timeout_ms: config?.timeout_ms ?? 30000,
+      retry: __github_retry_policy(config),
+    },
+  )
+  if !(response.ok ?? false) {
+    if response?.error?.category == "invalid_json" {
+      return __err("invalid_response", "GitHub installation token response was not valid JSON")
+    }
+    if response?.status == nil {
+      return __err("transport", response?.error?.message ?? to_string(response?.error ?? response))
+    }
     return __err(
       "installation_token_failed",
       "failed to create GitHub installation token (" + to_string(response.status) + "): "
-        + response.body ?? "",
+        + to_string(response?.body ?? response?.error?.message ?? ""),
     )
   }
-  let parsed = try {
-    json_parse(response.body)
-  }
-  if is_err(parsed) {
-    return __err("invalid_response", "GitHub installation token response was not valid JSON")
-  }
-  let payload = unwrap(parsed)
+  let payload = response.json
   if payload?.token == nil {
     return __err("invalid_response", "GitHub installation token response did not include token")
   }
