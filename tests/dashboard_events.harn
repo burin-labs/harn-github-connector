@@ -1,4 +1,4 @@
-import { call } from "../src/lib"
+import { call, init, shutdown } from "../src/lib"
 import { fixture_raw, github_normalize } from "./helpers"
 
 fn find_intent(intents, name) {
@@ -12,6 +12,8 @@ fn find_intent(intents, name) {
 
 pipeline default() {
   let secret = "test-signing-secret"
+  shutdown()
+  init({signing_secret: secret})
   let issue = github_normalize(fixture_raw(harness, "issues_opened", secret, "issues"))
   let issue_payload = issue.event.payload
   assert_eq(issue_payload.source.kind, "github.issue", "issue primary source kind")

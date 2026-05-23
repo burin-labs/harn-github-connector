@@ -1,8 +1,10 @@
-import { shutdown } from "../src/lib"
+import { init, shutdown } from "../src/lib"
 import { fixture_raw, github_normalize } from "./helpers"
 
 pipeline default() {
   let secret = "test-signing-secret"
+  shutdown()
+  init({signing_secret: secret})
   let cases = [
     ["pull_request_opened", "pull_request", "pull_request.opened"],
     ["push", "push", "push"],

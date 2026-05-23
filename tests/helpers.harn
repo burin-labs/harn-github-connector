@@ -17,15 +17,19 @@ pub fn github_headers(secret, body, event, delivery = "delivery-1") {
   }
 }
 
+/**
+ * Build a raw inbound envelope WITHOUT embedding the signing secret. Tests must seed the secret via `init({signing_secret: secret})` before calling normalize_inbound.
+ */
 pub fn signed_raw(secret, body, event, extra = nil) {
-  return extra ?? {}
-    + {signing_secret: secret, body_text: body, headers: github_headers(secret, body, event)}
+  return extra ?? {} + {body_text: body, headers: github_headers(secret, body, event)}
 }
 
+/** Read a fixture JSON body from the test fixtures directory. */
 pub fn fixture_body(harness: Harness, name) {
   return harness.fs.read_text(source_dir() + "/fixtures/webhooks/" + name + ".json")
 }
 
+/** Build a signed raw inbound envelope from a named fixture. */
 pub fn fixture_raw(harness: Harness, name, secret, event, extra = nil) {
   return signed_raw(secret, fixture_body(harness, name), event, extra)
 }
