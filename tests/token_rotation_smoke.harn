@@ -15,6 +15,7 @@ fn base_config(harness: Harness, now) {
 }
 
 pipeline default() {
+  egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
   reset_token_cache()
   http_mock_clear()
   let config = base_config(harness, 1700000000)

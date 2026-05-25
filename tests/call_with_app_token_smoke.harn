@@ -16,6 +16,7 @@ fn config(harness: Harness, now) {
 }
 
 pipeline default() {
+  egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
   reset_token_cache()
   http_mock_clear()
   http_mock(
