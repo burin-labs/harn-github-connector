@@ -1,6 +1,7 @@
 import { call } from "../src/lib"
 
 pipeline default() {
+  egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
   http_mock_clear()
   let base = "https://github-api.test"
   let auth = {api_base_url: base, installation_token: "github-installation-token"}
