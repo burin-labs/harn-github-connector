@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+## 0.4.0 - 2026-06-02
+
+- Add GitHub Actions self-hosted runner management methods supporting both repo
+  (`owner`+`repo`) and org (`org`) scope: `actions.runners.registration_token`,
+  `remove_token`, `generate_jitconfig` (stateless single-use), `list`, `get`,
+  `delete`, `downloads`, `labels.list/add/replace/remove`, and
+  `actions.runner_groups.list/create/get/update/delete`. Mutating methods need
+  repo `administration:write` or org
+  `organization_self_hosted_runners:write`.
+- Add a CPU-only `@handle command args...` mention extractor to
+  `normalize_inbound`. Issue, PR, and comment payloads gain a `mention` block
+  (`{candidates, actor, command, handle, rest, issue_number?, comment_id?,
+  html_url?}`); the `github_extract_mentions(body)` helper exposes the parser.
+- Add user-to-server OAuth methods `oauth.user.device_code`,
+  `oauth.user.device_poll`, `oauth.user.exchange_code`, and
+  `oauth.user.refresh` (plus matching helpers) for "connect your GitHub
+  account". `ghu_`/`ghr_` tokens rotate on refresh. Adds the `oauth`
+  connector capability.
+- Add `pull_requests.resolve_mergeable` (and `github_resolve_mergeable`) to
+  resolve a PR's async `mergeable`/`mergeable_state` with bounded polling,
+  surfacing `is_conflict`.
+- Add `repos.commit_pulls` and `github_resolve_pr_for_sha(owner, repo, sha)`
+  to recover the PR for a commit SHA, preferring payload `pull_requests[]` and
+  falling back to the commit→pulls lookup for forks and `status` events.
 - Tighten repo-local agent guidance and README runtime notes.
 - Add latest-release and release-asset helpers for release automation.
 - Add `api_call` as a raw REST compatibility escape hatch.

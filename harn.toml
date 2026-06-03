@@ -1,6 +1,6 @@
 [package]
 name = "harn-github-connector"
-version = "0.3.0"
+version = "0.4.0"
 description = "Pure-Harn GitHub App connector: webhooks, installation token rotation, REST/GraphQL dispatch."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/burin-labs/harn-github-connector"
@@ -12,7 +12,7 @@ default = "src/lib.harn"
 [[providers]]
 id = "github"
 connector = { harn = "src/lib.harn" }
-capabilities = ["webhook", "rate_limit", "pagination", "graphql"]
+capabilities = ["webhook", "rate_limit", "pagination", "graphql", "oauth"]
 
 [providers.setup]
 auth_type = "github-app"

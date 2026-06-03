@@ -54,8 +54,30 @@ let GITHUB_OUTBOUND_METHODS = [
   "actions.workflow_dispatch",
   "actions.workflow_runs.list",
   "actions.workflow_run.get",
+  "actions.runners.registration_token",
+  "actions.runners.remove_token",
+  "actions.runners.generate_jitconfig",
+  "actions.runners.list",
+  "actions.runners.get",
+  "actions.runners.delete",
+  "actions.runners.downloads",
+  "actions.runners.labels.list",
+  "actions.runners.labels.add",
+  "actions.runners.labels.replace",
+  "actions.runners.labels.remove",
+  "actions.runner_groups.list",
+  "actions.runner_groups.create",
+  "actions.runner_groups.get",
+  "actions.runner_groups.update",
+  "actions.runner_groups.delete",
   "check_runs.create",
   "check_runs.update",
+  "repos.commit_pulls",
+  "pull_requests.resolve_mergeable",
+  "oauth.user.device_code",
+  "oauth.user.device_poll",
+  "oauth.user.exchange_code",
+  "oauth.user.refresh",
   "graphql",
 ]
 
@@ -130,6 +152,7 @@ pub fn payload_schema() {
         source_refs: {type: ["array", "null"]},
         triage_event: {type: ["object", "null"]},
         job_event: {type: ["object", "null"]},
+        mention: {type: ["object", "null"]},
         raw: {type: "object"},
         issue: {type: ["object", "null"]},
         pull_request: {type: ["object", "null"]},
@@ -226,6 +249,9 @@ pub fn normalize_inbound(raw) {
 pub fn call(method, args = {}) {
   if !contains(GITHUB_OUTBOUND_METHODS, method) {
     return __err("method_not_found", "github connector does not implement outbound method `" + method + "`")
+  }
+  if starts_with(method, "oauth.user.") {
+    return __oauth_user_dispatch(method, args ?? {})
   }
   let config = __outbound_config(args ?? {})
   if is_err(config) {
@@ -483,6 +509,15 @@ pub fn call(method, args = {}) {
   if method == "actions.workflow_run.get" {
     return __actions_workflow_run_get(args, cfg)
   }
+  if starts_with(method, "actions.runners.") || starts_with(method, "actions.runner_groups.") {
+    return __actions_runners_dispatch(method, args, cfg)
+  }
+  if method == "repos.commit_pulls" {
+    return __repos_commit_pulls(args, cfg)
+  }
+  if method == "pull_requests.resolve_mergeable" {
+    return __pull_requests_resolve_mergeable(args, cfg)
+  }
   if method == "check_runs.create" {
     return __github_json(
       "POST",
@@ -551,10 +586,95 @@ pub fn actions_workflow_runs(owner, repo, options = nil) {
   return call("actions.workflow_runs.list", opts + {owner: owner, repo: repo})
 }
 
+/**
+ * Create a self-hosted runner registration token. Pass `org` for org scope, or
+ * `owner`+`repo` for repo scope (via `scope`). Requires `administration:write`
+ * (repo) or `organization_self_hosted_runners:write` (org).
+ */
+pub fn actions_runner_registration_token(scope, options = nil) {
+  let opts = options ?? {}
+  return call("actions.runners.registration_token", opts + scope ?? {})
+}
+
+/**
+ * Generate an ephemeral just-in-time runner config (the modern stateless,
+ * single-use registration path). `scope` is `{org}` or `{owner, repo}`; the
+ * body carries `{name, runner_group_id, labels[], work_folder?}`. Requires
+ * `administration:write` (repo) or `organization_self_hosted_runners:write` (org).
+ */
+pub fn actions_runner_generate_jitconfig(
+  scope,
+  name,
+  runner_group_id = 1,
+  labels = [],
+  options = nil,
+) {
+  let opts = options ?? {}
+  return call(
+    "actions.runners.generate_jitconfig",
+    opts + scope ?? {} + {name: name, runner_group_id: runner_group_id, labels: labels},
+  )
+}
+
+/** List self-hosted runners for a repo (`{owner, repo}`) or org (`{org}`) scope. */
+pub fn actions_runners_list(scope, options = nil) {
+  let opts = options ?? {}
+  return call("actions.runners.list", opts + scope ?? {})
+}
+
 /** Dispatch one raw GitHub REST call. Prefer typed helpers when one exists. */
 pub fn api_call(path, method = "GET", body = nil, options = nil) {
   let opts = options ?? {}
   return call("api_call", opts + {path: path, method: method, body: body})
+}
+
+/**
+ * Begin the user-to-server OAuth device flow. Returns GitHub's
+ * `{device_code, user_code, verification_uri, expires_in, interval}` payload.
+ * `ghu_` user tokens expire after 8h and `ghr_` refresh tokens after 6 months.
+ */
+pub fn oauth_user_device_code(client_id, scope = nil, options = nil) {
+  let opts = options ?? {}
+  var args = opts + {client_id: client_id}
+  if scope != nil {
+    args["scope"] = scope
+  }
+  return call("oauth.user.device_code", args)
+}
+
+/**
+ * Poll the device-flow token endpoint. Returns the granted token payload, or a
+ * payload with `error` (e.g. `authorization_pending`, `slow_down`) while the
+ * user has not yet authorized.
+ */
+pub fn oauth_user_device_poll(client_id, device_code, options = nil) {
+  let opts = options ?? {}
+  return call("oauth.user.device_poll", opts + {client_id: client_id, device_code: device_code})
+}
+
+/** Exchange a web-flow authorization `code` for a user access token. */
+pub fn oauth_user_exchange_code(client_id, code, options = nil) {
+  let opts = options ?? {}
+  return call("oauth.user.exchange_code", opts + {client_id: client_id, code: code})
+}
+
+/**
+ * Refresh an expiring `ghu_` user token. The `ghr_` refresh token ROTATES on
+ * every refresh, so callers must persist the returned `refresh_token`.
+ */
+pub fn oauth_user_refresh(client_id, refresh_token, options = nil) {
+  let opts = options ?? {}
+  return call("oauth.user.refresh", opts + {client_id: client_id, refresh_token: refresh_token})
+}
+
+/**
+ * Extract `@handle command args...` mentions from a free-text body using pure
+ * string scanning (CPU-only, no network). Returns a list of
+ * `{handle, command, rest}` candidates. Mirrors the `mention.candidates`
+ * surfaced on normalized issue/PR/comment payloads.
+ */
+pub fn github_extract_mentions(body) {
+  return __extract_mention_candidates(body)
 }
 
 /** Read a repository file as decoded UTF-8 text at an optional ref. */
@@ -2051,6 +2171,396 @@ fn __actions_workflow_run_get(args, cfg) {
   )
 }
 
+/**
+ * Resolve the REST path prefix for self-hosted-runner methods that accept
+ * either a repo scope (`owner` + `repo`) or an org scope (`org`). Returns
+ * `Ok("/repos/{owner}/{repo}")` or `Ok("/orgs/{org}")`, or a schema_drift error
+ * when neither scope is supplied.
+ */
+fn __runner_scope_prefix(args) {
+  let org = args?.org
+  if org != nil && trim(to_string(org)) != "" {
+    return Ok("/orgs/" + url_encode(to_string(org)))
+  }
+  if args?.owner != nil && trim(to_string(args.owner)) != "" && args?.repo != nil
+    && trim(to_string(args.repo)) != "" {
+    return Ok("/repos/" + to_string(args.owner) + "/" + to_string(args.repo))
+  }
+  return __err("schema_drift", "self-hosted runner methods require `org`, or `owner` + `repo`")
+}
+
+/**
+ * Dispatch GitHub Actions self-hosted runner and runner-group methods.
+ * Mutating methods (registration_token, remove_token, generate_jitconfig,
+ * delete, labels add/replace/remove, runner_groups create/update/delete)
+ * require the `administration:write` repo permission or the
+ * `organization_self_hosted_runners:write` org permission. Read methods
+ * require the matching read permission.
+ */
+@complexity(allow)
+fn __actions_runners_dispatch(method, args, cfg) {
+  let runner_id = args?.runner_id ?? args?.id
+  if method == "actions.runner_groups.list" || method == "actions.runner_groups.create" {
+    let org = args?.org
+    if org == nil || trim(to_string(org)) == "" {
+      return __err("schema_drift", method + " requires `org`")
+    }
+    let url = __github_api_url(cfg.api_base_url, "/orgs/" + url_encode(to_string(org)) + "/actions/runner-groups")
+    if method == "actions.runner_groups.create" {
+      return __github_json("POST", url, __body_without(args, __config_keys() + ["org"]), cfg)
+    }
+    return __github_json("GET", url + __pagination_query(args), nil, cfg)
+  }
+  if method == "actions.runner_groups.get" || method == "actions.runner_groups.update"
+    || method == "actions.runner_groups.delete" {
+    let org = args?.org
+    let group_id = args?.runner_group_id ?? args?.group_id ?? args?.id
+    if org == nil || trim(to_string(org)) == "" || group_id == nil {
+      return __err("schema_drift", method + " requires `org` and `runner_group_id`")
+    }
+    let url = __github_api_url(
+      cfg.api_base_url,
+      "/orgs/" + url_encode(to_string(org)) + "/actions/runner-groups/" + to_string(group_id),
+    )
+    if method == "actions.runner_groups.update" {
+      return __github_json(
+        "PATCH",
+        url,
+        __body_without(args, __config_keys() + ["org", "runner_group_id", "group_id", "id"]),
+        cfg,
+      )
+    }
+    if method == "actions.runner_groups.delete" {
+      return __github_json("DELETE", url, nil, cfg)
+    }
+    return __github_json("GET", url, nil, cfg)
+  }
+  let prefix = __runner_scope_prefix(args)
+  if is_err(prefix) {
+    return prefix
+  }
+  let base = unwrap(prefix) + "/actions/runners"
+  if method == "actions.runners.registration_token" {
+    return __github_json("POST", __github_api_url(cfg.api_base_url, base + "/registration-token"), nil, cfg)
+  }
+  if method == "actions.runners.remove_token" {
+    return __github_json("POST", __github_api_url(cfg.api_base_url, base + "/remove-token"), nil, cfg)
+  }
+  if method == "actions.runners.generate_jitconfig" {
+    return __github_json(
+      "POST",
+      __github_api_url(cfg.api_base_url, base + "/generate-jitconfig"),
+      __runner_jitconfig_body(args),
+      cfg,
+    )
+  }
+  if method == "actions.runners.downloads" {
+    return __github_json("GET", __github_api_url(cfg.api_base_url, base + "/downloads"), nil, cfg)
+  }
+  if method == "actions.runners.list" {
+    return __github_json("GET", __github_api_url(cfg.api_base_url, base + __pagination_query(args)), nil, cfg)
+  }
+  if method == "actions.runners.get" || method == "actions.runners.delete" {
+    if runner_id == nil {
+      return __err("schema_drift", method + " requires `runner_id`")
+    }
+    let url = __github_api_url(cfg.api_base_url, base + "/" + to_string(runner_id))
+    if method == "actions.runners.delete" {
+      return __github_json("DELETE", url, nil, cfg)
+    }
+    return __github_json("GET", url, nil, cfg)
+  }
+  if starts_with(method, "actions.runners.labels.") {
+    if runner_id == nil {
+      return __err("schema_drift", method + " requires `runner_id`")
+    }
+    let url = __github_api_url(cfg.api_base_url, base + "/" + to_string(runner_id) + "/labels")
+    if method == "actions.runners.labels.list" {
+      return __github_json("GET", url, nil, cfg)
+    }
+    if method == "actions.runners.labels.add" {
+      return __github_json("POST", url, {labels: args?.labels ?? []}, cfg)
+    }
+    if method == "actions.runners.labels.replace" {
+      return __github_json("PUT", url, {labels: args?.labels ?? []}, cfg)
+    }
+    if method == "actions.runners.labels.remove" {
+      let label = args?.name ?? args?.label
+      if label != nil && trim(to_string(label)) != "" {
+        return __github_json("DELETE", url + "/" + url_encode(to_string(label)), nil, cfg)
+      }
+      return __github_json("DELETE", url, nil, cfg)
+    }
+  }
+  return __err("method_not_found", "unsupported runner method `" + method + "`")
+}
+
+fn __runner_jitconfig_body(args) {
+  let name = args?.name
+  if name == nil || trim(to_string(name)) == "" {
+    return {error: "missing_name"}
+  }
+  var body = {name: to_string(name), runner_group_id: args?.runner_group_id ?? 1, labels: args?.labels ?? []}
+  if args?.work_folder != nil {
+    body["work_folder"] = args.work_folder
+  }
+  return body
+}
+
+/**
+ * GET /repos/{owner}/{repo}/commits/{sha}/pulls — list pull requests that
+ * contain the given commit. Used to recover the PR for `status` events and
+ * fork pushes whose webhook `pull_requests[]` array is empty.
+ */
+fn __repos_commit_pulls(args, cfg) {
+  let repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  let r = unwrap(repo)
+  let sha = args?.sha ?? args?.commit_sha
+  if sha == nil || trim(to_string(sha)) == "" {
+    return __err("schema_drift", "repos.commit_pulls requires `sha`")
+  }
+  return __github_json(
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + r.owner + "/" + r.name + "/commits/" + url_encode(to_string(sha)) + "/pulls"
+        + __pagination_query(args),
+    ),
+    nil,
+    cfg,
+  )
+}
+
+let DEFAULT_MERGEABLE_MAX_ATTEMPTS = 4
+
+let DEFAULT_MERGEABLE_POLL_INTERVAL_MS = 1500
+
+/**
+ * Resolve a PR's async-computed `mergeable`/`mergeable_state` by GETting the
+ * single-PR endpoint (which triggers the background computation) and polling
+ * with bounded backoff while `mergeable` is null or `mergeable_state` is
+ * "unknown". Returns `{ok, mergeable, mergeable_state, is_conflict, attempts,
+ * resolved, raw, error}`. The poll bound is `max_attempts` (default 4) with
+ * `poll_interval_ms` (default 1500ms) between attempts.
+ */
+@complexity(allow)
+fn __pull_requests_resolve_mergeable(args, cfg) {
+  let repo = __repo_parts(args)
+  if is_err(repo) {
+    return __mergeable_envelope(false, nil, "unknown", 0, false, nil, unwrap_err(repo))
+  }
+  let r = unwrap(repo)
+  let number = args?.pull_number ?? args?.number ?? args?.pr_number
+  if number == nil {
+    return __mergeable_envelope(
+      false,
+      nil,
+      "unknown",
+      0,
+      false,
+      nil,
+      {code: "schema_drift", category: "schema_drift", message: "resolve_mergeable requires pull_number"},
+    )
+  }
+  let max_attempts = max(1, __positive_int(args?.max_attempts, DEFAULT_MERGEABLE_MAX_ATTEMPTS))
+  let poll_interval = __positive_int(args?.poll_interval_ms, DEFAULT_MERGEABLE_POLL_INTERVAL_MS)
+  let url = __github_api_url(
+    cfg.api_base_url,
+    "/repos/" + r.owner + "/" + r.name + "/pulls/" + to_string(number),
+  )
+  var attempt = 0
+  var last = nil
+  while attempt < max_attempts {
+    attempt = attempt + 1
+    let pull = __github_json("GET", url, nil, cfg)
+    if is_err(pull) {
+      return __mergeable_envelope(false, nil, "unknown", attempt, false, nil, unwrap_err(pull))
+    }
+    last = pull
+    let mergeable = pull?.mergeable
+    let state = pull?.mergeable_state ?? "unknown"
+    if mergeable != nil && state != "unknown" {
+      return __mergeable_envelope(true, mergeable, state, attempt, true, pull, nil)
+    }
+    if attempt < max_attempts && poll_interval > 0 {
+      sleep(poll_interval)
+    }
+  }
+  return __mergeable_envelope(
+    true,
+    last?.mergeable,
+    last?.mergeable_state ?? "unknown",
+    attempt,
+    false,
+    last,
+    nil,
+  )
+}
+
+fn __mergeable_envelope(ok, mergeable, mergeable_state, attempts, resolved, raw, error) {
+  return {
+    ok: ok,
+    mergeable: mergeable,
+    mergeable_state: mergeable_state,
+    is_conflict: mergeable_state == "dirty",
+    attempts: attempts,
+    resolved: resolved,
+    raw: raw,
+    error: error,
+  }
+}
+
+/**
+ * Resolve the first PR number for a commit SHA. Prefers the webhook payload's
+ * `pull_requests[]` array (present on PR-scoped events), falling back to the
+ * `repos.commit_pulls` REST lookup for forks and `status` events that carry no
+ * PR. Returns `{ok, found, pull_number, pull_request, source, error}` where
+ * `source` is `payload` or `commit_pulls`.
+ */
+pub fn github_resolve_pr_for_sha(owner, repo, sha, options = nil) {
+  let opts = options ?? {}
+  let payload_prs = opts?.pull_requests ?? []
+  let from_payload = __first(payload_prs)
+  if from_payload != nil && from_payload?.number != nil {
+    return {
+      ok: true,
+      found: true,
+      pull_number: from_payload.number,
+      pull_request: from_payload,
+      source: "payload",
+      error: nil,
+    }
+  }
+  let auth = __auth_options(opts)
+  let pulls = call("repos.commit_pulls", auth + {owner: owner, repo: repo, sha: sha})
+  if is_err(pulls) {
+    return {
+      ok: false,
+      found: false,
+      pull_number: nil,
+      pull_request: nil,
+      source: "commit_pulls",
+      error: unwrap_err(pulls),
+    }
+  }
+  let first = __first(pulls)
+  if first == nil || first?.number == nil {
+    return {ok: true, found: false, pull_number: nil, pull_request: nil, source: "commit_pulls", error: nil}
+  }
+  return {
+    ok: true,
+    found: true,
+    pull_number: first.number,
+    pull_request: first,
+    source: "commit_pulls",
+    error: nil,
+  }
+}
+
+/**
+ * Resolve a PR's async mergeable state via the connector `call` surface.
+ * Returns the `{mergeable, mergeable_state, is_conflict, ...}` envelope from
+ * `pull_requests.resolve_mergeable`.
+ */
+pub fn github_resolve_mergeable(owner, repo, pull_number, options = nil) {
+  let opts = options ?? {}
+  return call("pull_requests.resolve_mergeable", opts + {owner: owner, repo: repo, pull_number: pull_number})
+}
+
+let GITHUB_OAUTH_BASE_URL = "https://github.com"
+
+/**
+ * Dispatch user-to-server OAuth methods. These connect an end user's GitHub
+ * account (distinct from the GitHub App installation flow that drives
+ * webhooks) and post to github.com, not the REST API host. `ghu_` user tokens
+ * expire after 8h and `ghr_` refresh tokens after 6 months; both ROTATE on
+ * refresh, so callers must persist the returned `refresh_token`.
+ */
+@complexity(allow)
+fn __oauth_user_dispatch(method, args) {
+  let client_id = args?.client_id ?? harness.env.get("GITHUB_OAUTH_CLIENT_ID")
+  if client_id == nil || trim(to_string(client_id)) == "" {
+    return __err("schema_drift", method + " requires `client_id`")
+  }
+  let base = args?.oauth_base_url ?? GITHUB_OAUTH_BASE_URL
+  if method == "oauth.user.device_code" {
+    var body = {client_id: to_string(client_id)}
+    if args?.scope != nil {
+      body["scope"] = to_string(args.scope)
+    }
+    return __oauth_post(args?.device_code_url ?? base + "/login/device/code", body, args)
+  }
+  if method == "oauth.user.device_poll" {
+    let device_code = args?.device_code
+    if device_code == nil || trim(to_string(device_code)) == "" {
+      return __err("schema_drift", "oauth.user.device_poll requires `device_code`")
+    }
+    return __oauth_post(
+      args?.access_token_url ?? base + "/login/oauth/access_token",
+      {
+        client_id: to_string(client_id),
+        device_code: to_string(device_code),
+        grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+      },
+      args,
+    )
+  }
+  if method == "oauth.user.exchange_code" {
+    let code = args?.code
+    if code == nil || trim(to_string(code)) == "" {
+      return __err("schema_drift", "oauth.user.exchange_code requires `code`")
+    }
+    var body = {client_id: to_string(client_id), code: to_string(code)}
+    if args?.client_secret != nil {
+      body["client_secret"] = to_string(args.client_secret)
+    }
+    if args?.redirect_uri != nil {
+      body["redirect_uri"] = to_string(args.redirect_uri)
+    }
+    return __oauth_post(args?.access_token_url ?? base + "/login/oauth/access_token", body, args)
+  }
+  if method == "oauth.user.refresh" {
+    let refresh_token = args?.refresh_token
+    if refresh_token == nil || trim(to_string(refresh_token)) == "" {
+      return __err("schema_drift", "oauth.user.refresh requires `refresh_token`")
+    }
+    var body = {
+      client_id: to_string(client_id),
+      grant_type: "refresh_token",
+      refresh_token: to_string(refresh_token),
+    }
+    if args?.client_secret != nil {
+      body["client_secret"] = to_string(args.client_secret)
+    }
+    return __oauth_post(args?.access_token_url ?? base + "/login/oauth/access_token", body, args)
+  }
+  return __err("method_not_found", "unsupported oauth method `" + method + "`")
+}
+
+fn __oauth_post(url, body, args) {
+  let response = connector_http_json(
+    "POST",
+    url,
+    {
+      provider: "github",
+      operation: "oauth_user",
+      headers: {Accept: "application/json", "Content-Type": "application/json", "User-Agent": GITHUB_USER_AGENT},
+      body: json_stringify(body),
+      timeout_ms: args?.timeout_ms ?? 30000,
+    },
+  )
+  if !(response.ok ?? false) {
+    if response?.status == nil || to_int(response?.status ?? 0) == 0 {
+      return __err("network", response?.error?.message ?? to_string(response?.error ?? response))
+    }
+    return __err("oauth_failed", "github OAuth request failed with status " + to_string(response.status))
+  }
+  return response.json
+}
+
 fn __render_template(template, vars) {
   var rendered = to_string(template ?? "")
   for entry in (vars ?? {}).entries() {
@@ -2620,6 +3130,9 @@ fn __error_category(code) {
   if code == "network" || code == "transport" {
     return "network"
   }
+  if code == "oauth_failed" {
+    return "auth"
+  }
   if code == "schema_drift" || code == "invalid_response" || code == "invalid_json" {
     return "schema_drift"
   }
@@ -3073,11 +3586,127 @@ fn __normalize_github_payload(event_kind, raw, delivery_id, dedupe_key, occurred
   return __decorate_dashboard_payload(event_kind, common, dedupe_key, occurred_at)
 }
 
+let MENTION_HANDLE_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_/"
+
+/**
+ * Extract `@handle command args...` mentions from a free-text body using
+ * pure string scanning (no network, no regex). Returns a list of
+ * `{handle, command, rest}` candidates. A mention is recognized when `@` is at
+ * the start of the body or follows whitespace, the handle is a run of
+ * `[A-Za-z0-9-_/]`, and (optionally) a command word follows on the same line.
+ */
+@complexity(allow)
+fn __extract_mention_candidates(body) {
+  let text = to_string(body ?? "")
+  let n = len(text)
+  var out = []
+  var i = 0
+  while i < n {
+    let ch = text[i:i + 1]
+    let prev_is_boundary = i == 0 || __is_mention_boundary(text[i - 1:i])
+    if ch == "@" && prev_is_boundary {
+      var j = i + 1
+      while j < n && contains(MENTION_HANDLE_CHARS, text[j:j + 1]) {
+        j = j + 1
+      }
+      let handle = text[i + 1:j]
+      if handle != "" {
+        out = out + [__mention_from(handle, text, j, n)]
+      }
+      i = j
+    } else {
+      i = i + 1
+    }
+  }
+  return out
+}
+
+fn __is_mention_boundary(ch) {
+  return ch == " " || ch == "\n" || ch == "\t" || ch == "\r" || ch == "(" || ch == "["
+}
+
+fn __mention_from(handle, text, after_handle, n) {
+  // A command must be separated from the handle by whitespace; punctuation
+  // directly attached to the handle (e.g. `@reviewer!`) yields no command.
+  if after_handle < n {
+    let next = text[after_handle:after_handle + 1]
+    if next != " " && next != "\t" && next != "\n" && next != "\r" {
+      return {handle: handle, command: nil, rest: ""}
+    }
+  }
+  // Skip spaces/tabs (but not newlines) to find the command on the same line.
+  var k = after_handle
+  while k < n && (text[k:k + 1] == " " || text[k:k + 1] == "\t") {
+    k = k + 1
+  }
+  // Stop the command/rest scan at a newline.
+  var line_end = k
+  while line_end < n && text[line_end:line_end + 1] != "\n" {
+    line_end = line_end + 1
+  }
+  let rest_line = trim(text[k:line_end])
+  if rest_line == "" {
+    return {handle: handle, command: nil, rest: ""}
+  }
+  let space = __index_of(rest_line, " ")
+  if space < 0 {
+    return {handle: handle, command: rest_line, rest: ""}
+  }
+  return {handle: handle, command: rest_line[0:space], rest: trim(rest_line[space:len(rest_line)])}
+}
+
+/**
+ * Build the `mention` triage sub-block for events whose body may contain
+ * `@handle command` directives. Surfaces ALL @mentions as `candidates`
+ * (downstream filters by bot identity) plus the first command for convenience.
+ * Returns nil when the event kind has no body or no mentions are found.
+ */
+fn __mention_block(event_kind, payload) {
+  let body = __mention_body(event_kind, payload)
+  if body == nil || trim(to_string(body)) == "" {
+    return nil
+  }
+  let candidates = __extract_mention_candidates(body)
+  if len(candidates) == 0 {
+    return nil
+  }
+  let first = __first(candidates)
+  let actor = payload?.sender?.login ?? payload?.comment?.user?.login ?? payload?.issue?.user?.login
+    ?? payload?.pull_request?.user?.login
+  return {
+    candidates: candidates,
+    actor: actor,
+    command: first?.command,
+    handle: first?.handle,
+    rest: first?.rest,
+    issue_number: payload?.issue?.number ?? payload?.pull_request?.number ?? payload?.number,
+    comment_id: payload?.comment?.id,
+    html_url: payload?.comment?.html_url ?? payload?.issue?.html_url ?? payload?.pull_request?.html_url,
+  }
+}
+
+fn __mention_body(event_kind, payload) {
+  if event_kind == "issue_comment" || event_kind == "pull_request_review_comment" {
+    return payload?.comment?.body
+  }
+  if event_kind == "issues" {
+    return payload?.issue?.body
+  }
+  if event_kind == "pull_request" {
+    return payload?.pull_request?.body
+  }
+  return nil
+}
+
 @complexity(allow)
 fn __decorate_dashboard_payload(event_kind, payload, dedupe_key, occurred_at) {
   let source_refs = __source_refs(event_kind, payload)
   let source = __first(source_refs)
   var out = payload + {source: source, source_refs: source_refs}
+  let mention = __mention_block(event_kind, payload)
+  if mention != nil {
+    out["mention"] = mention
+  }
   let triage = __triage_event(event_kind, out, source, source_refs, dedupe_key, occurred_at)
   if triage != nil {
     out["triage_event"] = triage

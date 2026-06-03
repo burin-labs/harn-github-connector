@@ -1,0 +1,47 @@
+import { github_extract_mentions, init, shutdown } from "../src/lib"
+import { fixture_raw, github_normalize } from "./helpers"
+
+pipeline default() {
+  // 1. Pure helper: multiple mentions, command + args parsing.
+  let mentions = github_extract_mentions("Hey @harn-bot deploy staging now, and thanks @reviewer!")
+  assert_eq(len(mentions), 2, "two mention candidates")
+  assert_eq(mentions[0].handle, "harn-bot", "first handle")
+  assert_eq(mentions[0].command, "deploy", "first command")
+  assert_eq(mentions[0].rest, "staging now, and thanks @reviewer!", "first rest")
+  assert_eq(mentions[1].handle, "reviewer", "second handle")
+  assert_eq(mentions[1].command, nil, "trailing-punctuation mention has no command")
+  // 2. Boundary cases: email-like @ inside a word is not a mention boundary.
+  let no_mentions = github_extract_mentions("contact me at user@example.com please")
+  assert_eq(len(no_mentions), 0, "in-word @ is not a mention")
+  // 3. Mention at start of body, command with no args.
+  let start = github_extract_mentions("@deploybot run")
+  assert_eq(start[0].handle, "deploybot", "start handle")
+  assert_eq(start[0].command, "run", "start command")
+  assert_eq(start[0].rest, "", "start no rest")
+  // 4. Bare mention with no command.
+  let bare = github_extract_mentions("thanks @octocat")
+  assert_eq(bare[0].handle, "octocat", "bare handle")
+  assert_eq(bare[0].command, nil, "bare no command")
+  // 5. Command stops at newline (does not bleed across lines).
+  let multiline = github_extract_mentions("@bot deploy\nignored second line")
+  assert_eq(multiline[0].command, "deploy", "command stops at newline")
+  assert_eq(multiline[0].rest, "", "rest empty across newline")
+  // 6. End-to-end: normalize an issue_comment webhook and read mention block.
+  let secret = "test-signing-secret"
+  shutdown()
+  init({signing_secret: secret})
+  let normalized = github_normalize(fixture_raw(harness, "issue_comment_mention", secret, "issue_comment"))
+  assert_eq(normalized.type, "event", "mention event normalizes")
+  let mention = normalized.event.payload.mention
+  assert(mention != nil, "mention block present")
+  assert_eq(len(mention.candidates), 2, "two candidates in normalized payload")
+  assert_eq(mention.handle, "harn-bot", "first handle surfaced")
+  assert_eq(mention.command, "deploy", "first command surfaced")
+  assert_eq(mention.actor, "requester", "actor is comment author")
+  assert_eq(mention.issue_number, 7, "issue number surfaced")
+  assert_eq(mention.comment_id, 9001, "comment id surfaced")
+  // 7. A comment with no mentions has no mention block.
+  let plain = github_normalize(fixture_raw(harness, "issue_comment_created", secret, "issue_comment"))
+  assert_eq(plain.event.payload.mention, nil, "plain comment has no mention block")
+  shutdown()
+}
