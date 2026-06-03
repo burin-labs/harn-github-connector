@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Expose `github.app.installation_token` as an outbound `call` method. It
+  returns the installation bearer token the connector already resolves
+  internally — self-minted from `app_id` + `installation_id` +
+  `private_key_pem`/`private_key_secret` (RS256 JWT exchange), or passed through
+  in direct/`gh-auth` modes — as `{token, token_mode, installation_id,
+  api_base_url}`. This lets an orchestrator (e.g. harn-cloud) obtain a token for
+  its own git operations without re-implementing JWT minting. No new privilege:
+  the caller must already hold the App credentials to mint.
+
 ## 0.4.0 - 2026-06-02
 
 - Add GitHub Actions self-hosted runner management methods supporting both repo

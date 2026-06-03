@@ -30,6 +30,7 @@ let GITHUB_OUTBOUND_METHODS = [
   "github.issue.create",
   "github.issue.comment",
   "github.branch.protection",
+  "github.app.installation_token",
   "api_call",
   "issues.create_comment",
   "issues.create",
@@ -258,6 +259,20 @@ pub fn call(method, args = {}) {
     return config
   }
   let cfg = unwrap(config)
+  if method == "github.app.installation_token" {
+    // Resolving `cfg` above already self-minted the installation token in
+    // app-credential mode (app_id + installation_id + private_key_pem/secret),
+    // or carried through a direct/gh-auth token. Expose it so an orchestrator
+    // (e.g. harn-cloud) can obtain a bearer token for its own git operations
+    // without re-implementing RS256 JWT minting. The caller must already hold
+    // the credentials, so this grants no privilege it did not already have.
+    return {
+      token: cfg.installation_token,
+      token_mode: cfg.token_mode,
+      installation_id: cfg.installation_id,
+      api_base_url: cfg.api_base_url,
+    }
+  }
   if method == "github.pr.list" {
     return __github_pr_list(args, cfg)
   }
