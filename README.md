@@ -92,6 +92,7 @@ fields for Harn consumers:
 | `installation_id` | GitHub App installation id when present. |
 | `repository` / `repo` | Raw repository plus normalized `{owner, name, full_name}`. |
 | `source` / `source_refs` | Provider-neutral source refs with repo slugs, resource ids, and links. |
+| `mention` | `@handle command args...` directives parsed from issue/PR/comment bodies: `{candidates: [{handle, command, rest}], actor, command, handle, rest, issue_number?, comment_id?, html_url?}`. CPU-only; downstream filters `candidates` by bot identity. |
 | `triage_event` | `harn.triage_event.v1` envelope for issues, PRs, comments, and reviews. |
 | `job_event` | `harn.job_event.v1` envelope for checks, runs, releases, pushes, deployments, and merge queue events. |
 | `raw` | Original GitHub payload for fields not promoted by the connector. |
@@ -123,8 +124,10 @@ Call methods through `call(method, args)` unless a named helper fits better.
 
 | Area | Methods |
 |---|---|
-| Pull requests | `github.pr.list`, `github.pr.view`, `github.pr.checks`, `github.pr.merge`, `github.pr.enable_auto_merge`, `github.pr.comment`, `pulls.list`, `pulls.list_with_checks`, `pulls.get`, `pulls.merge`, `pulls.merge_safe`, `pulls.create_review_comment`, `pulls.get_diff`, `pulls.list_files`, `pulls.list_reviews` |
+| Pull requests | `github.pr.list`, `github.pr.view`, `github.pr.checks`, `github.pr.merge`, `github.pr.enable_auto_merge`, `github.pr.comment`, `pulls.list`, `pulls.list_with_checks`, `pulls.get`, `pulls.merge`, `pulls.merge_safe`, `pulls.create_review_comment`, `pulls.get_diff`, `pulls.list_files`, `pulls.list_reviews`, `pull_requests.resolve_mergeable`, `repos.commit_pulls` |
 | Actions and checks | `github.actions.workflow_dispatch`, `github.actions.runs`, `github.actions.run`, `github.actions.logs`, `actions.workflow_dispatch`, `actions.workflow_runs.list`, `actions.workflow_run.get`, `check_runs.create`, `check_runs.update` |
+| Self-hosted runners | `actions.runners.registration_token`, `actions.runners.remove_token`, `actions.runners.generate_jitconfig`, `actions.runners.list`, `actions.runners.get`, `actions.runners.delete`, `actions.runners.downloads`, `actions.runners.labels.list`, `actions.runners.labels.add`, `actions.runners.labels.replace`, `actions.runners.labels.remove`, `actions.runner_groups.list`, `actions.runner_groups.create`, `actions.runner_groups.get`, `actions.runner_groups.update`, `actions.runner_groups.delete` |
+| User OAuth | `oauth.user.device_code`, `oauth.user.device_poll`, `oauth.user.exchange_code`, `oauth.user.refresh` |
 | Issues | `github.issue.create`, `github.issue.comment`, `issues.create_comment`, `issues.create`, `issues.create_with_template`, `issues.update`, `issues.add_labels` |
 | Repository and release data | `github.release.latest`, `github.release.assets`, `github.branch.protection`, `repos.get_content`, `repos.get_text`, `repos.get_latest_release`, `repos.list_release_assets`, `repos.get_branch_protection`, `git.delete_ref` |
 | Merge queue | `github.merge_queue.entries`, `github.merge_queue.enqueue` |
@@ -152,6 +155,16 @@ Named helpers:
 | `github_wait_for_pr_checks(owner, repo, pull_number_or_ref, options)` | Wait for visible PR or commit checks; optionally attach failing Actions log tails. |
 | `github_find_open_pr(owner, repo, options)` | Find the first open PR matching `head_ref`, `base_ref`, `title`, or `labels`. |
 | `github_close_pr(owner, repo, pull_number, comment, options)` | Close a PR and optionally post a final comment. |
+| `github_resolve_mergeable(owner, repo, pull_number, options)` | Resolve a PR's async `mergeable`/`mergeable_state` with bounded polling; returns `{mergeable, mergeable_state, is_conflict, ...}`. |
+| `github_resolve_pr_for_sha(owner, repo, sha, options)` | Resolve the PR for a commit SHA, preferring payload `pull_requests[]` and falling back to `repos.commit_pulls`. |
+| `github_extract_mentions(body)` | Pure string parse of `@handle command args...` mentions in a body. |
+| `actions_runner_registration_token(scope, options)` | Create a self-hosted runner registration token (`scope` is `{org}` or `{owner, repo}`). |
+| `actions_runner_generate_jitconfig(scope, name, runner_group_id, labels, options)` | Generate a stateless single-use JIT runner config. |
+| `actions_runners_list(scope, options)` | List self-hosted runners for a repo or org scope. |
+| `oauth_user_device_code(client_id, scope, options)` | Begin the user OAuth device flow. |
+| `oauth_user_device_poll(client_id, device_code, options)` | Poll for the device-flow user token. |
+| `oauth_user_exchange_code(client_id, code, options)` | Exchange a web-flow code for a user token. |
+| `oauth_user_refresh(client_id, refresh_token, options)` | Refresh an expiring `ghu_` user token (rotates the `ghr_` refresh token). |
 
 Token helpers:
 
@@ -213,6 +226,8 @@ Required GitHub App permissions depend on the method:
 | Branch protection helpers | Administration read. |
 | Actions dispatch | Actions write. |
 | Actions run and log reads | Actions read. |
+| Self-hosted runner reads (list/get/labels.list/downloads) | Repo `administration:read` or org `organization_self_hosted_runners:read`. |
+| Self-hosted runner writes (registration/remove tokens, JIT config, delete, label add/replace/remove, runner groups) | Repo `administration:write` or org `organization_self_hosted_runners:write`. |
 | Check run create/update | Checks read/write. |
 | `api_call` and `graphql` | Whatever the endpoint, query, or mutation requires. |
 
@@ -231,7 +246,12 @@ explicit `gh_token`, `GH_TOKEN`, `GITHUB_TOKEN`, or `gh auth token`.
 - Webhook signing secrets may be supplied directly for local tests or resolved
   from the active Harn SecretProvider.
 - Outbound calls use GitHub App installation tokens or a caller-provided
-  installation token. OAuth user-token setup is out of scope.
+  installation token. The `oauth.user.*` methods add a separate
+  user-to-server flow (device and web-flow) for "connect your GitHub account";
+  they post to github.com, not the REST API host, and do not affect the App
+  flow that drives webhooks. `ghu_` user tokens last 8h and `ghr_` refresh
+  tokens 6 months; both rotate on refresh, so persist the returned
+  `refresh_token`.
 - Outbound HTTP dispatch uses Harn's shared connector policy layer for request
   envelopes, retries, rate-limit header extraction, and JSON parse categories.
 - GitHub primary rate-limit responses with short reset windows are retried

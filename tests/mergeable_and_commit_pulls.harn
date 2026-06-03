@@ -1,0 +1,101 @@
+import { call, github_resolve_mergeable, github_resolve_pr_for_sha } from "../src/lib"
+
+pipeline default() {
+  egress_policy({allow: ["github-api.test"], default: "deny"})
+  http_mock_clear()
+  let base = "https://github-api.test"
+  let token = "github-installation-token"
+  let auth = {api_base_url: base, installation_token: token}
+  // resolve_mergeable: first GET returns null/unknown, second resolves clean.
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/pulls/42",
+    {
+      responses: [
+        {
+          status: 200,
+          body: "{\"number\":42,\"mergeable\":null,\"mergeable_state\":\"unknown\"}",
+          headers: {"x-ratelimit-remaining": "10"},
+        },
+        {
+          status: 200,
+          body: "{\"number\":42,\"mergeable\":true,\"mergeable_state\":\"clean\"}",
+          headers: {"x-ratelimit-remaining": "9"},
+        },
+      ],
+    },
+  )
+  let resolved = github_resolve_mergeable("octo-org", "octo-repo", 42, auth + {poll_interval_ms: 0, max_attempts: 4})
+  assert_eq(resolved.mergeable, true, "mergeable resolved true")
+  assert_eq(resolved.mergeable_state, "clean", "mergeable_state clean")
+  assert_eq(resolved.is_conflict, false, "clean is not a conflict")
+  assert_eq(resolved.resolved, true, "resolved within attempts")
+  assert_eq(resolved.attempts, 2, "took two attempts")
+  // resolve_mergeable: dirty == conflict.
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/pulls/99",
+    {
+      status: 200,
+      body: "{\"number\":99,\"mergeable\":false,\"mergeable_state\":\"dirty\"}",
+      headers: {"x-ratelimit-remaining": "8"},
+    },
+  )
+  let conflict = github_resolve_mergeable("octo-org", "octo-repo", 99, auth + {poll_interval_ms: 0})
+  assert_eq(conflict.is_conflict, true, "dirty is a conflict")
+  assert_eq(conflict.mergeable_state, "dirty", "dirty state")
+  // resolve_mergeable: stays unknown across all attempts -> ok but unresolved.
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/pulls/7",
+    {
+      status: 200,
+      body: "{\"number\":7,\"mergeable\":null,\"mergeable_state\":\"unknown\"}",
+      headers: {"x-ratelimit-remaining": "7"},
+    },
+  )
+  let stuck = github_resolve_mergeable("octo-org", "octo-repo", 7, auth + {poll_interval_ms: 0, max_attempts: 2})
+  assert_eq(stuck.resolved, false, "unresolved after max attempts")
+  assert_eq(stuck.mergeable_state, "unknown", "still unknown")
+  assert_eq(stuck.attempts, 2, "exhausted attempts")
+  // commit_pulls: direct REST lookup.
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/commits/abcdef1/pulls",
+    {
+      status: 200,
+      body: "[{\"number\":13,\"title\":\"From commit\"}]",
+      headers: {"x-ratelimit-remaining": "6"},
+    },
+  )
+  let pulls = call("repos.commit_pulls", auth + {owner: "octo-org", repo: "octo-repo", sha: "abcdef1"})
+  assert_eq(pulls[0].number, 13, "commit_pulls returns PR")
+  // github_resolve_pr_for_sha: prefers payload pull_requests[].
+  let from_payload = github_resolve_pr_for_sha(
+    "octo-org",
+    "octo-repo",
+    "abcdef1",
+    auth + {pull_requests: [{number: 55}]},
+  )
+  assert_eq(from_payload.source, "payload", "prefers payload PRs")
+  assert_eq(from_payload.pull_number, 55, "payload PR number")
+  // github_resolve_pr_for_sha: empty payload (fork) falls back to commit_pulls.
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/commits/deadbeef/pulls",
+    {status: 200, body: "[{\"number\":21}]", headers: {"x-ratelimit-remaining": "5"}},
+  )
+  let fallback = github_resolve_pr_for_sha("octo-org", "octo-repo", "deadbeef", auth + {pull_requests: []})
+  assert_eq(fallback.source, "commit_pulls", "falls back to commit_pulls")
+  assert_eq(fallback.pull_number, 21, "fallback PR number")
+  // github_resolve_pr_for_sha: status event with no PR anywhere -> not found.
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/commits/orphan/pulls",
+    {status: 200, body: "[]", headers: {"x-ratelimit-remaining": "4"}},
+  )
+  let none = github_resolve_pr_for_sha("octo-org", "octo-repo", "orphan", auth)
+  assert_eq(none.found, false, "no PR found for orphan commit")
+  assert_eq(none.ok, true, "empty result is not an error")
+  http_mock_clear()
+}
