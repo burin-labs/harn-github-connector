@@ -1,0 +1,155 @@
+import { call } from "../src/lib"
+
+pipeline default() {
+  egress_policy({allow: ["github-api.test"], default: "deny"})
+  http_mock_clear()
+  let base_url = "https://github-api.test"
+  let app_auth = {api_base_url: base_url, installation_token: "github-installation-token"}
+  let user_auth = {api_base_url: base_url, allow_gh_auth_fallback: true, gh_token: "user-token"}
+  let human_choice = {
+    author_mode: "human",
+    commit_author: {name: "Kenneth Sinder", email: "kenneth@example.com"},
+    trailers: "Co-Authored-By: Merge Captain <merge-captain@bots.example>",
+  }
+  let bot_choice = {author_mode: "bot", trailers: human_choice.trailers}
+  http_mock(
+    "PUT",
+    base_url + "/repos/octo-org/octo-repo/contents/README.md",
+    {
+      status: 201,
+      body: json_stringify({content: {path: "README.md"}, commit: {sha: "commit-human"}}),
+      headers: {"x-ratelimit-remaining": "10"},
+    },
+  )
+  call(
+    "repos.create_or_update_file",
+    app_auth
+      + {
+      owner: "octo-org",
+      repo: "octo-repo",
+      path: "README.md",
+      message: "Fix identity",
+      content: base64_encode("hello\n"),
+      github_author_choice: human_choice,
+    },
+  )
+  http_mock(
+    "PUT",
+    base_url + "/repos/octo-org/octo-repo/contents/BOT.md",
+    {
+      status: 201,
+      body: json_stringify({content: {path: "BOT.md"}, commit: {sha: "commit-bot"}}),
+      headers: {"x-ratelimit-remaining": "9"},
+    },
+  )
+  call(
+    "repos.create_or_update_file",
+    app_auth
+      + {
+      owner: "octo-org",
+      repo: "octo-repo",
+      path: "BOT.md",
+      message: "Bot-authored update",
+      content: base64_encode("bot\n"),
+      github_author_choice: bot_choice,
+    },
+  )
+  let human_pr_with_app = call(
+    "pulls.create",
+    app_auth
+      + {
+      owner: "octo-org",
+      repo: "octo-repo",
+      title: "Human PR",
+      head: "feature/human",
+      base: "main",
+      github_author_choice: human_choice,
+    },
+  )
+  assert(is_err(human_pr_with_app), "human PR creation must reject app auth")
+  assert_eq(unwrap_err(human_pr_with_app).code, "author_mode", "human PR app-auth error code")
+  let bot_pr_with_user = call(
+    "pulls.create",
+    user_auth
+      + {
+      owner: "octo-org",
+      repo: "octo-repo",
+      title: "Bot PR",
+      head: "feature/bot",
+      base: "main",
+      github_author_choice: bot_choice,
+    },
+  )
+  assert(is_err(bot_pr_with_user), "bot PR creation must reject user auth")
+  assert_eq(unwrap_err(bot_pr_with_user).code, "author_mode", "bot PR user-auth error code")
+  http_mock(
+    "POST",
+    base_url + "/repos/octo-org/octo-repo/pulls",
+    {
+      status: 201,
+      body: json_stringify({number: 42, html_url: "https://github.com/octo-org/octo-repo/pull/42"}),
+      headers: {"x-ratelimit-remaining": "8"},
+    },
+  )
+  call(
+    "pulls.create",
+    user_auth
+      + {
+      owner: "octo-org",
+      repo: "octo-repo",
+      title: "Human PR",
+      head: "feature/human",
+      base: "main",
+      body: "Open the change.",
+      github_author_choice: human_choice,
+    },
+  )
+  http_mock(
+    "PUT",
+    base_url + "/repos/octo-org/octo-repo/contents/restricted.txt",
+    {
+      status: 422,
+      body: json_stringify({message: "Commit author email is not allowed by repository rules"}),
+      headers: {"x-ratelimit-remaining": "7"},
+    },
+  )
+  let restricted = call(
+    "repos.create_or_update_file",
+    app_auth
+      + {
+      owner: "octo-org",
+      repo: "octo-repo",
+      path: "restricted.txt",
+      message: "Restricted author",
+      content: base64_encode("restricted\n"),
+      github_author_choice: human_choice,
+    },
+  )
+  assert(is_err(restricted), "restricted author response must fail")
+  assert_eq(unwrap_err(restricted).code, "restricted_commit_author", "restricted author error code")
+  assert(
+    contains(unwrap_err(restricted).message, "Commit author email is not allowed"),
+    "restricted author error message",
+  )
+  let calls = http_mock_calls()
+  let human_body = json_parse(calls[0].body)
+  assert_eq(human_body.author.name, "Kenneth Sinder", "human content write author name")
+  assert_eq(human_body.author.email, "kenneth@example.com", "human content write author email")
+  assert(
+    contains(human_body.message, "Co-Authored-By: Merge Captain <merge-captain@bots.example>"),
+    "human content write appends trailers",
+  )
+  let bot_body = json_parse(calls[1].body)
+  assert(bot_body.author == nil, "bot content write omits custom author")
+  assert(bot_body.committer == nil, "bot content write omits custom committer")
+  assert(
+    !contains(bot_body.message, "Co-Authored-By"),
+    "bot content write leaves commit identity to GitHub App",
+  )
+  let pr_body = json_parse(calls[2].body)
+  assert(
+    contains(pr_body.body, "Co-Authored-By: Merge Captain <merge-captain@bots.example>"),
+    "human PR body appends trailers",
+  )
+  http_mock_clear()
+}

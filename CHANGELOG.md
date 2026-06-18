@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add author-mode-aware write paths for `pulls.create`,
+  `repos.create_or_update_file`/`repos.put_content`, `repos.delete_file`, and
+  `git.create_commit`. `author_mode=human` applies the supplied
+  `github_author_choice` commit author and trailers; `author_mode=bot` requires
+  GitHub App installation auth and omits custom author/committer fields so
+  GitHub uses the App `[bot]` identity. Restricted author responses now return
+  `restricted_commit_author`; other 422 validation responses return
+  `validation_failed`.
 - Expose `github.app.installation_token` as an outbound `call` method. It
   returns the installation bearer token the connector already resolves
   internally — self-minted from `app_id` + `installation_id` +

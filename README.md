@@ -124,12 +124,12 @@ Call methods through `call(method, args)` unless a named helper fits better.
 
 | Area | Methods |
 |---|---|
-| Pull requests | `github.pr.list`, `github.pr.view`, `github.pr.checks`, `github.pr.merge`, `github.pr.enable_auto_merge`, `github.pr.comment`, `pulls.list`, `pulls.list_with_checks`, `pulls.get`, `pulls.merge`, `pulls.merge_safe`, `pulls.create_review_comment`, `pulls.get_diff`, `pulls.list_files`, `pulls.list_reviews`, `pull_requests.resolve_mergeable`, `repos.commit_pulls` |
+| Pull requests | `github.pr.list`, `github.pr.view`, `github.pr.checks`, `github.pr.merge`, `github.pr.enable_auto_merge`, `github.pr.comment`, `pulls.list`, `pulls.list_with_checks`, `pulls.get`, `pulls.create`, `pulls.merge`, `pulls.merge_safe`, `pulls.create_review_comment`, `pulls.get_diff`, `pulls.list_files`, `pulls.list_reviews`, `pull_requests.resolve_mergeable`, `repos.commit_pulls` |
 | Actions and checks | `github.actions.workflow_dispatch`, `github.actions.runs`, `github.actions.run`, `github.actions.logs`, `actions.workflow_dispatch`, `actions.workflow_runs.list`, `actions.workflow_run.get`, `check_runs.create`, `check_runs.update` |
 | Self-hosted runners | `actions.runners.registration_token`, `actions.runners.remove_token`, `actions.runners.generate_jitconfig`, `actions.runners.list`, `actions.runners.get`, `actions.runners.delete`, `actions.runners.downloads`, `actions.runners.labels.list`, `actions.runners.labels.add`, `actions.runners.labels.replace`, `actions.runners.labels.remove`, `actions.runner_groups.list`, `actions.runner_groups.create`, `actions.runner_groups.get`, `actions.runner_groups.update`, `actions.runner_groups.delete` |
 | User OAuth | `oauth.user.device_code`, `oauth.user.device_poll`, `oauth.user.exchange_code`, `oauth.user.refresh` |
 | Issues | `github.issue.create`, `github.issue.comment`, `issues.create_comment`, `issues.create`, `issues.create_with_template`, `issues.update`, `issues.add_labels` |
-| Repository and release data | `github.release.latest`, `github.release.assets`, `github.branch.protection`, `repos.get_content`, `repos.get_text`, `repos.get_latest_release`, `repos.list_release_assets`, `repos.get_branch_protection`, `git.delete_ref` |
+| Repository and release data | `github.release.latest`, `github.release.assets`, `github.branch.protection`, `repos.get_content`, `repos.get_text`, `repos.create_or_update_file`, `repos.put_content`, `repos.delete_file`, `repos.get_latest_release`, `repos.list_release_assets`, `repos.get_branch_protection`, `git.create_commit`, `git.delete_ref` |
 | Merge queue | `github.merge_queue.entries`, `github.merge_queue.enqueue` |
 | Raw access | `api_call`, `graphql` |
 
@@ -222,6 +222,7 @@ Required GitHub App permissions depend on the method:
 | PR read helpers, diffs, files, and reviews | Pull requests read. |
 | PR merge, safe merge, auto-merge, and review comments | Pull requests write; protected branches may also require administrator or bypass permissions. |
 | Repository content and release helpers | Contents read. |
+| Repository content write helpers and `git.create_commit` | Contents write. Pass `github_author_choice` from `std/disclosure` to enforce `author_mode`. |
 | `git.delete_ref` | Contents write. |
 | Branch protection helpers | Administration read. |
 | Actions dispatch | Actions write. |
@@ -259,9 +260,16 @@ explicit `gh_token`, `GH_TOKEN`, `GITHUB_TOKEN`, or `gh auth token`.
   paths.
 - Generic retries do not replay `POST` or `PATCH` requests unless the caller
   supplies `idempotency_key` or opts into `retry_unsafe`.
+- Author-mode-aware commit and PR write helpers accept `github_author_choice`
+  from `std/disclosure`. Human commit mode sends the selected human
+  `commit_author` and appends actor-chain trailers. Bot mode requires GitHub
+  App installation auth and omits custom author/committer fields so GitHub
+  uses the App `[bot]` identity. Human PR creation requires user auth because
+  GitHub assigns PR authorship from the authenticated identity.
 - Outbound errors carry deterministic `category` values for typed callers:
   `auth`, `permission`, `rate_limit`, `branch_protection`, `merge_queue`,
-  `checks_pending`, `checks_failed`, `network`, and `schema_drift`.
+  `checks_pending`, `checks_failed`, `validation_failed`,
+  `restricted_commit_author`, `network`, and `schema_drift`.
 - The connector exposes a focused REST/GraphQL surface rather than vendoring a
   generated GitHub SDK.
 
