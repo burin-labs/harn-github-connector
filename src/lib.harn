@@ -40,6 +40,7 @@ let GITHUB_OUTBOUND_METHODS = [
   "pulls.list",
   "pulls.list_with_checks",
   "pulls.get",
+  "pulls.create",
   "pulls.merge",
   "pulls.merge_safe",
   "pulls.create_review_comment",
@@ -48,9 +49,13 @@ let GITHUB_OUTBOUND_METHODS = [
   "pulls.list_reviews",
   "repos.get_content",
   "repos.get_text",
+  "repos.create_or_update_file",
+  "repos.put_content",
+  "repos.delete_file",
   "repos.get_latest_release",
   "repos.list_release_assets",
   "repos.get_branch_protection",
+  "git.create_commit",
   "git.delete_ref",
   "actions.workflow_dispatch",
   "actions.workflow_runs.list",
@@ -398,6 +403,9 @@ pub fn call(method, args = {}) {
       cfg,
     )
   }
+  if method == "pulls.create" {
+    return __pulls_create(args, cfg)
+  }
   if method == "pulls.merge" {
     let merged = __github_json(
       "PUT",
@@ -485,6 +493,12 @@ pub fn call(method, args = {}) {
   if method == "repos.get_text" {
     return __repos_get_text(args, cfg)
   }
+  if method == "repos.create_or_update_file" || method == "repos.put_content" {
+    return __repos_create_or_update_file(args, cfg)
+  }
+  if method == "repos.delete_file" {
+    return __repos_delete_file(args, cfg)
+  }
   if method == "repos.get_latest_release" {
     return __repos_get_latest_release(args, cfg)
   }
@@ -502,6 +516,9 @@ pub fn call(method, args = {}) {
       nil,
       cfg,
     )
+  }
+  if method == "git.create_commit" {
+    return __git_create_commit(args, cfg)
   }
   if method == "git.delete_ref" {
     return __github_json(
@@ -3192,11 +3209,11 @@ fn __event_kind(raw, headers) {
 
 fn __signing_secret(raw) {
   let state = __state()
-  let ctx_secret = state?.ctx?.signing_secret ?? state?.ctx?.secrets?.signing_secret
+  let ctx_secret = state.ctx?.signing_secret ?? state.ctx?.secrets?.signing_secret
   if ctx_secret != nil && trim(to_string(ctx_secret)) != "" {
     return to_string(ctx_secret)
   }
-  let bindings = state?.bindings ?? {}
+  let bindings = state.bindings ?? {}
   let binding_id = raw?.metadata?.binding_id ?? raw?.binding_id
   if binding_id != nil {
     let binding = bindings.get(binding_id)
@@ -3220,7 +3237,7 @@ fn __signing_secret_id(raw) {
   if direct_id != nil {
     return direct_id
   }
-  let bindings = __state()?.bindings ?? {}
+  let bindings = __state().bindings ?? {}
   let binding_id = metadata?.binding_id ?? raw?.binding_id
   if binding_id != nil {
     let binding = bindings.get(binding_id)
@@ -4777,15 +4794,22 @@ fn __outbound_config(args) {
   if is_err(base_check) {
     return base_check
   }
-  let direct_token = args?.installation_token ?? args?.token ?? args?.bindings?.installation_token
+  let installation_token = args?.installation_token ?? args?.bindings?.installation_token
     ?? args?.secrets?.installation_token
     ?? harness.env.get("GITHUB_INSTALLATION_TOKEN")
+  let direct_token = installation_token ?? args?.token
   if direct_token != nil && trim(to_string(direct_token)) != "" {
+    let auth_identity = if installation_token != nil && trim(to_string(installation_token)) != "" {
+      "github_app"
+    } else {
+      "unknown"
+    }
     return Ok(
       {
         api_base_url: to_string(api_base_url),
         installation_token: to_string(direct_token),
         token_mode: "direct",
+        auth_identity: auth_identity,
         installation_id: args?.installation_id,
         now: args?.now,
         timeout_ms: args?.timeout_ms,
@@ -4809,6 +4833,7 @@ fn __outbound_config(args) {
           api_base_url: to_string(api_base_url),
           installation_token: to_string(unwrap(gh_token)),
           token_mode: "gh_auth",
+          auth_identity: "user",
           installation_id: nil,
           now: args?.now,
           timeout_ms: args?.timeout_ms,
@@ -4843,7 +4868,10 @@ fn __outbound_config(args) {
   if is_err(token_result) {
     return token_result
   }
-  return Ok(resolved + {installation_token: to_string(token_result), token_mode: "jwt"})
+  return Ok(
+    resolved
+      + {installation_token: to_string(token_result), token_mode: "jwt", auth_identity: "github_app"},
+  )
 }
 
 fn __http_policy_config(args) {
@@ -4892,6 +4920,9 @@ fn __config_keys() {
     "allow_gh_auth_fallback",
     "gh_auth_fallback",
     "gh_token",
+    "github_author_choice",
+    "author_choice",
+    "author_mode",
   ]
 }
 
@@ -5124,10 +5155,271 @@ fn __api_call(args, cfg) {
     return __err("schema_drift", "api_call requires path")
   }
   let method = uppercase(to_string(args?.method ?? "GET"))
-  let body = args?.body
+  let body_result = __api_call_author_mode_body(args, method, path, cfg)
+  if is_err(body_result) {
+    return body_result
+  }
+  let body = unwrap(body_result)
   let accept = args?.accept ?? "application/vnd.github+json"
   let parse_json = args?.parse_json ?? true
   return __github_request(method, __github_api_url(cfg.api_base_url, path), body, cfg, accept, parse_json)
+}
+
+fn __choice(args) -> dict {
+  let choice = args?.github_author_choice ?? args?.author_choice
+  if type_of(choice) == "dict" {
+    return choice
+  }
+  return {}
+}
+
+fn __author_mode(args) {
+  let choice = __choice(args)
+  let raw = args?.author_mode ?? choice?.author_mode
+  if raw == nil || trim(to_string(raw)) == "" {
+    return nil
+  }
+  let mode = lowercase(trim(to_string(raw)))
+  if mode == "human" || mode == "bot" {
+    return mode
+  }
+  return __err("author_mode", "author_mode must be `human` or `bot`, got `" + mode + "`")
+}
+
+fn __git_signature(value, label) {
+  if value == nil {
+    return nil
+  }
+  let name = trim(to_string(value?.name ?? ""))
+  let email = trim(to_string(value?.email ?? ""))
+  if name == "" || email == "" {
+    return __err("author_mode", label + " must include name and email")
+  }
+  return Ok({name: name, email: email})
+}
+
+fn __human_commit_author(args) {
+  let choice = __choice(args)
+  let value = args?.author ?? choice?.commit_author ?? choice?.author
+  if value == nil {
+    return __err(
+      "author_mode",
+      "author_mode=human requires a commit author from args.author or github_author_choice.commit_author",
+    )
+  }
+  return __git_signature(value, "author_mode=human commit author")
+}
+
+fn __custom_committer(args) {
+  if args?.committer == nil {
+    return Ok(nil)
+  }
+  return __git_signature(args.committer, "custom committer")
+}
+
+fn __author_mode_requires_identity(mode, cfg, required, surface) {
+  if mode == nil {
+    return Ok(true)
+  }
+  if cfg?.auth_identity == required {
+    return Ok(true)
+  }
+  return __err(
+    "author_mode",
+    surface + " with author_mode=" + mode + " requires `" + required + "` authentication, got `"
+      + to_string(cfg?.auth_identity ?? cfg?.token_mode ?? "unknown")
+      + "`",
+  )
+}
+
+fn __line_present(text, line) -> bool {
+  let want = trim(line)
+  if want == "" {
+    return true
+  }
+  for existing in split(text ?? "", "\n") {
+    if trim(existing) == want {
+      return true
+    }
+  }
+  return false
+}
+
+fn __append_author_trailers(text, trailers) -> string {
+  var out = trim(to_string(text ?? ""))
+  var lines = []
+  for line in split(trim(to_string(trailers ?? "")), "\n") {
+    let cleaned = trim(line)
+    if cleaned != "" && !__line_present(out, cleaned) && !contains(lines, cleaned) {
+      lines = lines + [cleaned]
+    }
+  }
+  if len(lines) == 0 {
+    return out
+  }
+  if out == "" {
+    return join(lines, "\n")
+  }
+  return out + "\n\n" + join(lines, "\n")
+}
+
+fn __author_trailers(args) -> string {
+  return to_string(args?.trailers ?? __choice(args)?.trailers ?? "")
+}
+
+fn __commit_write_body(args, strip_keys, cfg) {
+  let mode_result = __author_mode(args)
+  if is_err(mode_result) {
+    return mode_result
+  }
+  let mode = mode_result
+  var body = __body_without(args, __config_keys() + strip_keys + ["trailers"])
+  if mode == nil {
+    return Ok(body)
+  }
+  if mode == "bot" {
+    let identity = __author_mode_requires_identity(mode, cfg, "github_app", "GitHub commit write")
+    if is_err(identity) {
+      return identity
+    }
+    if args?.author != nil || args?.committer != nil {
+      return __err(
+        "author_mode",
+        "author_mode=bot must omit custom author and committer fields so GitHub uses the App [bot] identity",
+      )
+    }
+    body.remove("author")
+    body.remove("committer")
+    return Ok(body)
+  }
+  let author = __human_commit_author(args)
+  if is_err(author) {
+    return author
+  }
+  let committer = __custom_committer(args)
+  if is_err(committer) {
+    return committer
+  }
+  body["author"] = unwrap(author)
+  let committer_value = unwrap(committer)
+  if committer_value != nil {
+    body["committer"] = committer_value
+  }
+  if body?.message != nil {
+    body["message"] = __append_author_trailers(body.message, __author_trailers(args))
+  }
+  return Ok(body)
+}
+
+fn __pull_create_body(args, cfg) {
+  let mode_result = __author_mode(args)
+  if is_err(mode_result) {
+    return mode_result
+  }
+  let mode = mode_result
+  var body = __body_without(args, __config_keys() + ["owner", "repo", "trailers"])
+  if mode == nil {
+    return Ok(body)
+  }
+  if mode == "bot" {
+    let identity = __author_mode_requires_identity(mode, cfg, "github_app", "GitHub pull request create")
+    if is_err(identity) {
+      return identity
+    }
+    return Ok(body)
+  }
+  let identity = __author_mode_requires_identity(mode, cfg, "user", "GitHub pull request create")
+  if is_err(identity) {
+    return identity
+  }
+  body["body"] = __append_author_trailers(body?.body ?? "", __author_trailers(args))
+  return Ok(body)
+}
+
+fn __api_call_author_mode_body(args, method, path, cfg) {
+  let mode_result = __author_mode(args)
+  if is_err(mode_result) {
+    return mode_result
+  }
+  if mode_result == nil {
+    return Ok(args?.body)
+  }
+  let normalized_path = lowercase(to_string(path ?? ""))
+  let raw_body = if type_of(args?.body) == "dict" {
+    args.body
+  } else {
+    {}
+  }
+  if method == "POST" && ends_with(normalized_path, "/pulls") {
+    return __pull_create_body(args + raw_body, cfg)
+  }
+  if (method == "PUT" || method == "DELETE") && contains(normalized_path, "/contents/") {
+    return __commit_write_body(args + raw_body, ["path", "method", "body"], cfg)
+  }
+  if method == "POST" && ends_with(normalized_path, "/git/commits") {
+    return __commit_write_body(args + raw_body, ["path", "method", "body"], cfg)
+  }
+  return Ok(args?.body)
+}
+
+fn __pulls_create(args, cfg) {
+  let body = __pull_create_body(args, cfg)
+  if is_err(body) {
+    return body
+  }
+  return __github_json(
+    "POST",
+    __github_api_url(cfg.api_base_url, "/repos/" + args.owner + "/" + args.repo + "/pulls"),
+    unwrap(body),
+    cfg,
+  )
+}
+
+fn __repos_create_or_update_file(args, cfg) {
+  let body = __commit_write_body(args, ["owner", "repo", "path"], cfg)
+  if is_err(body) {
+    return body
+  }
+  return __github_json(
+    "PUT",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/contents/"
+        + __trim_leading_slash(args.path ?? ""),
+    ),
+    unwrap(body),
+    cfg,
+  )
+}
+
+fn __repos_delete_file(args, cfg) {
+  let body = __commit_write_body(args, ["owner", "repo", "path"], cfg)
+  if is_err(body) {
+    return body
+  }
+  return __github_json(
+    "DELETE",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/contents/"
+        + __trim_leading_slash(args.path ?? ""),
+    ),
+    unwrap(body),
+    cfg,
+  )
+}
+
+fn __git_create_commit(args, cfg) {
+  let body = __commit_write_body(args, ["owner", "repo"], cfg)
+  if is_err(body) {
+    return body
+  }
+  return __github_json(
+    "POST",
+    __github_api_url(cfg.api_base_url, "/repos/" + args.owner + "/" + args.repo + "/git/commits"),
+    unwrap(body),
+    cfg,
+  )
 }
 
 fn __release_asset_names(assets) {
@@ -5322,6 +5614,18 @@ fn __github_request_error(response) {
   }
   if response?.status == nil || to_int(response.status) == 0 {
     return __err("network", response?.error?.message ?? to_string(response?.error ?? response))
+  }
+  if response.status == 422 {
+    let message = __github_error_message(response)
+    let lowered = lowercase(message)
+    if contains(lowered, "author") || contains(lowered, "committer")
+      || (contains(lowered, "commit") && contains(lowered, "email")) {
+      return __err(
+        "restricted_commit_author",
+        "GitHub rejected the configured commit author/committer: " + message,
+      )
+    }
+    return __err("validation_failed", "GitHub API validation failed: " + message)
   }
   let code = __github_error_code(response)
   return __err(code, "github API request failed with status " + to_string(response.status))
