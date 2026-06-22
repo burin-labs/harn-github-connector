@@ -194,7 +194,7 @@ pub fn activate(bindings = []) {
   var by_id = {}
   var seen_paths = {}
   for binding in bindings ?? [] {
-    let binding_id = binding?.binding_id ?? binding?.id ?? "binding-" + to_string(len(by_id.keys()))
+    let binding_id = (binding?.binding_id ?? binding?.id ?? "binding-") + to_string(len(by_id.keys()))
     let path = binding?.path ?? binding?.match?.path
     if path != nil && path != "" {
       if seen_paths.get(path) {
@@ -625,7 +625,7 @@ pub fn actions_workflow_runs(owner, repo, options = nil) {
  */
 pub fn actions_runner_registration_token(scope, options = nil) {
   let opts = options ?? {}
-  return call("actions.runners.registration_token", opts + scope ?? {})
+  return call("actions.runners.registration_token", opts + (scope ?? {}))
 }
 
 /**
@@ -644,14 +644,14 @@ pub fn actions_runner_generate_jitconfig(
   let opts = options ?? {}
   return call(
     "actions.runners.generate_jitconfig",
-    opts + scope ?? {} + {name: name, runner_group_id: runner_group_id, labels: labels},
+    opts + (scope ?? {}) + {name: name, runner_group_id: runner_group_id, labels: labels},
   )
 }
 
 /** List self-hosted runners for a repo (`{owner, repo}`) or org (`{org}`) scope. */
 pub fn actions_runners_list(scope, options = nil) {
   let opts = options ?? {}
-  return call("actions.runners.list", opts + scope ?? {})
+  return call("actions.runners.list", opts + (scope ?? {}))
 }
 
 /** Dispatch one raw GitHub REST call. Prefer typed helpers when one exists. */
@@ -1068,7 +1068,7 @@ fn __checks_probe_step(owner, repo, head_sha, auth, attempt) {
 
 fn __finalize_checks_payload(owner, repo, payload, attempts, state, opts, auth) {
   let envelope = __checks_envelope_from_payload(true, state, payload, attempts, false)
-  if state == "failing" && opts?.include_logs ?? false {
+  if state == "failing" && (opts?.include_logs ?? false) {
     return envelope + {logs: __failing_check_logs(owner, repo, envelope.failing_checks, opts, auth)}
   }
   return envelope
@@ -2523,7 +2523,7 @@ fn __oauth_user_dispatch(method, args) {
     if args?.scope != nil {
       body["scope"] = to_string(args.scope)
     }
-    return __oauth_post(args?.device_code_url ?? base + "/login/device/code", body, args)
+    return __oauth_post((args?.device_code_url ?? base) + "/login/device/code", body, args)
   }
   if method == "oauth.user.device_poll" {
     let device_code = args?.device_code
@@ -2531,7 +2531,7 @@ fn __oauth_user_dispatch(method, args) {
       return __err("schema_drift", "oauth.user.device_poll requires `device_code`")
     }
     return __oauth_post(
-      args?.access_token_url ?? base + "/login/oauth/access_token",
+      (args?.access_token_url ?? base) + "/login/oauth/access_token",
       {
         client_id: to_string(client_id),
         device_code: to_string(device_code),
@@ -2552,7 +2552,7 @@ fn __oauth_user_dispatch(method, args) {
     if args?.redirect_uri != nil {
       body["redirect_uri"] = to_string(args.redirect_uri)
     }
-    return __oauth_post(args?.access_token_url ?? base + "/login/oauth/access_token", body, args)
+    return __oauth_post((args?.access_token_url ?? base) + "/login/oauth/access_token", body, args)
   }
   if method == "oauth.user.refresh" {
     let refresh_token = args?.refresh_token
@@ -2567,7 +2567,7 @@ fn __oauth_user_dispatch(method, args) {
     if args?.client_secret != nil {
       body["client_secret"] = to_string(args.client_secret)
     }
-    return __oauth_post(args?.access_token_url ?? base + "/login/oauth/access_token", body, args)
+    return __oauth_post((args?.access_token_url ?? base) + "/login/oauth/access_token", body, args)
   }
   return __err("method_not_found", "unsupported oauth method `" + method + "`")
 }
@@ -4958,7 +4958,7 @@ fn __gh_auth_token(args) {
 }
 
 fn __body_without(args, keys) {
-  let body = args ?? {} + {}
+  let body = (args ?? {}) + {}
   for key in keys {
     body.remove(key)
   }
