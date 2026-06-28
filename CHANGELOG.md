@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Fix `activate` corrupting caller-supplied binding ids: a misplaced paren
+  appended the binding index to every id (e.g. `primary` -> `primary0`), so a
+  webhook carrying `metadata.binding_id` could not resolve its binding-scoped
+  signing secret and was rejected with `missing_secret`. Ids are now preserved
+  verbatim and the index suffix only applies to the generated `binding-N`
+  fallback.
+- Fix `actions.runners.generate_jitconfig` silently POSTing a placeholder
+  `{error: "missing_name"}` body when `name` was omitted; it now returns a
+  `schema_drift` error before issuing any request.
+- Route `pulls.merge_safe` branch-protection lookups through the shared
+  `__github_branch_protection_raw` helper instead of re-implementing the
+  request and 404 handling, keeping protection semantics in one place.
 - Add author-mode-aware write paths for `pulls.create`,
   `repos.create_or_update_file`/`repos.put_content`, `repos.delete_file`, and
   `git.create_commit`. `author_mode=human` applies the supplied
