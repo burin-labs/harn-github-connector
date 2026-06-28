@@ -194,7 +194,7 @@ pub fn activate(bindings = []) {
   var by_id = {}
   var seen_paths = {}
   for binding in bindings ?? [] {
-    let binding_id = (binding?.binding_id ?? binding?.id ?? "binding-") + to_string(len(by_id.keys()))
+    let binding_id = binding?.binding_id ?? binding?.id ?? ("binding-" + to_string(len(by_id.keys())))
     let path = binding?.path ?? binding?.match?.path
     if path != nil && path != "" {
       if seen_paths.get(path) {
@@ -1959,20 +1959,16 @@ fn __pulls_merge_safe(args, cfg) {
     return pull
   }
   let base_branch = pull?.base?.ref ?? args?.base_branch
-  let protection = __github_json(
-    "GET",
-    __github_api_url(
-      cfg.api_base_url,
-      "/repos/" + args.owner + "/" + args.repo + "/branches/" + url_encode(to_string(base_branch))
-        + "/protection",
-    ),
-    nil,
+  let protection_result = __github_branch_protection_raw(
+    {owner: to_string(args.owner), name: to_string(args.repo)},
+    base_branch,
     cfg,
   )
-  let protected = !is_err(protection)
-  if is_err(protection) && !contains(to_string(unwrap_err(protection)?.message ?? ""), "status 404") {
-    return protection
+  if is_err(protection_result) {
+    return protection_result
   }
+  let protection = unwrap(protection_result)
+  let protected = protection != nil
   if protected && !(args?.admin_override ?? false) {
     return __err(
       "protected_branch_requires_admin_override",
@@ -1995,11 +1991,7 @@ fn __pulls_merge_safe(args, cfg) {
   var result = {
     pull_request: pull,
     protected: protected,
-    branch_protection: if protected {
-      protection
-    } else {
-      nil
-    },
+    branch_protection: protection,
     merge: __merge_annotation(merged, args),
   }
   if args?.delete_branch ?? false {
@@ -2279,6 +2271,9 @@ fn __actions_runners_dispatch(method, args, cfg) {
     return __github_json("POST", __github_api_url(cfg.api_base_url, base + "/remove-token"), nil, cfg)
   }
   if method == "actions.runners.generate_jitconfig" {
+    if args?.name == nil || trim(to_string(args.name)) == "" {
+      return __err("schema_drift", "actions.runners.generate_jitconfig requires `name`")
+    }
     return __github_json(
       "POST",
       __github_api_url(cfg.api_base_url, base + "/generate-jitconfig"),
@@ -2328,11 +2323,7 @@ fn __actions_runners_dispatch(method, args, cfg) {
 }
 
 fn __runner_jitconfig_body(args) {
-  let name = args?.name
-  if name == nil || trim(to_string(name)) == "" {
-    return {error: "missing_name"}
-  }
-  var body = {name: to_string(name), runner_group_id: args?.runner_group_id ?? 1, labels: args?.labels ?? []}
+  var body = {name: to_string(args?.name), runner_group_id: args?.runner_group_id ?? 1, labels: args?.labels ?? []}
   if args?.work_folder != nil {
     body["work_folder"] = args.work_folder
   }

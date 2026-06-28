@@ -130,6 +130,11 @@ pipeline default() {
   let bad = call("actions.runners.list", auth)
   assert(is_err(bad), "missing scope rejected")
   assert_eq(unwrap_err(bad).category, "schema_drift", "missing scope category")
+  // JIT config without a runner name is rejected before any HTTP request,
+  // rather than POSTing a placeholder `{error: "missing_name"}` body.
+  let bad_jit = call("actions.runners.generate_jitconfig", auth + {org: "octo-org"})
+  assert(is_err(bad_jit), "jitconfig without name rejected")
+  assert_eq(unwrap_err(bad_jit).category, "schema_drift", "jitconfig missing name category")
   let calls = http_mock_calls()
   assert_eq(calls[0].method, "POST", "registration token method")
   assert_eq(json_parse(calls[2].body).name, "jit-1", "jitconfig body name")
