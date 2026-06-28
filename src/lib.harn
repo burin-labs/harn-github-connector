@@ -194,7 +194,8 @@ pub fn activate(bindings = []) {
   var by_id = {}
   var seen_paths = {}
   for binding in bindings ?? [] {
-    let binding_id = binding?.binding_id ?? binding?.id ?? ("binding-" + to_string(len(by_id.keys())))
+    let fallback_id = "binding-" + to_string(len(by_id.keys()))
+    let binding_id = binding?.binding_id ?? binding?.id ?? fallback_id
     let path = binding?.path ?? binding?.match?.path
     if path != nil && path != "" {
       if seen_paths.get(path) {
