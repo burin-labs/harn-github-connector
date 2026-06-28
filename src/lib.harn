@@ -2324,7 +2324,11 @@ fn __actions_runners_dispatch(method, args, cfg) {
 }
 
 fn __runner_jitconfig_body(args) {
-  var body = {name: to_string(args?.name), runner_group_id: args?.runner_group_id ?? 1, labels: args?.labels ?? []}
+  var body = {
+    name: to_string(args?.name),
+    runner_group_id: args?.runner_group_id ?? 1,
+    labels: args?.labels ?? [],
+  }
   if args?.work_folder != nil {
     body["work_folder"] = args.work_folder
   }
