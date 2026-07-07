@@ -3,15 +3,15 @@ import { call } from "../src/lib"
 pipeline default() {
   egress_policy({allow: ["github-api.test"], default: "deny"})
   http_mock_clear()
-  let base_url = "https://github-api.test"
-  let app_auth = {api_base_url: base_url, installation_token: "github-installation-token"}
-  let user_auth = {api_base_url: base_url, allow_gh_auth_fallback: true, gh_token: "user-token"}
-  let human_choice = {
+  const base_url = "https://github-api.test"
+  const app_auth = {api_base_url: base_url, installation_token: "github-installation-token"}
+  const user_auth = {api_base_url: base_url, allow_gh_auth_fallback: true, gh_token: "user-token"}
+  const human_choice = {
     author_mode: "human",
     commit_author: {name: "Kenneth Sinder", email: "kenneth@example.com"},
     trailers: "Co-Authored-By: Merge Captain <merge-captain@bots.example>",
   }
-  let bot_choice = {author_mode: "bot", trailers: human_choice.trailers}
+  const bot_choice = {author_mode: "bot", trailers: human_choice.trailers}
   http_mock(
     "PUT",
     base_url + "/repos/octo-org/octo-repo/contents/README.md",
@@ -54,7 +54,7 @@ pipeline default() {
       github_author_choice: bot_choice,
     },
   )
-  let human_pr_with_app = call(
+  const human_pr_with_app = call(
     "pulls.create",
     app_auth
       + {
@@ -68,7 +68,7 @@ pipeline default() {
   )
   assert(is_err(human_pr_with_app), "human PR creation must reject app auth")
   assert_eq(unwrap_err(human_pr_with_app).code, "author_mode", "human PR app-auth error code")
-  let bot_pr_with_user = call(
+  const bot_pr_with_user = call(
     "pulls.create",
     user_auth
       + {
@@ -113,7 +113,7 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "7"},
     },
   )
-  let restricted = call(
+  const restricted = call(
     "repos.create_or_update_file",
     app_auth
       + {
@@ -131,22 +131,22 @@ pipeline default() {
     contains(unwrap_err(restricted).message, "Commit author email is not allowed"),
     "restricted author error message",
   )
-  let calls = http_mock_calls()
-  let human_body = json_parse(calls[0].body)
+  const calls = http_mock_calls()
+  const human_body = json_parse(calls[0].body)
   assert_eq(human_body.author.name, "Kenneth Sinder", "human content write author name")
   assert_eq(human_body.author.email, "kenneth@example.com", "human content write author email")
   assert(
     contains(human_body.message, "Co-Authored-By: Merge Captain <merge-captain@bots.example>"),
     "human content write appends trailers",
   )
-  let bot_body = json_parse(calls[1].body)
+  const bot_body = json_parse(calls[1].body)
   assert(bot_body.author == nil, "bot content write omits custom author")
   assert(bot_body.committer == nil, "bot content write omits custom committer")
   assert(
     !contains(bot_body.message, "Co-Authored-By"),
     "bot content write leaves commit identity to GitHub App",
   )
-  let pr_body = json_parse(calls[2].body)
+  const pr_body = json_parse(calls[2].body)
   assert(
     contains(pr_body.body, "Co-Authored-By: Merge Captain <merge-captain@bots.example>"),
     "human PR body appends trailers",

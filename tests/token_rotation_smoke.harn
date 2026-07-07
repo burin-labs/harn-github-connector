@@ -18,12 +18,12 @@ pipeline default() {
   egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
   reset_token_cache()
   http_mock_clear()
-  let config = base_config(harness, 1700000000)
-  let jwt = mint_app_jwt(config)
-  let parts = split(jwt, ".")
+  const config = base_config(harness, 1700000000)
+  const jwt = mint_app_jwt(config)
+  const parts = split(jwt, ".")
   assert_eq(len(parts), 3)
-  let header = json_parse(base64url_decode(parts[0]))
-  let claims = json_parse(base64url_decode(parts[1]))
+  const header = json_parse(base64url_decode(parts[0]))
+  const claims = json_parse(base64url_decode(parts[1]))
   assert_eq(header.alg, "RS256")
   assert_eq(header.typ, "JWT")
   assert_eq(claims.iss, "12345")
@@ -49,7 +49,7 @@ pipeline default() {
   )
   assert_eq(installation_token(config), "install-token-a")
   assert_eq(installation_token(config), "install-token-a")
-  var calls = http_mock_calls()
+  let calls = http_mock_calls()
   assert_eq(len(calls), 1)
   assert_eq(calls[0].headers.authorization, "[redacted]")
   assert_eq(calls[0].headers.accept, "application/vnd.github+json")
@@ -67,11 +67,11 @@ pipeline default() {
       body: "{\"token\":\"install-token-locked\",\"expires_at\":\"2023-11-14T23:13:20Z\"}",
     },
   )
-  let parallel_tokens = parallel 2 { _ ->
+  const parallel_tokens = parallel 2 { _ ->
     installation_token(config)
   }
   assert_eq(parallel_tokens, ["install-token-locked", "install-token-locked"])
-  let cold_start_calls = len(http_mock_calls())
+  const cold_start_calls = len(http_mock_calls())
   assert(cold_start_calls >= 1 && cold_start_calls <= 2, "cold parallel refreshes are bounded")
   http_mock_clear()
   reset_token_cache()
@@ -80,7 +80,7 @@ pipeline default() {
     "https://api.github.test/app/installations/77/access_tokens",
     {status: 500, body: "{\"message\":\"boom\"}"},
   )
-  let failed = installation_token(config)
+  const failed = installation_token(config)
   assert(is_err(failed), "token endpoint errors should propagate")
   assert_eq(unwrap_err(failed).code, "installation_token_failed", "token endpoint error code")
   harness.stdio.println("token_rotation_smoke_ok")

@@ -7,9 +7,9 @@ import {
   github_wait_for_workflow_run,
 } from "../src/lib"
 
-let BASE = "https://github-api.test"
+const BASE = "https://github-api.test"
 
-let TOKEN = "github-installation-token"
+const TOKEN = "github-installation-token"
 
 fn auth() {
   return {api_base_url: BASE, installation_token: TOKEN, poll_interval_ms: 0, max_attempts: 5}
@@ -65,7 +65,7 @@ pipeline test_dispatch_with_run_id_completes_success(task) {
       ],
     },
   )
-  let result = github_dispatch_workflow_and_wait(
+  const result = github_dispatch_workflow_and_wait(
     "octo-org",
     "octo-repo",
     "bump-harn.yml",
@@ -128,7 +128,7 @@ pipeline test_dispatch_locates_run_when_no_id_returned(task) {
       headers: {"x-ratelimit-remaining": "17"},
     },
   )
-  let result = github_dispatch_workflow_and_wait(
+  const result = github_dispatch_workflow_and_wait(
     "octo-org",
     "octo-repo",
     "release.yml",
@@ -161,7 +161,7 @@ pipeline test_dispatch_times_out_when_run_never_appears(task) {
       headers: {"x-ratelimit-remaining": "9"},
     },
   )
-  let result = github_dispatch_workflow_and_wait(
+  const result = github_dispatch_workflow_and_wait(
     "octo-org",
     "octo-repo",
     "never.yml",
@@ -188,7 +188,7 @@ pipeline test_dispatch_returns_dispatch_failed(task) {
       headers: {"x-ratelimit-remaining": "5"},
     },
   )
-  let result = github_dispatch_workflow_and_wait("octo-org", "octo-repo", "broken.yml", "main", nil, auth())
+  const result = github_dispatch_workflow_and_wait("octo-org", "octo-repo", "broken.yml", "main", nil, auth())
   assert_eq(result.ok, false, "ok=false")
   assert_eq(result.status, "dispatch_failed", "status=dispatch_failed")
   assert(result.error != nil, "error captured")
@@ -207,7 +207,7 @@ pipeline test_wait_for_workflow_run_times_out_with_known_run(task) {
       headers: {"x-ratelimit-remaining": "5"},
     },
   )
-  let result = github_wait_for_workflow_run("octo-org", "octo-repo", 777, auth() + {max_attempts: 2})
+  const result = github_wait_for_workflow_run("octo-org", "octo-repo", 777, auth() + {max_attempts: 2})
   assert_eq(result.status, "timed_out", "status=timed_out")
   assert_eq(result.timed_out, true, "timed_out flag set")
   assert_eq(result.run_id, 777, "still surfaces last known run")
@@ -235,7 +235,7 @@ pipeline test_ensure_auto_merge_already_enabled(task) {
       headers: {"x-ratelimit-remaining": "20"},
     },
   )
-  let result = github_ensure_auto_merge("octo-org", "octo-repo", 9, auth() + {method: "squash"})
+  const result = github_ensure_auto_merge("octo-org", "octo-repo", 9, auth() + {method: "squash"})
   assert_eq(result.ok, true, "ok=true")
   assert_eq(result.state, "already_enabled", "already_enabled state")
   assert_eq(result.already_enabled, true, "already_enabled flag")
@@ -288,7 +288,7 @@ pipeline test_ensure_auto_merge_enables_via_graphql(task) {
       headers: {"x-ratelimit-remaining": "18"},
     },
   )
-  let result = github_ensure_auto_merge("octo-org", "octo-repo", 12, auth())
+  const result = github_ensure_auto_merge("octo-org", "octo-repo", 12, auth())
   assert_eq(result.ok, true, "ok=true")
   assert_eq(result.state, "enabled", "state=enabled")
   assert_eq(result.already_enabled, false, "not already enabled")
@@ -305,7 +305,7 @@ pipeline test_ensure_auto_merge_failed(task) {
     BASE + "/repos/octo-org/octo-repo/pulls/77",
     {status: 404, body: "{\"message\":\"Not Found\"}", headers: {"x-ratelimit-remaining": "10"}},
   )
-  let result = github_ensure_auto_merge("octo-org", "octo-repo", 77, auth())
+  const result = github_ensure_auto_merge("octo-org", "octo-repo", 77, auth())
   assert_eq(result.ok, false, "ok=false")
   assert_eq(result.state, "failed", "state=failed")
   assert(result.error != nil, "error attached")
@@ -340,7 +340,7 @@ pipeline test_wait_for_pr_checks_green(task) {
       headers: {"x-ratelimit-remaining": "20"},
     },
   )
-  let result = github_wait_for_pr_checks("octo-org", "octo-repo", "green-sha", auth())
+  const result = github_wait_for_pr_checks("octo-org", "octo-repo", "green-sha", auth())
   assert_eq(result.ok, true, "ok=true")
   assert_eq(result.state, "green", "state=green")
   assert_eq(len(result.failing_checks), 0, "no failing checks")
@@ -385,13 +385,13 @@ pipeline test_wait_for_pr_checks_pending_then_failing_with_logs(task) {
       ],
     },
   )
-  let huge_log = "step output line\n".repeat(600)
+  const huge_log = "step output line\n".repeat(600)
   http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/actions/runs/4242/logs",
     {status: 200, body: huge_log, headers: {"x-ratelimit-remaining": "14"}},
   )
-  let result = github_wait_for_pr_checks(
+  const result = github_wait_for_pr_checks(
     "octo-org",
     "octo-repo",
     "sha-1",
@@ -418,7 +418,7 @@ pipeline test_wait_for_pr_checks_times_out(task) {
       headers: {"x-ratelimit-remaining": "10"},
     },
   )
-  let result = github_wait_for_pr_checks("octo-org", "octo-repo", "pending-forever", auth() + {max_attempts: 2})
+  const result = github_wait_for_pr_checks("octo-org", "octo-repo", "pending-forever", auth() + {max_attempts: 2})
   assert_eq(result.state, "timed_out", "state=timed_out")
   assert_eq(result.ok, false, "ok=false on timeout")
   assert_eq(result.timed_out, true, "timed_out flag")
@@ -450,7 +450,7 @@ pipeline test_wait_for_pr_checks_log_summary_handles_non_actions_url(task) {
       headers: {"x-ratelimit-remaining": "9"},
     },
   )
-  let result = github_wait_for_pr_checks("octo-org", "octo-repo", "sha-2", auth() + {include_logs: true})
+  const result = github_wait_for_pr_checks("octo-org", "octo-repo", "sha-2", auth() + {include_logs: true})
   assert_eq(result.state, "failing", "state=failing")
   assert_eq(result.logs[0].run_id, nil, "no actions run id from non-actions URL")
   assert_eq(result.logs[0].error, "no_actions_run_url", "error tag for non-actions URL")
@@ -465,7 +465,7 @@ pipeline test_find_open_pr_no_match(task) {
     BASE + "/repos/octo-org/octo-repo/pulls?state=open&head=octo-org%3Abump%2Fharn-runtime",
     {status: 200, body: "[]", headers: {"x-ratelimit-remaining": "8"}},
   )
-  let result = github_find_open_pr(
+  const result = github_find_open_pr(
     "octo-org",
     "octo-repo",
     auth() + {head_ref: "bump/harn-runtime", head_owner: "octo-org"},
@@ -508,7 +508,7 @@ pipeline test_find_open_pr_matches_by_head_and_filters_labels(task) {
       headers: {"x-ratelimit-remaining": "7"},
     },
   )
-  let matched = github_find_open_pr(
+  const matched = github_find_open_pr(
     "octo-org",
     "octo-repo",
     auth() + {head_ref: "feature/foo", base_ref: "main", labels: ["automation"]},
@@ -540,14 +540,14 @@ pipeline test_close_pr_with_comment(task) {
       headers: {"x-ratelimit-remaining": "5"},
     },
   )
-  let closed = github_close_pr("octo-org", "octo-repo", 55, "stale, closing", auth())
+  const closed = github_close_pr("octo-org", "octo-repo", 55, "stale, closing", auth())
   assert_eq(closed.ok, true, "close ok")
   assert_eq(closed.state, "closed", "state=closed")
   assert_eq(closed.comment_posted, true, "comment posted")
-  let calls = http_mock_calls()
+  const calls = http_mock_calls()
   assert_eq(calls[0].method, "POST", "comment posted before close")
   assert_eq(calls[1].method, "PATCH", "issue update follows")
-  let update_body = json_parse(calls[1].body)
+  const update_body = json_parse(calls[1].body)
   assert_eq(update_body.state, "closed", "update body sets closed state")
   http_mock_clear()
 }
@@ -564,10 +564,10 @@ pipeline test_close_pr_without_comment(task) {
       headers: {"x-ratelimit-remaining": "5"},
     },
   )
-  let closed = github_close_pr("octo-org", "octo-repo", 77, nil, auth())
+  const closed = github_close_pr("octo-org", "octo-repo", 77, nil, auth())
   assert_eq(closed.ok, true, "close ok without comment")
   assert_eq(closed.comment_posted, false, "no comment posted")
-  let calls = http_mock_calls()
+  const calls = http_mock_calls()
   assert_eq(len(calls), 1, "only the update call ran")
   assert_eq(calls[0].method, "PATCH", "single PATCH issued")
   http_mock_clear()

@@ -3,15 +3,15 @@ import { call } from "../src/lib"
 pipeline default() {
   egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
   http_mock_clear()
-  let base = "https://github-api.test"
-  let auth = {api_base_url: base, installation_token: "github-installation-token"}
-  let retry_opts = {max_attempts: 2, base_ms: 0, cap_ms: 1}
+  const base = "https://github-api.test"
+  const auth = {api_base_url: base, installation_token: "github-installation-token"}
+  const retry_opts = {max_attempts: 2, base_ms: 0, cap_ms: 1}
   http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/pulls/1",
     {status: 200, body: "not json", headers: {"x-ratelimit-remaining": "10"}},
   )
-  let invalid = call("pulls.get", auth + {owner: "octo-org", repo: "octo-repo", pull_number: 1})
+  const invalid = call("pulls.get", auth + {owner: "octo-org", repo: "octo-repo", pull_number: 1})
   assert(is_err(invalid), "invalid JSON responses should be categorized")
   assert_eq(unwrap_err(invalid).code, "invalid_response", "invalid JSON code stays stable")
   assert_eq(unwrap_err(invalid).category, "schema_drift", "invalid JSON category stays stable")
@@ -26,7 +26,7 @@ pipeline default() {
       ],
     },
   )
-  let retried_get = call("pulls.get", auth + {owner: "octo-org", repo: "octo-repo", pull_number: 2, retry: retry_opts})
+  const retried_get = call("pulls.get", auth + {owner: "octo-org", repo: "octo-repo", pull_number: 2, retry: retry_opts})
   assert_eq(retried_get.number, 2, "safe GET retries use shared HTTP policy")
   assert_eq(len(http_mock_calls()), 2, "safe GET retry call count")
   http_mock_clear()
@@ -40,7 +40,7 @@ pipeline default() {
       ],
     },
   )
-  let unsafe_write = call(
+  const unsafe_write = call(
     "issues.create_comment",
     auth + {owner: "octo-org", repo: "octo-repo", issue_number: 8, body: "hello", retry: retry_opts},
   )
@@ -57,7 +57,7 @@ pipeline default() {
       ],
     },
   )
-  let idempotent_write = call(
+  const idempotent_write = call(
     "issues.create_comment",
     auth
       + {
@@ -69,7 +69,7 @@ pipeline default() {
       idempotency_key: "comment-9",
     },
   )
-  let idempotent_calls = http_mock_calls({include_sensitive: true})
+  const idempotent_calls = http_mock_calls({include_sensitive: true})
   assert_eq(idempotent_write.id, 901, "idempotency key permits configured unsafe write retry")
   assert_eq(len(idempotent_calls), 2, "idempotent write retry call count")
   assert_eq(idempotent_calls[0].headers["idempotency-key"], "comment-9", "idempotency header")

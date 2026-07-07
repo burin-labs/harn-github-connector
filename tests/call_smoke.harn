@@ -3,14 +3,14 @@ import { call } from "../src/lib"
 pipeline default() {
   egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
   http_mock_clear()
-  let base = "https://github-api.test"
-  let token = "github-installation-token"
+  const base = "https://github-api.test"
+  const token = "github-installation-token"
   http_mock(
     "POST",
     base + "/repos/octo-org/octo-repo/issues/7/comments",
     {status: 201, body: "{\"id\":101,\"body\":\"hello\"}", headers: {"x-ratelimit-remaining": "10"}},
   )
-  let comment = call(
+  const comment = call(
     "issues.create_comment",
     {
       api_base_url: base,
@@ -31,7 +31,7 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "9"},
     },
   )
-  let graph = call(
+  const graph = call(
     "graphql",
     {api_base_url: base, installation_token: token, query: "query { viewer { login } }", variables: {}},
   )
@@ -81,7 +81,7 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "7"},
     },
   )
-  let pull = call(
+  const pull = call(
     "pulls.get",
     {
       api_base_url: base,
@@ -101,7 +101,7 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "7"},
     },
   )
-  let diff = call(
+  const diff = call(
     "pulls.get_diff",
     {
       api_base_url: base,
@@ -164,7 +164,7 @@ pipeline default() {
       ],
     },
   )
-  let files = call(
+  const files = call(
     "pulls.list_files",
     {
       api_base_url: base,
@@ -185,7 +185,7 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "0", "x-ratelimit-reset": "1700000001"},
     },
   )
-  let capped = call(
+  const capped = call(
     "repos.get_content",
     {
       api_base_url: base,
@@ -199,7 +199,7 @@ pipeline default() {
   )
   assert(is_err(capped), "rate-limit cap rejects")
   assert_eq(unwrap_err(capped).code, "rate_limited", "rate-limit cap code")
-  let calls = http_mock_calls()
+  const calls = http_mock_calls()
   assert_eq(calls[0].method, "POST", "create comment method")
   assert_eq(calls[0].headers.authorization, "[redacted]", "authorization header is redacted")
   assert_eq(calls[0].headers["x-github-api-version"], "2022-11-28", "api version header")
@@ -224,7 +224,7 @@ pipeline default() {
     "list files URL",
   )
   assert_eq(calls[9].url, calls[8].url, "rate-limit retry URL")
-  let unsupported = call("issues.lock", {api_base_url: base, installation_token: token})
+  const unsupported = call("issues.lock", {api_base_url: base, installation_token: token})
   assert(is_err(unsupported), "unsupported method rejected")
   assert_eq(unwrap_err(unsupported).code, "method_not_found", "unsupported method code")
   http_mock_clear()

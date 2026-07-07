@@ -30,18 +30,18 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "42"},
     },
   )
-  let minted = call("github.app.installation_token", app_config(harness, 1700000000))
+  const minted = call("github.app.installation_token", app_config(harness, 1700000000))
   assert_eq(minted.token, "token-a", "app-credential mode returns the minted token")
   assert_eq(minted.token_mode, "jwt", "app-credential mode reports jwt token_mode")
   assert_eq(minted.installation_id, 77, "app-credential mode echoes the installation id")
   // Exactly one mint exchange happened (no spurious extra API calls).
-  let calls = http_mock_calls()
+  const calls = http_mock_calls()
   assert_eq(len(calls), 1, "only the token exchange was performed")
   assert_eq(calls[0].headers.authorization, "[redacted]", "JWT bearer is redacted in call log")
   // Direct-token mode: a pre-supplied installation token passes straight
   // through with no network call.
   http_mock_clear()
-  let direct = call(
+  const direct = call(
     "github.app.installation_token",
     {api_base_url: "https://api.github.test", installation_token: "direct-xyz", installation_id: 77},
   )
