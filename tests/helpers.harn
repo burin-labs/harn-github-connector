@@ -39,9 +39,9 @@ pub fn assert_github_interface() {
   assert_eq(provider_id(), "github", "provider id")
   assert_eq(kinds()[0], "webhook", "webhook kind")
   assert_eq(payload_schema().harn_schema_name, "GitHubEventPayload", "payload schema name")
-  let initialized = init({signing_secret: "test-secret"})
+  const initialized = init({signing_secret: "test-secret"})
   assert(initialized.initialized, "init stores state")
-  let activated = activate([{id: "primary", path: "/github/events", secrets: {signing_secret: "test-secret"}}])
+  const activated = activate([{id: "primary", path: "/github/events", secrets: {signing_secret: "test-secret"}}])
   assert_eq(activated.bindings, 1, "activate counts bindings")
 }
 

@@ -14,9 +14,9 @@ import {
 pipeline test_repo_automation_methods(task) {
   egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
   http_mock_clear()
-  let base = "https://github-api.test"
-  let token = "github-installation-token"
-  let auth = {api_base_url: base, installation_token: token}
+  const base = "https://github-api.test"
+  const token = "github-installation-token"
+  const auth = {api_base_url: base, installation_token: token}
   http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/contents/.harn-version?ref=main",
@@ -35,7 +35,7 @@ pipeline test_repo_automation_methods(task) {
       headers: {"x-ratelimit-remaining": "10"},
     },
   )
-  let text = repos_get_text("octo-org", "octo-repo", ".harn-version", "main", auth)
+  const text = repos_get_text("octo-org", "octo-repo", ".harn-version", "main", auth)
   assert_eq(trim(text.text), "v0.7.59", "repos.get_text decodes base64 content")
   http_mock(
     "POST",
@@ -52,7 +52,7 @@ pipeline test_repo_automation_methods(task) {
       headers: {"x-ratelimit-remaining": "9"},
     },
   )
-  let dispatch = actions_workflow_dispatch(
+  const dispatch = actions_workflow_dispatch(
     "octo-org",
     "octo-repo",
     "bump-harn.yml",
@@ -83,7 +83,7 @@ pipeline test_repo_automation_methods(task) {
       headers: {"x-ratelimit-remaining": "8"},
     },
   )
-  let runs = actions_workflow_runs(
+  const runs = actions_workflow_runs(
     "octo-org",
     "octo-repo",
     auth + {workflow_id: "bump-harn.yml", event: "workflow_dispatch", per_page: 5},
@@ -98,7 +98,7 @@ pipeline test_repo_automation_methods(task) {
       headers: {"x-ratelimit-remaining": "7"},
     },
   )
-  let run = call("actions.workflow_run.get", auth + {owner: "octo-org", repo: "octo-repo", run_id: 123})
+  const run = call("actions.workflow_run.get", auth + {owner: "octo-org", repo: "octo-repo", run_id: 123})
   assert_eq(run.conclusion, "success", "workflow run get response")
   http_mock(
     "GET",
@@ -123,7 +123,7 @@ pipeline test_repo_automation_methods(task) {
       headers: {"x-ratelimit-remaining": "7"},
     },
   )
-  let raw_release = repos_get_latest_release("octo-org", "octo-repo", auth)
+  const raw_release = repos_get_latest_release("octo-org", "octo-repo", auth)
   assert_eq(raw_release.tag_name, "v0.8.4", "raw latest release tag")
   http_mock(
     "GET",
@@ -143,7 +143,7 @@ pipeline test_repo_automation_methods(task) {
       headers: {"x-ratelimit-remaining": "7"},
     },
   )
-  let latest = github_latest_release("octo-org", "octo-repo", auth)
+  const latest = github_latest_release("octo-org", "octo-repo", auth)
   assert_eq(latest.ok, true, "latest release envelope ok")
   assert_eq(latest.tag_name, "v0.8.4", "latest release envelope tag")
   assert_eq(
@@ -160,7 +160,7 @@ pipeline test_repo_automation_methods(task) {
       headers: {"x-ratelimit-remaining": "7"},
     },
   )
-  let raw_assets = repos_list_release_assets("octo-org", "octo-repo", 501, auth + {per_page: 2})
+  const raw_assets = repos_list_release_assets("octo-org", "octo-repo", 501, auth + {per_page: 2})
   assert_eq(raw_assets[0].name, "harn-aarch64-apple-darwin.tar.gz", "raw release assets")
   http_mock(
     "GET",
@@ -171,7 +171,7 @@ pipeline test_repo_automation_methods(task) {
       headers: {"x-ratelimit-remaining": "7"},
     },
   )
-  let assets = github_release_assets("octo-org", "octo-repo", 501, auth + {per_page: 2})
+  const assets = github_release_assets("octo-org", "octo-repo", 501, auth + {per_page: 2})
   assert_eq(assets.ok, true, "release assets envelope ok")
   assert_eq(assets.asset_names[0], "harn-x86_64-unknown-linux-gnu.tar.gz", "release assets names")
   http_mock(
@@ -179,7 +179,7 @@ pipeline test_repo_automation_methods(task) {
     base + "/repos/octo-org/octo-repo/releases/latest",
     {status: 200, body: json_stringify({tag_name: "v0.8.4"}), headers: {"x-ratelimit-remaining": "7"}},
   )
-  let raw = api_call("/repos/octo-org/octo-repo/releases/latest", "GET", nil, auth)
+  const raw = api_call("/repos/octo-org/octo-repo/releases/latest", "GET", nil, auth)
   assert_eq(raw.tag_name, "v0.8.4", "raw api_call works as compatibility escape hatch")
   http_mock(
     "GET",
@@ -220,13 +220,13 @@ pipeline test_repo_automation_methods(task) {
       headers: {"x-ratelimit-remaining": "5"},
     },
   )
-  let auto_merge = pulls_enable_auto_merge("octo-org", "octo-repo", 7, auth + {method: "squash"})
+  const auto_merge = pulls_enable_auto_merge("octo-org", "octo-repo", 7, auth + {method: "squash"})
   assert_eq(auto_merge.state, "enabled", "auto-merge enabled state")
   assert_eq(auto_merge.requested_method, "SQUASH", "auto-merge merge method normalized")
-  let calls = http_mock_calls()
-  let dispatch_body = json_parse(calls[1].body)
-  let mutation_body = json_parse(calls[10].body)
-  let mutation_vars = mutation_body.get("variables")
+  const calls = http_mock_calls()
+  const dispatch_body = json_parse(calls[1].body)
+  const mutation_body = json_parse(calls[10].body)
+  const mutation_vars = mutation_body.get("variables")
   assert_eq(dispatch_body.get("return_run_details"), true, "workflow dispatch asks for run details")
   assert_eq(mutation_vars.get("pullRequestId"), "PR_node_7", "auto-merge mutation uses PR node id")
   assert_eq(

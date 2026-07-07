@@ -8,9 +8,9 @@ import {
 pipeline default() {
   egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
   http_mock_clear()
-  let base = "https://github-api.test"
-  let token = "github-installation-token"
-  let auth = {api_base_url: base, installation_token: token}
+  const base = "https://github-api.test"
+  const token = "github-installation-token"
+  const auth = {api_base_url: base, installation_token: token}
   http_mock(
     "POST",
     base + "/graphql",
@@ -59,7 +59,7 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "10"},
     },
   )
-  let pulls = pulls_list_with_checks("octo-org", "octo-repo", "open", 2, auth)
+  const pulls = pulls_list_with_checks("octo-org", "octo-repo", "open", 2, auth)
   assert_eq(pulls[0].number, 101, "list_with_checks PR number")
   assert_eq(pulls[0].mergeStateStatus, "CLEAN", "list_with_checks merge state")
   assert_eq(pulls[0].statusCheckRollup[0].conclusion, "SUCCESS", "check run conclusion")
@@ -73,7 +73,7 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "9"},
     },
   )
-  let rest_pulls = call("pulls.list", auth + {owner: "octo-org", repo: "octo-repo", state: "open", limit: 3})
+  const rest_pulls = call("pulls.list", auth + {owner: "octo-org", repo: "octo-repo", state: "open", limit: 3})
   assert_eq(len(rest_pulls), 2, "pulls.list response")
   http_mock(
     "POST",
@@ -84,7 +84,7 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "8"},
     },
   )
-  let issue = issues_create_with_template(
+  const issue = issues_create_with_template(
     "octo-org",
     "octo-repo",
     {
@@ -118,7 +118,7 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "6"},
     },
   )
-  let labels = call(
+  const labels = call(
     "issues.add_labels",
     auth + {owner: "octo-org", repo: "octo-repo", issue_number: 77, labels: ["merge-captain"]},
   )
@@ -132,7 +132,7 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "5"},
     },
   )
-  let protection = call(
+  const protection = call(
     "repos.get_branch_protection",
     auth + {owner: "octo-org", repo: "octo-repo", branch: "develop"},
   )
@@ -146,7 +146,7 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "4"},
     },
   )
-  let files = call(
+  const files = call(
     "pulls.list_files",
     auth + {owner: "octo-org", repo: "octo-repo", pull_number: 101, per_page: 2},
   )
@@ -160,7 +160,7 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "3"},
     },
   )
-  let reviews = call(
+  const reviews = call(
     "pulls.list_reviews",
     auth + {owner: "octo-org", repo: "octo-repo", pull_number: 101, per_page: 2},
   )
@@ -207,7 +207,7 @@ pipeline default() {
     base + "/repos/octo-org/octo-repo/git/refs/heads/feature/mergeable",
     {status: 204, body: "", headers: {"x-ratelimit-remaining": "2"}},
   )
-  let merged = pulls_merge_safe(
+  const merged = pulls_merge_safe(
     "octo-org",
     "octo-repo",
     101,
@@ -222,12 +222,12 @@ pipeline default() {
     base + "/repos/octo-org/octo-repo/pulls/102/merge",
     {status: 200, body: json_stringify({merged: true}), headers: {"x-ratelimit-remaining": "2"}},
   )
-  let direct_merge = call(
+  const direct_merge = call(
     "pulls.merge",
     auth + {owner: "octo-org", repo: "octo-repo", pull_number: 102, merge_method: "merge"},
   )
   assert(direct_merge.merged, "pulls.merge response")
-  let calls = http_mock_calls()
+  const calls = http_mock_calls()
   assert_eq(calls[0].url, base + "/graphql", "list_with_checks uses GraphQL")
   assert_eq(json_parse(calls[0].body).variables.limit, 2, "GraphQL limit variable")
   assert(

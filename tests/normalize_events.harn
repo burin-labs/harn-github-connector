@@ -2,10 +2,10 @@ import { init, shutdown } from "../src/lib"
 import { fixture_raw, github_normalize } from "./helpers"
 
 pipeline default() {
-  let secret = "test-signing-secret"
+  const secret = "test-signing-secret"
   shutdown()
   init({signing_secret: secret})
-  let cases = [
+  const cases = [
     ["pull_request_opened", "pull_request", "pull_request.opened"],
     ["push", "push", "push"],
     ["issues_opened", "issues", "issues.opened"],
@@ -27,7 +27,7 @@ pipeline default() {
     ["release_published", "release", "release.published"],
   ]
   for [name, event, event_type] in cases {
-    let normalized = github_normalize(fixture_raw(harness, name, secret, event))
+    const normalized = github_normalize(fixture_raw(harness, name, secret, event))
     assert_eq(normalized.type, "event", name + " envelope type")
     assert_eq(normalized.event.kind, event, name + " event kind")
     assert_eq(normalized.event.payload.provider, "github", name + " provider")
@@ -49,7 +49,7 @@ pipeline default() {
       assert_eq(normalized.event.payload.repo.full_name, "octo-org/octo-repo", name + " normalized repo")
     }
   }
-  let unsupported = github_normalize(fixture_raw(harness, "issues_opened", secret, "member"))
+  const unsupported = github_normalize(fixture_raw(harness, "issues_opened", secret, "member"))
   assert_eq(unsupported.type, "reject", "unsupported events reject in v0")
   shutdown()
 }

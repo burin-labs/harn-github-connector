@@ -42,7 +42,7 @@ pipeline default() {
     "https://api.github.test/repos/octo/demo/issues/123/comments",
     {status: 201, body: "{\"id\":99,\"body\":\"hello\"}", headers: {"x-ratelimit-remaining": "42"}},
   )
-  let comment = call(
+  const comment = call(
     "issues.create_comment",
     config(harness, 1700000000) + {owner: "octo", repo: "demo", issue_number: 123, body: "hello"},
   )
@@ -56,7 +56,7 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "42"},
     },
   )
-  let issue = call(
+  const issue = call(
     "issues.update",
     config(harness, 1700000000) + {owner: "octo", repo: "demo", issue_number: 123, state: "closed"},
   )
@@ -66,7 +66,7 @@ pipeline default() {
     "https://api.github.test/repos/octo/demo/pulls/5/comments",
     {status: 201, body: "{\"id\":55}", headers: {"x-ratelimit-remaining": "42"}},
   )
-  let review_comment = call(
+  const review_comment = call(
     "pulls.create_review_comment",
     config(harness, 1700000000)
       + {
@@ -90,7 +90,7 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "42"},
     },
   )
-  let pull = call("pulls.get", config(harness, 1700000000) + {owner: "octo", repo: "demo", pull_number: 5})
+  const pull = call("pulls.get", config(harness, 1700000000) + {owner: "octo", repo: "demo", pull_number: 5})
   assert_eq(pull.head.sha, "abc", "pulls.get head sha")
   http_mock(
     "GET",
@@ -101,14 +101,14 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "42"},
     },
   )
-  let diff = call("pulls.get_diff", config(harness, 1700000000) + {owner: "octo", repo: "demo", pull_number: 5})
+  const diff = call("pulls.get_diff", config(harness, 1700000000) + {owner: "octo", repo: "demo", pull_number: 5})
   assert(diff.contains("src/lib.harn"), "pulls.get_diff raw diff")
   http_mock(
     "GET",
     "https://api.github.test/repos/octo/demo/contents/README.md?ref=main",
     {status: 200, body: "{\"name\":\"README.md\"}", headers: {"x-ratelimit-remaining": "42"}},
   )
-  let content = call(
+  const content = call(
     "repos.get_content",
     config(harness, 1700000000) + {owner: "octo", repo: "demo", path: "README.md", ref: "main"},
   )
@@ -118,7 +118,7 @@ pipeline default() {
     "https://api.github.test/repos/octo/demo/check-runs",
     {status: 201, body: "{\"id\":10,\"name\":\"ci\"}", headers: {"x-ratelimit-remaining": "42"}},
   )
-  let check_run = call(
+  const check_run = call(
     "check_runs.create",
     config(harness, 1700000000)
       + {owner: "octo", repo: "demo", name: "ci", head_sha: "abc", status: "queued"},
@@ -133,7 +133,7 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "42"},
     },
   )
-  let updated_check = call(
+  const updated_check = call(
     "check_runs.update",
     config(harness, 1700000000)
       + {owner: "octo", repo: "demo", check_run_id: 10, status: "completed"},
@@ -148,7 +148,7 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "41"},
     },
   )
-  let graph = call("graphql", config(harness, 1700000000) + {query: "query { viewer { login } }", variables: {}})
+  const graph = call("graphql", config(harness, 1700000000) + {query: "query { viewer { login } }", variables: {}})
   assert_eq(graph.data.viewer.login, "octo", "graphql viewer login")
   http_mock(
     "GET",
@@ -160,14 +160,14 @@ pipeline default() {
       ],
     },
   )
-  let files = call(
+  const files = call(
     "pulls.list_files",
     config(harness, 1700000000) + {owner: "octo", repo: "demo", pull_number: 5},
   )
   assert_eq(files[0].filename, "src/lib.harn", "list files filename after 401 retry")
-  let calls = http_mock_calls()
+  const calls = http_mock_calls()
   assert_eq(calls[1].headers.authorization, "[redacted]", "first request bearer token is redacted")
-  let comment_body = json_parse(calls[1].body)
+  const comment_body = json_parse(calls[1].body)
   assert_eq(comment_body.body, "hello", "issues.create_comment body")
   reset_token_cache()
   http_mock_clear()

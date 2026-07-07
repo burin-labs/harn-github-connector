@@ -3,9 +3,9 @@ import { call } from "../src/lib"
 pipeline default() {
   egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
   http_mock_clear()
-  let base = "https://github-api.test"
-  let token = "github-installation-token"
-  let auth = {api_base_url: base, installation_token: token}
+  const base = "https://github-api.test"
+  const token = "github-installation-token"
+  const auth = {api_base_url: base, installation_token: token}
   http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/pulls?state=open&per_page=4",
@@ -62,7 +62,7 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "20"},
     },
   )
-  let prs = call("github.pr.list", auth + {repo: "octo-org/octo-repo", filters: {state: "open", per_page: 4}})
+  const prs = call("github.pr.list", auth + {repo: "octo-org/octo-repo", filters: {state: "open", per_page: 4}})
   assert_eq(prs[0].state, "green", "clean PR classified green")
   assert_eq(prs[1].state, "dirty", "dirty PR classified dirty")
   assert_eq(prs[2].state, "queued", "queued PR classified queued")
@@ -125,7 +125,7 @@ pipeline default() {
       ],
     },
   )
-  let viewed = call("github.pr.view", auth + {repo: "octo-org/octo-repo", number: 101})
+  const viewed = call("github.pr.view", auth + {repo: "octo-org/octo-repo", number: 101})
   assert_eq(viewed.base.sha, "base-sha", "view includes base sha")
   assert_eq(viewed.head.sha, "green-sha", "view includes head sha")
   assert(viewed.branch_protection.protected, "view includes branch protection")
@@ -155,7 +155,7 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "17"},
     },
   )
-  let green_checks = call("github.pr.checks", auth + {repo: "octo-org/octo-repo", head_sha: "green-sha"})
+  const green_checks = call("github.pr.checks", auth + {repo: "octo-org/octo-repo", head_sha: "green-sha"})
   assert_eq(green_checks.state, "green", "green checks classify green")
   assert_eq(green_checks.rollup.conclusion, "success", "green rollup conclusion")
   assert_eq(green_checks.checks[0].duration_seconds, 180, "check duration")
@@ -205,7 +205,7 @@ pipeline default() {
     base + "/repos/octo-org/octo-repo/actions/runs/6001/logs",
     {status: 200, body: "step 1 / 1 succeeded\n", headers: {"x-ratelimit-remaining": "13"}},
   )
-  let logs = call("github.actions.logs", auth + {repo: "octo-org/octo-repo", check_id: 8001})
+  const logs = call("github.actions.logs", auth + {repo: "octo-org/octo-repo", check_id: 8001})
   assert_eq(logs.run_id, 6001, "check id resolves action run id")
   assert(logs.content.contains("succeeded"), "logs content returned")
   http_mock(
@@ -222,7 +222,7 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "12"},
     },
   )
-  let queue = call("github.merge_queue.entries", auth + {repo: "octo-org/octo-repo", branch: "main"})
+  const queue = call("github.merge_queue.entries", auth + {repo: "octo-org/octo-repo", branch: "main"})
   assert_eq(queue.entries[0].pull_number, 103, "merge queue entry PR number")
   http_mock(
     "POST",
@@ -233,7 +233,7 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "11"},
     },
   )
-  let enqueued = call(
+  const enqueued = call(
     "github.merge_queue.enqueue",
     auth
       + {repo: "octo-org/octo-repo", branch: "main", pr_number: 105, method: "squash", priority: "normal"},
@@ -290,7 +290,7 @@ pipeline default() {
   assert(
     call("github.branch.protection", auth + {repo: "octo-org/octo-repo", branch: "develop"}).protected,
   )
-  let blocked = call("github.pr.merge", auth + {repo: "octo-org/octo-repo", number: 101, method: "squash"})
+  const blocked = call("github.pr.merge", auth + {repo: "octo-org/octo-repo", number: 101, method: "squash"})
   assert(is_err(blocked), "protected branch blocks github.pr.merge without override")
   assert_eq(unwrap_err(blocked).category, "branch_protection", "branch protection error category")
   http_mock(
@@ -308,7 +308,7 @@ pipeline default() {
       filters: {state: "open"},
     },
   )
-  let calls = http_mock_calls()
+  const calls = http_mock_calls()
   assert_eq(calls[len(calls) - 1].headers.authorization, "[redacted]", "gh fallback token redacted")
   http_mock_clear()
 }
