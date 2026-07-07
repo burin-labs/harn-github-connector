@@ -124,7 +124,12 @@ jobs:
 
       - name: Format with target Harn
         if: steps.update.outputs.changed == 'true'
-        run: harn fmt src tests
+        run: |
+          set -euo pipefail
+          mapfile -t harn_files < <(git ls-files '*.harn')
+          if [ ${#harn_files[@]} -gt 0 ]; then
+            harn fmt "${harn_files[@]}"
+          fi
 
       - name: Stop when repo is already current
         if: steps.published.outputs.ready == 'true' && steps.update.outputs.changed != 'true'
