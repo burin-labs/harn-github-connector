@@ -25,8 +25,15 @@ pipeline default() {
   )
   assert_eq(pr.event.payload.base_ref, "main", "normalized pr base ref")
   assert_eq(pr.event.payload.topic, "github.pull_request.opened", "normalized pr topic")
+  assert_eq(pr.event.payload.reaction_topics, [], "clean pull request has no reaction topics")
   assert_eq(pr.event.payload.sender.login, "octocat", "pull request actor")
   assert(pr.event.dedupe_key != "" && pr.event.dedupe_key != nil, "pr dedupe key populated")
+  const dirty_pr = github_normalize(fixture_raw(harness, "pull_request_dirty", secret, "pull_request"))
+  assert_eq(
+    dirty_pr.event.payload.reaction_topics,
+    ["github.reaction.merge_conflict"],
+    "dirty pull request emits merge-conflict reaction topic",
+  )
   const push = github_normalize(fixture_raw(harness, "push", secret, "push"))
   assert_eq(push.event.kind, "push", "push event kind")
   assert_eq(push.event.payload.after, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "push after")
@@ -46,6 +53,7 @@ pipeline default() {
   const workflow = github_normalize(fixture_raw(harness, "workflow_run_completed", secret, "workflow_run"))
   assert_eq(workflow.event.kind, "workflow_run", "workflow run event kind")
   assert_eq(workflow.event.payload.workflow_run.conclusion, "success", "workflow conclusion")
+  assert_eq(workflow.event.payload.reaction_topics, [], "green workflow has no reaction topics")
   assert_eq(workflow.event.payload.run_id, 6001, "workflow run id")
   assert_eq(workflow.event.payload.check_suite_id, 8101, "workflow suite id")
   assert_eq(workflow.event.payload.pull_request_number, 42, "workflow pr number")
@@ -55,9 +63,16 @@ pipeline default() {
   const check = github_normalize(fixture_raw(harness, "check_run_completed", secret, "check_run"))
   assert_eq(check.event.kind, "check_run", "check run event kind")
   assert_eq(check.event.payload.check_run.conclusion, "success", "check conclusion")
+  assert_eq(check.event.payload.reaction_topics, [], "green check has no reaction topics")
   assert_eq(check.event.payload.check_id, 8001, "check run id")
   assert_eq(check.event.payload.check_suite_id, 8101, "check suite id")
   assert_eq(check.event.payload.pull_request_number, 42, "check pr number")
+  const failed_check = github_normalize(fixture_raw(harness, "check_run_failure", secret, "check_run"))
+  assert_eq(
+    failed_check.event.payload.reaction_topics,
+    ["github.reaction.ci_failure"],
+    "failed check emits CI-failure reaction topic",
+  )
   const suite = github_normalize(fixture_raw(harness, "check_suite_requested", secret, "check_suite"))
   assert_eq(suite.event.kind, "check_suite", "check suite event kind")
   assert_eq(suite.event.payload.check_suite_id, 8101, "check suite normalized id")
@@ -66,6 +81,13 @@ pipeline default() {
   assert_eq(status.event.kind, "status", "status event kind")
   assert_eq(status.event.payload.status_id, 9101, "status normalized id")
   assert_eq(status.event.payload.head_sha, "cccccccccccccccccccccccccccccccccccccccc", "status sha")
+  assert_eq(status.event.payload.reaction_topics, [], "green status has no reaction topics")
+  const error_status = github_normalize(fixture_raw(harness, "status_error", secret, "status"))
+  assert_eq(
+    error_status.event.payload.reaction_topics,
+    ["github.reaction.ci_failure"],
+    "error status emits CI-failure reaction topic",
+  )
   const group = github_normalize(fixture_raw(harness, "merge_group_checks_requested", secret, "merge_group"))
   assert_eq(group.event.kind, "merge_group", "merge group event kind")
   assert_eq(group.event.payload.merge_group_id, 9201, "merge group id")

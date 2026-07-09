@@ -87,6 +87,7 @@ fields for Harn consumers:
 | `provider` | Always `github`. |
 | `event` | GitHub event kind, such as `pull_request` or `merge_group`. |
 | `topic` | `github.<event>` or `github.<event>.<action>`. |
+| `reaction_topics` | Semantic `github.reaction.*` topics derived from the payload. |
 | `action` | GitHub payload action when present. |
 | `delivery_id` | `X-GitHub-Delivery`; also used for the dedupe key. |
 | `installation_id` | GitHub App installation id when present. |
@@ -117,6 +118,13 @@ Merge Captain and release consumers should subscribe to these topics:
 | `github.installation.<action>` | `installation`, `account`, `installation_state`, `suspended`, `revoked`, `repositories` |
 | `github.installation_repositories.<action>` | `installation`, `account`, `installation_state`, `suspended`, `revoked`, `repository_selection`, `repositories_added`, `repositories_removed` |
 | `github.release.<action>` | `release`, `release_id`, `tag_name`, `name`, `draft`, `prerelease`, `target_commitish`, `published_at`, `assets` |
+
+Semantic reaction topics:
+
+| Topic | Emitted when |
+|---|---|
+| `github.reaction.ci_failure` | A `check_run`, `check_suite`, `workflow_run`, or legacy `status` payload concludes in a failure/error state. |
+| `github.reaction.merge_conflict` | A pull request payload reports `mergeable_state: "dirty"`. |
 
 ## Outbound calls
 
