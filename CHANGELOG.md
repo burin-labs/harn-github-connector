@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add semantic `reaction_topics` to normalized webhook payloads. Failed
+  check/workflow/status events now emit `github.reaction.ci_failure`, and dirty
+  pull requests emit `github.reaction.merge_conflict`, so hosted captains can
+  subscribe to stable reaction topics instead of re-deriving GitHub predicates.
 - Fix `activate` corrupting caller-supplied binding ids: a misplaced paren
   appended the binding index to every id (e.g. `primary` -> `primary0`), so a
   webhook carrying `metadata.binding_id` could not resolve its binding-scoped

@@ -104,6 +104,10 @@ const GITHUB_WEBHOOK_EVENTS = [
   "release",
 ]
 
+const GITHUB_CI_FAILURE_CONCLUSIONS = ["failure", "timed_out", "startup_failure", "action_required"]
+
+const GITHUB_CI_FAILURE_STATES = ["failure", "error"]
+
 const TOKEN_CACHE_KEY = "harn-github-connector.token_cache"
 
 const DEFAULT_TOKEN_REFRESH_SKEW_SECONDS = 300
@@ -140,6 +144,7 @@ pub fn payload_schema() {
         provider: {type: "string"},
         event: {type: "string"},
         topic: {type: "string"},
+        reaction_topics: {type: "array", items: {type: "string"}},
         action: {type: ["string", "null"]},
         delivery_id: {type: ["string", "null"]},
         installation_id: {type: ["integer", "null"]},
@@ -3359,6 +3364,7 @@ fn __normalize_github_payload(event_kind, raw, delivery_id, dedupe_key, occurred
     provider: GITHUB_PROVIDER_ID,
     event: event_kind,
     topic: __topic(event_kind, raw?.action),
+    reaction_topics: __reaction_topics(event_kind, raw),
     action: raw?.action,
     delivery_id: delivery_id,
     installation_id: raw?.installation?.id,
@@ -3612,6 +3618,36 @@ fn __normalize_github_payload(event_kind, raw, delivery_id, dedupe_key, occurred
     )
   }
   return __decorate_dashboard_payload(event_kind, common, dedupe_key, occurred_at)
+}
+
+fn __reaction_topics(event_kind, raw) {
+  if event_kind == "pull_request" && __pull_request_has_conflict(raw?.pull_request) {
+    return ["github.reaction.merge_conflict"]
+  }
+  if __ci_concluded_failed(event_kind, raw) {
+    return ["github.reaction.ci_failure"]
+  }
+  return []
+}
+
+fn __pull_request_has_conflict(pr) {
+  return lowercase(to_string(pr?.mergeable_state ?? "")) == "dirty"
+}
+
+fn __ci_concluded_failed(event_kind, raw) {
+  if event_kind == "status" {
+    return contains(GITHUB_CI_FAILURE_STATES, lowercase(to_string(raw?.state ?? "")))
+  }
+  if event_kind == "check_run" {
+    return contains(GITHUB_CI_FAILURE_CONCLUSIONS, lowercase(to_string(raw?.check_run?.conclusion ?? "")))
+  }
+  if event_kind == "check_suite" {
+    return contains(GITHUB_CI_FAILURE_CONCLUSIONS, lowercase(to_string(raw?.check_suite?.conclusion ?? "")))
+  }
+  if event_kind == "workflow_run" {
+    return contains(GITHUB_CI_FAILURE_CONCLUSIONS, lowercase(to_string(raw?.workflow_run?.conclusion ?? "")))
+  }
+  return false
 }
 
 const MENTION_HANDLE_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_/"
