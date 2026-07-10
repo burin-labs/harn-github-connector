@@ -1,0 +1,113 @@
+import { github_create_signed_commit } from "../src/lib"
+
+fn auth(base: string) -> dict {
+  return {api_base_url: base, installation_token: "github-app-installation-token"}
+}
+
+fn request() -> dict {
+  return {
+    owner: "burin-labs",
+    repo: "burin-code",
+    branch: "release/harn-v0.10.8",
+    expected_head_oid: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    headline: "Repin Harn to v0.10.8",
+    body: "Release Train Autopilot",
+    additions: [
+      {path: ".harn-version", contents_base64: base64_encode("v0.10.8\n")},
+      {path: "VERSION", contents_base64: base64_encode("0.10.8\n")},
+    ],
+    deletions: [{path: "changelog.d/old.changed.md"}],
+  }
+}
+
+pipeline test_create_signed_commit_uses_atomic_github_signed_mutation(task) {
+  egress_policy({allow: ["api.github.test"], default: "deny"})
+  http_mock_clear()
+  const base = "https://api.github.test"
+  http_mock(
+    "POST",
+    base + "/graphql",
+    {
+      status: 200,
+      body: json_stringify(
+        {
+          data: {
+            createCommitOnBranch: {
+              commit: {
+                oid: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                url: "https://github.com/burin-labs/burin-code/commit/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                signature: {isValid: true, state: "VALID", wasSignedByGitHub: true},
+              },
+              ref: {name: "release/harn-v0.10.8", target: {oid: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}},
+            },
+          },
+        },
+      ),
+    },
+  )
+  const receipt = github_create_signed_commit(request(), auth(base))
+  assert_eq(receipt.oid, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "commit oid")
+  assert_eq(receipt.signature_valid, true, "signature valid")
+  assert_eq(receipt.signed_by_github, true, "signed by GitHub")
+  assert_eq(receipt.signature_state, "VALID", "signature state")
+  const calls = http_mock_calls()
+  assert_eq(len(calls), 1, "one atomic GraphQL request")
+  const payload = json_parse(calls[0].body)
+  const input = payload.variables.input
+  assert_eq(input.branch.repositoryNameWithOwner, "burin-labs/burin-code", "repository")
+  assert_eq(input.branch.branchName, "release/harn-v0.10.8", "branch")
+  assert_eq(input.expectedHeadOid, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "expected head lease")
+  assert_eq(input.fileChanges.additions[0].path, ".harn-version", "addition path")
+  assert_eq(input.fileChanges.deletions[0].path, "changelog.d/old.changed.md", "deletion path")
+  assert_eq(input.author, nil, "no custom author")
+  assert_eq(input.committer, nil, "no custom committer")
+  assert_eq(input.signature, nil, "no custom signature")
+  assert(contains(payload.query, "createCommitOnBranch"), "signed commit mutation")
+  http_mock_clear()
+}
+
+pipeline test_create_signed_commit_fails_closed_on_unverified_signature(task) {
+  egress_policy({allow: ["api.github.test"], default: "deny"})
+  http_mock_clear()
+  const base = "https://api.github.test"
+  http_mock(
+    "POST",
+    base + "/graphql",
+    {
+      status: 200,
+      body: json_stringify(
+        {
+          data: {
+            createCommitOnBranch: {
+              commit: {
+                oid: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                url: "https://github.com/burin-labs/burin-code/commit/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                signature: {isValid: false, state: "UNSIGNED", wasSignedByGitHub: false},
+              },
+              ref: {name: "release/harn-v0.10.8"},
+            },
+          },
+        },
+      ),
+    },
+  )
+  const result = github_create_signed_commit(request(), auth(base))
+  assert(is_err(result), "unverified commit rejected")
+  assert_eq(unwrap_err(result).code, "signature_invalid", "signature error code")
+  http_mock_clear()
+}
+
+pipeline test_create_signed_commit_rejects_overlapping_changes_before_network(task) {
+  http_mock_clear()
+  const result = github_create_signed_commit(
+    request()
+      + {
+      additions: [{path: "VERSION", contents_base64: base64_encode("0.10.8\n")}],
+      deletions: [{path: "VERSION"}],
+    },
+    auth("https://api.github.test"),
+  )
+  assert(is_err(result), "overlapping change rejected")
+  assert_eq(unwrap_err(result).code, "schema_drift", "overlap error code")
+  assert_eq(len(http_mock_calls()), 0, "no network request")
+}

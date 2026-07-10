@@ -30,6 +30,7 @@ const GITHUB_OUTBOUND_METHODS = [
   "github.issue.create",
   "github.issue.comment",
   "github.branch.protection",
+  "github.branch.create_signed_commit",
   "github.app.installation_token",
   "api_call",
   "issues.create_comment",
@@ -107,6 +108,30 @@ const GITHUB_WEBHOOK_EVENTS = [
 const GITHUB_CI_FAILURE_CONCLUSIONS = ["failure", "timed_out", "startup_failure", "action_required"]
 
 const GITHUB_CI_FAILURE_STATES = ["failure", "error"]
+
+type GithubCommitFileAddition = {path: string, contents_base64: string}
+
+type GithubCommitFileDeletion = {path: string}
+
+type GithubSignedCommitRequest = {
+  owner: string,
+  repo: string,
+  branch: string,
+  expected_head_oid: string,
+  headline: string,
+  body?: string,
+  additions: list<GithubCommitFileAddition>,
+  deletions: list<GithubCommitFileDeletion>,
+}
+
+type GithubSignedCommitReceipt = {
+  oid: string,
+  url: string,
+  branch: string,
+  signature_valid: bool,
+  signed_by_github: bool,
+  signature_state: string,
+}
 
 const TOKEN_CACHE_KEY = "harn-github-connector.token_cache"
 
@@ -334,6 +359,9 @@ pub fn call(method, args = {}) {
   }
   if method == "github.branch.protection" {
     return __github_branch_protection(args, cfg)
+  }
+  if method == "github.branch.create_signed_commit" {
+    return __github_create_signed_commit(args, cfg)
   }
   if method == "api_call" {
     return __api_call(args, cfg)
@@ -599,6 +627,30 @@ pub fn pulls_merge_safe(owner, repo, number, options = nil) {
 pub fn pulls_enable_auto_merge(owner, repo, number, options = nil) {
   const opts = options ?? {}
   return call("github.pr.enable_auto_merge", opts + {owner: owner, repo: repo, pull_number: number})
+}
+
+/**
+ * Atomically append a GitHub-signed commit to a branch. GitHub App callers
+ * must not supply custom author, committer, or signature fields: GitHub then
+ * signs the commit itself and marks it verified. `expected_head_oid` is the
+ * publication lease and makes stale-head races fail closed.
+ */
+pub fn github_create_signed_commit(request: GithubSignedCommitRequest, options = nil) {
+  const opts = options ?? {}
+  return call(
+    "github.branch.create_signed_commit",
+    opts
+      + {
+      owner: request.owner,
+      repo: request.repo,
+      branch: request.branch,
+      expected_head_oid: request.expected_head_oid,
+      headline: request.headline,
+      body: request.body,
+      additions: request.additions,
+      deletions: request.deletions,
+    },
+  )
 }
 
 /** Dispatch a workflow_dispatch workflow and request run details when GitHub supports them. */
@@ -2656,6 +2708,151 @@ mutation HarnGithubConnectorEnableAutoMerge($pullRequestId: ID!, $mergeMethod: P
       autoMergeRequest {
         enabledAt
         mergeMethod
+      }
+    }
+  }
+}
+"""
+}
+
+fn __github_create_signed_commit(args, cfg) {
+  const owner = trim(to_string(args?.owner ?? ""))
+  const repo = trim(to_string(args?.repo ?? ""))
+  const branch = trim(to_string(args?.branch ?? ""))
+  const expected_head_oid = trim(to_string(args?.expected_head_oid ?? args?.expectedHeadOid ?? ""))
+  const headline = trim(to_string(args?.headline ?? ""))
+  if owner == "" || repo == "" || branch == "" || expected_head_oid == "" || headline == "" {
+    return __err(
+      "schema_drift",
+      "github.branch.create_signed_commit requires owner, repo, branch, expected_head_oid, and headline",
+    )
+  }
+  const additions_result = __github_signed_commit_additions(args?.additions ?? [])
+  if is_err(additions_result) {
+    return additions_result
+  }
+  const additions = unwrap(additions_result)
+  const deletions_result = __github_signed_commit_deletions(args?.deletions ?? [])
+  if is_err(deletions_result) {
+    return deletions_result
+  }
+  const deletions = unwrap(deletions_result)
+  if len(additions) == 0 && len(deletions) == 0 {
+    return __err("schema_drift", "github.branch.create_signed_commit requires at least one file change")
+  }
+  for addition in additions {
+    for deletion in deletions {
+      if addition.path == deletion.path {
+        return __err(
+          "schema_drift",
+          "github.branch.create_signed_commit cannot add and delete the same path `" + addition.path
+            + "`",
+        )
+      }
+    }
+  }
+  let message = {headline: headline}
+  const body = trim(to_string(args?.body ?? ""))
+  if body != "" {
+    message["body"] = body
+  }
+  const payload = __github_json(
+    "POST",
+    __github_api_url(cfg.api_base_url, "/graphql"),
+    {
+      query: __create_commit_on_branch_mutation(),
+      variables: {
+        input: {
+          branch: {repositoryNameWithOwner: owner + "/" + repo, branchName: branch},
+          expectedHeadOid: expected_head_oid,
+          message: message,
+          fileChanges: {additions: additions, deletions: deletions},
+        },
+      },
+    },
+    cfg,
+  )
+  if is_err(payload) {
+    return payload
+  }
+  if payload?.errors != nil && len(payload.errors) != 0 {
+    return __err("graphql", "github createCommitOnBranch returned errors: " + json_stringify(payload.errors))
+  }
+  const result = payload?.data?.createCommitOnBranch
+  const commit = result?.commit
+  const signature = commit?.signature
+  if commit?.oid == nil || trim(to_string(commit.oid)) == "" {
+    return __err("schema_drift", "github createCommitOnBranch returned no commit oid")
+  }
+  if signature?.isValid != true || signature?.wasSignedByGitHub != true || signature?.state != "VALID" {
+    return __err(
+      "signature_invalid",
+      "github createCommitOnBranch did not return a valid GitHub-generated signature",
+    )
+  }
+  const receipt: GithubSignedCommitReceipt = {
+    oid: to_string(commit.oid),
+    url: to_string(commit.url ?? ""),
+    branch: to_string(result?.ref?.name ?? branch),
+    signature_valid: true,
+    signed_by_github: true,
+    signature_state: to_string(signature.state),
+  }
+  return receipt
+}
+
+fn __github_signed_commit_additions(raw) {
+  let additions = []
+  let seen = {}
+  for item in raw {
+    const path = trim(to_string(item?.path ?? ""))
+    const contents = trim(to_string(item?.contents_base64 ?? item?.contents ?? ""))
+    if path == "" || contents == "" {
+      return __err("schema_drift", "signed commit additions require path and contents_base64")
+    }
+    if seen.get(path) ?? false {
+      return __err("schema_drift", "signed commit additions contain duplicate path `" + path + "`")
+    }
+    seen[path] = true
+    additions = additions + [{path: path, contents: contents}]
+  }
+  return Ok(additions)
+}
+
+fn __github_signed_commit_deletions(raw) {
+  let deletions = []
+  let seen = {}
+  for item in raw {
+    const path = trim(to_string(item?.path ?? ""))
+    if path == "" {
+      return __err("schema_drift", "signed commit deletions require path")
+    }
+    if seen.get(path) ?? false {
+      return __err("schema_drift", "signed commit deletions contain duplicate path `" + path + "`")
+    }
+    seen[path] = true
+    deletions = deletions + [{path: path}]
+  }
+  return Ok(deletions)
+}
+
+fn __create_commit_on_branch_mutation() {
+  return """
+mutation HarnGithubConnectorCreateCommitOnBranch($input: CreateCommitOnBranchInput!) {
+  createCommitOnBranch(input: $input) {
+    commit {
+      oid
+      url
+      signature {
+        isValid
+        state
+        wasSignedByGitHub
+      }
+    }
+    ref {
+      name
+      target {
+        oid
       }
     }
   }
