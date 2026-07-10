@@ -137,7 +137,7 @@ Call methods through `call(method, args)` unless a named helper fits better.
 | Self-hosted runners | `actions.runners.registration_token`, `actions.runners.remove_token`, `actions.runners.generate_jitconfig`, `actions.runners.list`, `actions.runners.get`, `actions.runners.delete`, `actions.runners.downloads`, `actions.runners.labels.list`, `actions.runners.labels.add`, `actions.runners.labels.replace`, `actions.runners.labels.remove`, `actions.runner_groups.list`, `actions.runner_groups.create`, `actions.runner_groups.get`, `actions.runner_groups.update`, `actions.runner_groups.delete` |
 | User OAuth | `oauth.user.device_code`, `oauth.user.device_poll`, `oauth.user.exchange_code`, `oauth.user.refresh` |
 | Issues | `github.issue.create`, `github.issue.comment`, `issues.create_comment`, `issues.create`, `issues.create_with_template`, `issues.update`, `issues.add_labels` |
-| Repository and release data | `github.release.latest`, `github.release.assets`, `github.branch.protection`, `repos.get_content`, `repos.get_text`, `repos.create_or_update_file`, `repos.put_content`, `repos.delete_file`, `repos.get_latest_release`, `repos.list_release_assets`, `repos.get_branch_protection`, `git.create_commit`, `git.delete_ref` |
+| Repository and release data | `github.release.latest`, `github.release.assets`, `github.branch.protection`, `github.branch.create_signed_commit`, `repos.get_content`, `repos.get_text`, `repos.create_or_update_file`, `repos.put_content`, `repos.delete_file`, `repos.get_latest_release`, `repos.list_release_assets`, `repos.get_branch_protection`, `git.create_commit`, `git.delete_ref` |
 | Merge queue | `github.merge_queue.entries`, `github.merge_queue.enqueue` |
 | Raw access | `api_call`, `graphql` |
 
@@ -165,6 +165,7 @@ Named helpers:
 | `github_close_pr(owner, repo, pull_number, comment, options)` | Close a PR and optionally post a final comment. |
 | `github_resolve_mergeable(owner, repo, pull_number, options)` | Resolve a PR's async `mergeable`/`mergeable_state` with bounded polling; returns `{mergeable, mergeable_state, is_conflict, ...}`. |
 | `github_resolve_pr_for_sha(owner, repo, sha, options)` | Resolve the PR for a commit SHA, preferring payload `pull_requests[]` and falling back to `repos.commit_pulls`. |
+| `github_create_signed_commit(request, options)` | Atomically append file additions/deletions at an expected head OID through GitHub's verified App-signing path. |
 | `github_extract_mentions(body)` | Pure string parse of `@handle command args...` mentions in a body. |
 | `actions_runner_registration_token(scope, options)` | Create a self-hosted runner registration token (`scope` is `{org}` or `{owner, repo}`). |
 | `actions_runner_generate_jitconfig(scope, name, runner_group_id, labels, options)` | Generate a stateless single-use JIT runner config. |

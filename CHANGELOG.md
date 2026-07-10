@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add typed `github.branch.create_signed_commit` dispatch and
+  `github_create_signed_commit` helper. It uses GraphQL
+  `createCommitOnBranch`, requires an expected head OID, omits custom commit
+  identity fields, and fails closed unless GitHub reports a valid signature
+  made with its signing key.
 - Add semantic `reaction_topics` to normalized webhook payloads. Failed
   check/workflow/status events now emit `github.reaction.ci_failure`, and dirty
   pull requests emit `github.reaction.merge_conflict`, so hosted captains can
