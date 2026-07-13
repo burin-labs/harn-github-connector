@@ -722,6 +722,12 @@ pub fn actions_workflow_runs(owner, repo, options = nil) {
   return call("actions.workflow_runs.list", opts + {owner: owner, repo: repo})
 }
 
+/** Fetch one workflow run by its exact id. */
+pub fn actions_workflow_run(owner, repo, run_id, options = nil) {
+  const opts = options ?? {}
+  return call("actions.workflow_run.get", opts + {owner: owner, repo: repo, run_id: run_id})
+}
+
 /** List the jobs and steps for one workflow run. */
 pub fn actions_workflow_run_jobs(owner, repo, run_id, options = nil) {
   const opts = options ?? {}
@@ -888,7 +894,8 @@ const DEFAULT_LOG_TAIL_LINES = 200
  * Dispatch a workflow_dispatch workflow and resolve its exact run identity.
  * Returns immediately after pinning a run ID, before terminal monitoring, in a
  * stable `{ok, status, conclusion, run_id, candidate_run_ids, run_url,
- * workflow_id, created_at, started_at, updated_at, attempts, timed_out, error}`
+ * workflow_id, head_sha, head_branch, event, created_at, started_at,
+ * updated_at, attempts, timed_out, error}`
  * envelope. Success has `status: "dispatch_accepted"`; failures preserve
  * `poll_failed`, `dispatch_failed`, `ambiguous_dispatch`, or `run_not_found`.
  */
@@ -947,7 +954,8 @@ pub fn github_dispatch_workflow_and_resolve_run(
 /**
  * Dispatch a workflow_dispatch workflow and wait for it to finish. Returns a
  * stable `{ok, status, conclusion, run_id, candidate_run_ids, run_url,
- * workflow_id, created_at, started_at, updated_at, attempts, timed_out, error}`
+ * workflow_id, head_sha, head_branch, event, created_at, started_at,
+ * updated_at, attempts, timed_out, error}`
  * envelope. `status` is one of `completed`, `timed_out`, `dispatch_failed`,
  * `ambiguous_dispatch`, `run_not_found`, or `poll_failed`.
  */
@@ -1085,6 +1093,7 @@ fn __workflow_wait_loop(owner, repo, cfg) {
   let attempts = []
   let attempt = 0
   let run_id = cfg.initial_run_id
+  let identity_run = nil
   let last_run = nil
   while attempt < cfg.max_attempts {
     attempt = attempt + 1
@@ -1104,8 +1113,13 @@ fn __workflow_wait_loop(owner, repo, cfg) {
         )
       }
       run_id = located.run_id
+      identity_run = located?.run
     }
     if run_id != nil && (cfg?.return_on_identity ?? false) {
+      if identity_run != nil {
+        return __workflow_envelope_from_run(true, "dispatch_accepted", identity_run, attempts, false, nil)
+          + {workflow_id: cfg.workflow_id}
+      }
       return __workflow_wait_envelope(true, "dispatch_accepted", cfg.workflow_id, run_id, attempts, false, nil)
     }
     if run_id != nil {
@@ -1149,6 +1163,7 @@ fn __workflow_wait_locate_step(owner, repo, filter, auth, attempt) {
   return {
     attempts: [{attempt: attempt, kind: "located", run_id: located.id, created_at: located?.created_at}],
     run_id: located.id,
+    run: located,
   }
 }
 
@@ -1185,6 +1200,7 @@ fn __workflow_wait_locate_dispatch_step(owner, repo, filter, auth, attempt) {
   return {
     attempts: [{attempt: attempt, kind: "located", run_id: run_ids[0], created_at: unseen[0]?.created_at}],
     run_id: run_ids[0],
+    run: unseen[0],
     candidate_run_ids: run_ids,
   }
 }
@@ -1571,6 +1587,9 @@ fn __workflow_wait_envelope(
     },
     run_url: nil,
     workflow_id: workflow_id,
+    head_sha: nil,
+    head_branch: nil,
+    event: nil,
     created_at: nil,
     started_at: nil,
     updated_at: nil,
@@ -1593,6 +1612,9 @@ fn __workflow_envelope_from_run(ok, status, run, attempts, timed_out, error) {
     },
     run_url: run?.html_url ?? run?.url,
     workflow_id: run?.workflow_id,
+    head_sha: run?.head_sha,
+    head_branch: run?.head_branch,
+    event: run?.event,
     created_at: run?.created_at,
     started_at: run?.run_started_at ?? run?.started_at,
     updated_at: run?.updated_at,

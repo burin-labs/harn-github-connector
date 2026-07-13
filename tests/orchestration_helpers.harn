@@ -75,6 +75,9 @@ pipeline test_dispatch_identity_returns_returned_run_id_without_monitoring(task)
   assert_eq(result.status, "dispatch_accepted", "identity boundary status")
   assert_eq(result.run_id, 321, "returned run id is pinned")
   assert_eq(result.candidate_run_ids, [321], "returned identity is structured")
+  assert_eq(result.head_sha, nil, "direct-id dispatch has no observed source sha")
+  assert_eq(result.head_branch, nil, "direct-id dispatch has no observed source branch")
+  assert_eq(result.event, nil, "direct-id dispatch has no observed event")
   assert_eq(result.conclusion, nil, "terminal state is not observed")
   assert_eq(result.timed_out, false, "identity resolution did not time out")
   const calls = http_mock_calls()
@@ -138,6 +141,13 @@ pipeline test_dispatch_with_run_id_completes_success(task) {
   assert_eq(result.conclusion, "success", "conclusion success")
   assert_eq(result.run_id, 123, "run id from dispatch")
   assert_eq(result.workflow_id, 4242, "workflow id from run")
+  assert_eq(
+    result.head_sha,
+    "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+    "terminal run preserves source sha",
+  )
+  assert_eq(result.head_branch, "main", "terminal run preserves source branch")
+  assert_eq(result.event, "workflow_dispatch", "terminal run preserves event")
   assert(result.run_url.contains("/actions/runs/123"), "run url")
   assert_eq(result.timed_out, false, "not timed out")
   assert(len(result.attempts) >= 2, "polled at least twice")
@@ -216,6 +226,16 @@ pipeline test_dispatch_identity_selects_only_unseen_exact_run(task) {
   assert_eq(result.conclusion, nil, "terminal conclusion is not fetched")
   assert_eq(result.run_id, 901, "only unseen exact run selected")
   assert_eq(result.candidate_run_ids, [901], "selected identity is structured")
+  assert_eq(result.head_sha, sha, "identity preserves the actual observed source sha")
+  assert_eq(result.head_branch, "main", "identity preserves the observed source branch")
+  assert_eq(result.event, "workflow_dispatch", "identity preserves the observed event")
+  assert_eq(result.workflow_id, "release.yml", "identity preserves the requested workflow id")
+  assert(result.run_url.contains("/actions/runs/901"), "identity preserves the observed run url")
+  assert_eq(
+    result.created_at,
+    "not-a-timestamp",
+    "identity preserves source timestamps without parsing",
+  )
   const calls = http_mock_calls()
   assert_eq(len(calls), 3, "identity boundary performs no terminal run GET")
   assert_eq(calls[0].url, runs_url, "pre-dispatch exact ids snapshotted")
@@ -399,6 +419,13 @@ pipeline test_wait_for_workflow_run_times_out_with_known_run(task) {
   assert_eq(result.status, "timed_out", "status=timed_out")
   assert_eq(result.timed_out, true, "timed_out flag set")
   assert_eq(result.run_id, 777, "still surfaces last known run")
+  assert_eq(
+    result.head_sha,
+    "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+    "timeout preserves source sha",
+  )
+  assert_eq(result.head_branch, "main", "timeout preserves source branch")
+  assert_eq(result.event, "workflow_dispatch", "timeout preserves source event")
   assert_eq(result.ok, false, "ok=false on timeout")
   http_mock_clear()
 }
