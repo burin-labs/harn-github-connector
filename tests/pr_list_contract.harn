@@ -10,6 +10,11 @@ fn pull_fixture(number, head, merged_at = nil) {
     title: "PR " + to_string(number),
     state: "closed",
     merged_at: merged_at,
+    merge_commit_sha: if merged_at == nil {
+      nil
+    } else {
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
     html_url: "https://github.com/octo-org/octo-repo/pull/" + to_string(number),
     base: {ref: "main", repo: {full_name: "octo-org/octo-repo"}},
     head: {ref: head, sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
@@ -87,6 +92,12 @@ pipeline test_pr_list_merged_maps_to_closed_and_filters_unmerged_prs(task) {
       + {repo: "octo-org/octo-repo", filters: {state: "merged", base: "main", per_page: 30}},
   )
   assert_eq(pulls.map({ pull -> pull.number }), [8], "only actually merged PRs survive")
+  assert_eq(pulls[0].merged_at, "2026-07-13T00:00:00Z", "merge timestamp is canonical evidence")
+  assert_eq(
+    pulls[0].merge_commit_oid,
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "REST merge SHA is normalized to merge_commit_oid",
+  )
   assert_eq(len(http_mock_calls()), 1, "merged state uses one closed-PR request")
 }
 

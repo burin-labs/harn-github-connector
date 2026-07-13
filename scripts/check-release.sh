@@ -66,6 +66,7 @@ harn connector check . --provider github
 for test in tests/*.harn; do
   harn run "$test"
 done
+harn test tests
 
 smoke_root="$(mktemp -d)"
 trap 'rm -rf "$smoke_root"' EXIT
