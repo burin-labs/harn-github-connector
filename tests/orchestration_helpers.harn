@@ -42,6 +42,21 @@ fn dispatch_204() {
 pipeline test_dispatch_with_run_id_completes_success(task) {
   egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
   http_mock_clear()
+  const runs_url = BASE
+    + "/repos/octo-org/octo-repo/actions/workflows/bump-harn.yml/runs?branch=main&event=workflow_dispatch&per_page=10"
+  http_mock(
+    "GET",
+    runs_url,
+    {
+      responses: [
+        {
+          status: 200,
+          body: json_stringify({total_count: 0, workflow_runs: []}),
+          headers: {"x-ratelimit-remaining": "31"},
+        },
+      ],
+    },
+  )
   http_mock(
     "POST",
     BASE + "/repos/octo-org/octo-repo/actions/workflows/bump-harn.yml/dispatches",
@@ -81,12 +96,63 @@ pipeline test_dispatch_with_run_id_completes_success(task) {
   assert(result.run_url.contains("/actions/runs/123"), "run url")
   assert_eq(result.timed_out, false, "not timed out")
   assert(len(result.attempts) >= 2, "polled at least twice")
+  assert_eq(result.candidate_run_ids, [123], "returned run id is the only candidate")
+  const calls = http_mock_calls()
+  assert_eq(len(calls), 4, "snapshot, dispatch, and two direct run probes")
+  assert_eq(calls[0].url, runs_url, "matching ids are snapshotted before dispatch")
+  assert_eq(calls[1].method, "POST", "dispatch follows the snapshot")
+  assert_eq(
+    calls[2].url,
+    BASE + "/repos/octo-org/octo-repo/actions/runs/123",
+    "returned id is the fast path",
+  )
+  assert_eq(
+    calls[3].url,
+    BASE + "/repos/octo-org/octo-repo/actions/runs/123",
+    "returned id stays pinned",
+  )
   http_mock_clear()
 }
 
-pipeline test_dispatch_locates_run_when_no_id_returned(task) {
+pipeline test_dispatch_selects_only_unseen_exact_run(task) {
   egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
   http_mock_clear()
+  const sha = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+  const runs_url = BASE
+    + "/repos/octo-org/octo-repo/actions/workflows/release.yml/runs?branch=main&event=workflow_dispatch&head_sha="
+    + sha
+    + "&per_page=10"
+  http_mock(
+    "GET",
+    runs_url,
+    {
+      responses: [
+        {
+          status: 200,
+          body: json_stringify(
+            {total_count: 1, workflow_runs: [run_payload(900, "completed", "success", "2035-01-01T00:00:00Z")]},
+          ),
+          headers: {"x-ratelimit-remaining": "21"},
+        },
+        {
+          status: 200,
+          body: json_stringify(
+            {
+              total_count: 5,
+              workflow_runs: [
+                run_payload(900, "completed", "success", "2035-01-01T00:00:00Z"),
+                run_payload(901, "in_progress", nil, "not-a-timestamp"),
+                run_payload(902, "queued") + {event: "push"},
+                run_payload(903, "queued") + {head_branch: "other"},
+                run_payload(904, "queued") + {head_sha: "cafebabecafebabecafebabecafebabecafebabe"},
+              ],
+            },
+          ),
+          headers: {"x-ratelimit-remaining": "19"},
+        },
+      ],
+    },
+  )
   http_mock(
     "POST",
     BASE + "/repos/octo-org/octo-repo/actions/workflows/release.yml/dispatches",
@@ -94,38 +160,11 @@ pipeline test_dispatch_locates_run_when_no_id_returned(task) {
   )
   http_mock(
     "GET",
-    BASE
-      + "/repos/octo-org/octo-repo/actions/workflows/release.yml/runs?branch=main&event=workflow_dispatch&per_page=10",
-    {
-      responses: [
-        {
-          status: 200,
-          body: json_stringify({total_count: 0, workflow_runs: []}),
-          headers: {"x-ratelimit-remaining": "19"},
-        },
-        {
-          status: 200,
-          body: json_stringify(
-            {
-              total_count: 2,
-              workflow_runs: [
-                run_payload(900, "in_progress", nil, "2025-01-01T00:00:00Z"),
-                run_payload(901, "in_progress", nil, "2030-01-01T00:00:00Z"),
-              ],
-            },
-          ),
-          headers: {"x-ratelimit-remaining": "18"},
-        },
-      ],
-    },
-  )
-  http_mock(
-    "GET",
     BASE + "/repos/octo-org/octo-repo/actions/runs/901",
     {
       status: 200,
-      body: json_stringify(run_payload(901, "completed", "failure", "2030-01-01T00:00:00Z")),
-      headers: {"x-ratelimit-remaining": "17"},
+      body: json_stringify(run_payload(901, "completed", "failure", "not-a-timestamp")),
+      headers: {"x-ratelimit-remaining": "18"},
     },
   )
   const result = github_dispatch_workflow_and_wait(
@@ -134,32 +173,95 @@ pipeline test_dispatch_locates_run_when_no_id_returned(task) {
     "release.yml",
     "main",
     nil,
-    auth() + {created_after: "2026-01-01T00:00:00Z"},
+    auth() + {head_sha: sha},
   )
   assert_eq(result.status, "completed", "status completed even on failing conclusion")
   assert_eq(result.ok, true, "ok=true when wait completes")
   assert_eq(result.conclusion, "failure", "failure conclusion surfaces")
-  assert_eq(result.run_id, 901, "newest matching run after cutoff")
+  assert_eq(result.run_id, 901, "only unseen exact run selected")
+  assert_eq(result.candidate_run_ids, [901], "selected identity is structured")
+  const calls = http_mock_calls()
+  assert_eq(calls[0].url, runs_url, "pre-dispatch exact ids snapshotted")
+  assert_eq(calls[1].method, "POST", "dispatch occurs after snapshot")
+  assert_eq(calls[2].url, runs_url, "same exact filter locates unseen runs")
+  assert_eq(
+    calls[3].url,
+    BASE + "/repos/octo-org/octo-repo/actions/runs/901",
+    "selected id is pinned",
+  )
+  http_mock_clear()
+}
+
+pipeline test_dispatch_rejects_multiple_unseen_exact_runs(task) {
+  egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
+  http_mock_clear()
+  const runs_url = BASE
+    + "/repos/octo-org/octo-repo/actions/workflows/ambiguous.yml/runs?branch=main&event=workflow_dispatch&per_page=10"
+  http_mock(
+    "GET",
+    runs_url,
+    {
+      responses: [
+        {
+          status: 200,
+          body: json_stringify({total_count: 1, workflow_runs: [run_payload(800, "completed", "success")]}),
+          headers: {"x-ratelimit-remaining": "12"},
+        },
+        {
+          status: 200,
+          body: json_stringify(
+            {
+              total_count: 3,
+              workflow_runs: [
+                run_payload(800, "completed", "success"),
+                run_payload(801, "queued", nil, "2020-01-01T00:00:00Z"),
+                run_payload(802, "queued", nil, "2030-01-01T00:00:00Z"),
+              ],
+            },
+          ),
+          headers: {"x-ratelimit-remaining": "10"},
+        },
+      ],
+    },
+  )
+  http_mock(
+    "POST",
+    BASE + "/repos/octo-org/octo-repo/actions/workflows/ambiguous.yml/dispatches",
+    {status: 204, body: dispatch_204(), headers: {"x-ratelimit-remaining": "11"}},
+  )
+  const result = github_dispatch_workflow_and_wait("octo-org", "octo-repo", "ambiguous.yml", "main", nil, auth())
+  assert_eq(result.ok, false, "ambiguous dispatch fails closed")
+  assert_eq(result.status, "ambiguous_dispatch", "typed ambiguous status")
+  assert_eq(result.run_id, nil, "no ambiguous run is pinned")
+  assert_eq(result.candidate_run_ids, [801, 802], "all unseen exact identities surface")
+  assert_eq(result.error.code, "ambiguous_dispatch", "typed ambiguous error")
+  assert_eq(result.error.candidate_run_ids, [801, 802], "error carries candidate identities")
+  assert_eq(result.timed_out, false, "ambiguity terminates immediately")
+  assert_eq(len(http_mock_calls()), 3, "no ambiguous run is probed")
   http_mock_clear()
 }
 
 pipeline test_dispatch_times_out_when_run_never_appears(task) {
   egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
   http_mock_clear()
+  const runs_url = BASE
+    + "/repos/octo-org/octo-repo/actions/workflows/never.yml/runs?branch=main&event=workflow_dispatch&per_page=10"
+  http_mock(
+    "GET",
+    runs_url,
+    {
+      responses: [
+        {status: 200, body: json_stringify({total_count: 0, workflow_runs: []})},
+        {status: 200, body: json_stringify({total_count: 0, workflow_runs: []})},
+        {status: 200, body: json_stringify({total_count: 0, workflow_runs: []})},
+        {status: 200, body: json_stringify({total_count: 0, workflow_runs: []})},
+      ],
+    },
+  )
   http_mock(
     "POST",
     BASE + "/repos/octo-org/octo-repo/actions/workflows/never.yml/dispatches",
     {status: 204, body: "", headers: {"x-ratelimit-remaining": "10"}},
-  )
-  http_mock(
-    "GET",
-    BASE
-      + "/repos/octo-org/octo-repo/actions/workflows/never.yml/runs?branch=main&event=workflow_dispatch&per_page=10",
-    {
-      status: 200,
-      body: json_stringify({total_count: 0, workflow_runs: []}),
-      headers: {"x-ratelimit-remaining": "9"},
-    },
   )
   const result = github_dispatch_workflow_and_wait(
     "octo-org",
@@ -167,18 +269,29 @@ pipeline test_dispatch_times_out_when_run_never_appears(task) {
     "never.yml",
     "main",
     nil,
-    auth() + {max_attempts: 3, created_after: "2026-01-01T00:00:00Z"},
+    auth() + {max_attempts: 3},
   )
   assert_eq(result.ok, false, "ok=false when never found")
   assert_eq(result.status, "run_not_found", "status=run_not_found")
   assert_eq(result.timed_out, true, "timed_out=true")
   assert_eq(result.run_id, nil, "run_id=nil")
+  assert_eq(
+    len(http_mock_calls()),
+    5,
+    "one snapshot, one dispatch, and three bounded lookup attempts",
+  )
   http_mock_clear()
 }
 
 pipeline test_dispatch_returns_dispatch_failed(task) {
   egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
   http_mock_clear()
+  http_mock(
+    "GET",
+    BASE
+      + "/repos/octo-org/octo-repo/actions/workflows/broken.yml/runs?branch=main&event=workflow_dispatch&per_page=10",
+    {responses: [{status: 200, body: json_stringify({total_count: 0, workflow_runs: []})}]},
+  )
   http_mock(
     "POST",
     BASE + "/repos/octo-org/octo-repo/actions/workflows/broken.yml/dispatches",
@@ -192,6 +305,33 @@ pipeline test_dispatch_returns_dispatch_failed(task) {
   assert_eq(result.ok, false, "ok=false")
   assert_eq(result.status, "dispatch_failed", "status=dispatch_failed")
   assert(result.error != nil, "error captured")
+  assert_eq(len(http_mock_calls()), 2, "snapshot does not obscure the dispatch error")
+  http_mock_clear()
+}
+
+pipeline test_dispatch_returns_poll_failed_when_snapshot_fails(task) {
+  egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
+  http_mock_clear()
+  http_mock(
+    "GET",
+    BASE
+      + "/repos/octo-org/octo-repo/actions/workflows/private.yml/runs?branch=main&event=workflow_dispatch&per_page=10",
+    {
+      responses: [
+        {
+          status: 403,
+          body: json_stringify({message: "Resource not accessible by integration"}),
+          headers: {"x-ratelimit-remaining": "5"},
+        },
+      ],
+    },
+  )
+  const result = github_dispatch_workflow_and_wait("octo-org", "octo-repo", "private.yml", "main", nil, auth())
+  assert_eq(result.ok, false, "snapshot error fails closed")
+  assert_eq(result.status, "poll_failed", "snapshot error uses existing poll status")
+  assert_eq(result.error.code, "missing_scopes", "connector error is preserved")
+  assert_eq(result.attempts[0].kind, "snapshot_failed", "snapshot stage is structured")
+  assert_eq(len(http_mock_calls()), 1, "failed snapshot prevents dispatch")
   http_mock_clear()
 }
 
@@ -202,9 +342,18 @@ pipeline test_wait_for_workflow_run_times_out_with_known_run(task) {
     "GET",
     BASE + "/repos/octo-org/octo-repo/actions/runs/777",
     {
-      status: 200,
-      body: json_stringify(run_payload(777, "in_progress", nil)),
-      headers: {"x-ratelimit-remaining": "5"},
+      responses: [
+        {
+          status: 200,
+          body: json_stringify(run_payload(777, "in_progress", nil)),
+          headers: {"x-ratelimit-remaining": "5"},
+        },
+        {
+          status: 200,
+          body: json_stringify(run_payload(777, "in_progress", nil)),
+          headers: {"x-ratelimit-remaining": "4"},
+        },
+      ],
     },
   )
   const result = github_wait_for_workflow_run("octo-org", "octo-repo", 777, auth() + {max_attempts: 2})

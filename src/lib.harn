@@ -886,10 +886,10 @@ const DEFAULT_LOG_TAIL_LINES = 200
 
 /**
  * Dispatch a workflow_dispatch workflow and wait for it to finish. Returns a
- * stable `{ok, status, conclusion, run_id, run_url, workflow_id, created_at,
- * started_at, updated_at, attempts, timed_out, error}` envelope. `status` is
- * one of `completed`, `timed_out`, `dispatch_failed`, `run_not_found`, or
- * `poll_failed`.
+ * stable `{ok, status, conclusion, run_id, candidate_run_ids, run_url,
+ * workflow_id, created_at, started_at, updated_at, attempts, timed_out, error}`
+ * envelope. `status` is one of `completed`, `timed_out`, `dispatch_failed`,
+ * `ambiguous_dispatch`, `run_not_found`, or `poll_failed`.
  */
 pub fn github_dispatch_workflow_and_wait(
   owner,
@@ -901,7 +901,26 @@ pub fn github_dispatch_workflow_and_wait(
 ) {
   const opts = options ?? {}
   const auth = __auth_options(opts)
-  const dispatched_at_iso = opts?.created_after ?? date_now_iso()
+  const filter = {
+    workflow_id: workflow_id,
+    event: opts?.event ?? "workflow_dispatch",
+    branch: opts?.branch ?? ref,
+    head_sha: opts?.head_sha,
+    per_page: opts?.per_page ?? 10,
+  }
+  const snapshot = __exact_workflow_runs(owner, repo, filter, auth)
+  if is_err(snapshot) {
+    return __workflow_wait_envelope(
+      false,
+      "poll_failed",
+      workflow_id,
+      nil,
+      [{attempt: 0, kind: "snapshot_failed", error: unwrap_err(snapshot)}],
+      false,
+      unwrap_err(snapshot),
+    )
+  }
+  const snapshot_run_ids = __workflow_run_ids(snapshot)
   const dispatch = actions_workflow_dispatch(owner, repo, workflow_id, ref, inputs ?? {}, auth)
   if is_err(dispatch) {
     return __workflow_wait_envelope(
@@ -915,16 +934,9 @@ pub fn github_dispatch_workflow_and_wait(
     )
   }
   const dispatch_run_id = __extract_dispatch_run_id(dispatch)
-  const filter = {
-    workflow_id: workflow_id,
-    event: opts?.event ?? "workflow_dispatch",
-    branch: opts?.branch ?? ref,
-    head_sha: opts?.head_sha,
-    per_page: opts?.per_page ?? 10,
-    created_after: dispatched_at_iso,
-  }
-  const wait_options = opts + {workflow_id: workflow_id, filter: filter}
-  const target = dispatch_run_id ?? filter
+  const dispatch_filter = filter + {excluded_run_ids: snapshot_run_ids, require_unambiguous_dispatch: true}
+  const wait_options = opts + {workflow_id: workflow_id, filter: dispatch_filter}
+  const target = dispatch_run_id ?? dispatch_filter
   return github_wait_for_workflow_run(owner, repo, target, wait_options)
 }
 
@@ -1051,6 +1063,18 @@ fn __workflow_wait_loop(owner, repo, cfg) {
     if run_id == nil {
       const located = __workflow_wait_locate_step(owner, repo, cfg.filter, cfg.auth, attempt)
       attempts = attempts + located.attempts
+      if len(located?.candidate_run_ids ?? []) > 1 {
+        return __workflow_wait_envelope(
+          false,
+          "ambiguous_dispatch",
+          cfg.workflow_id,
+          nil,
+          attempts,
+          false,
+          located.error,
+          located.candidate_run_ids,
+        )
+      }
       run_id = located.run_id
     }
     if run_id != nil {
@@ -1081,6 +1105,9 @@ fn __workflow_wait_loop_terminal(cfg, attempts, run_id, last_run) {
 }
 
 fn __workflow_wait_locate_step(owner, repo, filter, auth, attempt) {
+  if filter?.require_unambiguous_dispatch ?? false {
+    return __workflow_wait_locate_dispatch_step(owner, repo, filter, auth, attempt)
+  }
   const located = __locate_workflow_run(owner, repo, filter, auth)
   if is_err(located) {
     return {attempts: [{attempt: attempt, kind: "list_failed", error: unwrap_err(located)}], run_id: nil}
@@ -1091,6 +1118,43 @@ fn __workflow_wait_locate_step(owner, repo, filter, auth, attempt) {
   return {
     attempts: [{attempt: attempt, kind: "located", run_id: located.id, created_at: located?.created_at}],
     run_id: located.id,
+  }
+}
+
+fn __workflow_wait_locate_dispatch_step(owner, repo, filter, auth, attempt) {
+  const located = __exact_workflow_runs(owner, repo, filter, auth)
+  if is_err(located) {
+    return {attempts: [{attempt: attempt, kind: "list_failed", error: unwrap_err(located)}], run_id: nil}
+  }
+  let unseen = []
+  for run in located {
+    if !(filter?.excluded_run_ids ?? []).contains(run.id) {
+      unseen = unseen + [run]
+    }
+  }
+  const run_ids = __workflow_run_ids(unseen)
+  if len(run_ids) == 0 {
+    return {attempts: [{attempt: attempt, kind: "run_not_found"}], run_id: nil}
+  }
+  if len(run_ids) > 1 {
+    const error = unwrap_err(
+      __err(
+        "ambiguous_dispatch",
+        "multiple unseen workflow runs matched the dispatch",
+        {candidate_run_ids: run_ids},
+      ),
+    )
+    return {
+      attempts: [{attempt: attempt, kind: "ambiguous_dispatch", candidate_run_ids: run_ids}],
+      run_id: nil,
+      candidate_run_ids: run_ids,
+      error: error,
+    }
+  }
+  return {
+    attempts: [{attempt: attempt, kind: "located", run_id: run_ids[0], created_at: unseen[0]?.created_at}],
+    run_id: run_ids[0],
+    candidate_run_ids: run_ids,
   }
 }
 
@@ -1360,6 +1424,46 @@ fn __locate_workflow_run(owner, repo, filter, auth) {
   return __pick_newest_run(resp?.workflow_runs ?? [], filter)
 }
 
+fn __exact_workflow_runs(owner, repo, filter, auth) {
+  const resp = actions_workflow_runs(owner, repo, auth + __locate_args(filter))
+  if is_err(resp) {
+    return resp
+  }
+  let matches = []
+  for run in resp?.workflow_runs ?? [] {
+    if __run_matches_exact_dispatch_filter(run, filter) {
+      matches = matches + [run]
+    }
+  }
+  return matches
+}
+
+fn __run_matches_exact_dispatch_filter(run, filter) {
+  if run?.id == nil {
+    return false
+  }
+  if filter?.event != nil && run?.event != filter.event {
+    return false
+  }
+  if filter?.branch != nil && run?.head_branch != filter.branch {
+    return false
+  }
+  if filter?.head_sha != nil && run?.head_sha != filter.head_sha {
+    return false
+  }
+  return true
+}
+
+fn __workflow_run_ids(runs) {
+  let ids = []
+  for run in runs {
+    if run?.id != nil && !ids.contains(run.id) {
+      ids = ids + [run.id]
+    }
+  }
+  return ids
+}
+
 fn __locate_args(filter) {
   let args = {}
   if filter?.workflow_id != nil {
@@ -1414,12 +1518,26 @@ fn __run_is_newer(candidate, best) {
   return to_string(created_at) > to_string(best.created_at)
 }
 
-fn __workflow_wait_envelope(ok, status, workflow_id, run_id, attempts, timed_out, error) {
+fn __workflow_wait_envelope(
+  ok,
+  status,
+  workflow_id,
+  run_id,
+  attempts,
+  timed_out,
+  error,
+  candidate_run_ids = nil,
+) {
   return {
     ok: ok,
     status: status,
     conclusion: nil,
     run_id: run_id,
+    candidate_run_ids: candidate_run_ids ?? if run_id == nil {
+      []
+    } else {
+      [run_id]
+    },
     run_url: nil,
     workflow_id: workflow_id,
     created_at: nil,
@@ -1437,6 +1555,11 @@ fn __workflow_envelope_from_run(ok, status, run, attempts, timed_out, error) {
     status: status,
     conclusion: run?.conclusion,
     run_id: run?.id,
+    candidate_run_ids: if run?.id == nil {
+      []
+    } else {
+      [run.id]
+    },
     run_url: run?.html_url ?? run?.url,
     workflow_id: run?.workflow_id,
     created_at: run?.created_at,
