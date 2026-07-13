@@ -1,0 +1,122 @@
+import { call } from "../src/lib"
+
+fn auth(base) {
+  return {api_base_url: base, installation_token: "test-token"}
+}
+
+fn pull_fixture(number, head, merged_at = nil) {
+  return {
+    number: number,
+    title: "PR " + to_string(number),
+    state: "closed",
+    merged_at: merged_at,
+    html_url: "https://github.com/octo-org/octo-repo/pull/" + to_string(number),
+    base: {ref: "main", repo: {full_name: "octo-org/octo-repo"}},
+    head: {ref: head, sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    labels: [],
+  }
+}
+
+pipeline test_pr_list_qualifies_bare_head_to_repository_owner(task) {
+  egress_policy({allow: ["github-api.test"], default: "deny"})
+  http_mock_clear()
+  const base = "https://github-api.test"
+  http_mock(
+    "GET",
+    base
+      + "/repos/octo-org/octo-repo/pulls?state=open&head=octo-org%3Aautomation%2Fbump&base=main&per_page=10",
+    {
+      status: 200,
+      body: json_stringify([pull_fixture(7, "automation/bump")]),
+      headers: {"x-ratelimit-remaining": "10"},
+    },
+  )
+  const pulls = call(
+    "github.pr.list",
+    auth(base)
+      + {
+      repo: "octo-org/octo-repo",
+      filters: {state: "open", head: "automation/bump", base: "main", per_page: 10},
+    },
+  )
+  assert_eq(len(pulls), 1, "qualified head returns the intended PR")
+  assert_eq(pulls[0].head.ref, "automation/bump", "typed head remains branch-only")
+  assert_eq(len(http_mock_calls()), 1, "one exact REST request")
+}
+
+pipeline test_pr_list_preserves_explicit_fork_owner(task) {
+  egress_policy({allow: ["github-api.test"], default: "deny"})
+  http_mock_clear()
+  const base = "https://github-api.test"
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/pulls?state=open&head=fork-user%3Afeature%2Fsafe",
+    {
+      status: 200,
+      body: json_stringify([pull_fixture(10, "feature/safe")]),
+      headers: {"x-ratelimit-remaining": "10"},
+    },
+  )
+  const pulls = call(
+    "github.pr.list",
+    auth(base)
+      + {repo: "octo-org/octo-repo", filters: {state: "open", head: "fork-user:feature/safe"}},
+  )
+  assert_eq(pulls.map({ pull -> pull.number }), [10], "explicit fork owner is preserved")
+  assert_eq(len(http_mock_calls()), 1, "one exact fork-owner request")
+}
+
+pipeline test_pr_list_merged_maps_to_closed_and_filters_unmerged_prs(task) {
+  egress_policy({allow: ["github-api.test"], default: "deny"})
+  http_mock_clear()
+  const base = "https://github-api.test"
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/pulls?state=closed&base=main&per_page=30",
+    {
+      status: 200,
+      body: json_stringify(
+        [pull_fixture(8, "release/v1.0.0", "2026-07-13T00:00:00Z"), pull_fixture(9, "abandoned", nil)],
+      ),
+      headers: {"x-ratelimit-remaining": "10"},
+    },
+  )
+  const pulls = call(
+    "github.pr.list",
+    auth(base)
+      + {repo: "octo-org/octo-repo", filters: {state: "merged", base: "main", per_page: 30}},
+  )
+  assert_eq(pulls.map({ pull -> pull.number }), [8], "only actually merged PRs survive")
+  assert_eq(len(http_mock_calls()), 1, "merged state uses one closed-PR request")
+}
+
+pipeline test_pr_list_rejects_unsupported_state_before_network(task) {
+  egress_policy({allow: ["github-api.test"], default: "deny"})
+  http_mock_clear()
+  const result = call(
+    "github.pr.list",
+    auth("https://github-api.test") + {repo: "octo-org/octo-repo", filters: {state: "draft"}},
+  )
+  assert(is_err(result), "unsupported REST state fails closed")
+  assert_eq(unwrap_err(result).code, "schema_drift", "stable validation code")
+  assert_eq(len(http_mock_calls()), 0, "invalid state performs no network request")
+}
+
+pipeline test_graphql_promotes_protocol_errors(task) {
+  egress_policy({allow: ["github-api.test"], default: "deny"})
+  http_mock_clear()
+  const base = "https://github-api.test"
+  http_mock(
+    "POST",
+    base + "/graphql",
+    {
+      status: 200,
+      body: json_stringify({data: nil, errors: [{type: "FORBIDDEN", message: "denied"}]}),
+      headers: {"x-ratelimit-remaining": "10"},
+    },
+  )
+  const result = call("graphql", auth(base) + {query: "query { viewer { login } }", variables: {}})
+  assert(is_err(result), "HTTP 200 GraphQL errors fail closed")
+  assert_eq(unwrap_err(result).code, "graphql", "stable GraphQL error code")
+  assert(contains(unwrap_err(result).message, "denied"), "provider message remains visible")
+}

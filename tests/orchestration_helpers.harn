@@ -482,7 +482,7 @@ pipeline test_find_open_pr_matches_by_head_and_filters_labels(task) {
   http_mock_clear()
   http_mock(
     "GET",
-    BASE + "/repos/octo-org/octo-repo/pulls?state=open&head=feature%2Ffoo&base=main",
+    BASE + "/repos/octo-org/octo-repo/pulls?state=open&head=octo-org%3Afeature%2Ffoo&base=main",
     {
       status: 200,
       body: json_stringify(
