@@ -132,7 +132,7 @@ Call methods through `call(method, args)` unless a named helper fits better.
 
 | Area | Methods |
 |---|---|
-| Pull requests | `github.pr.list`, `github.pr.create`, `github.pr.view`, `github.pr.edit`, `github.pr.files`, `github.pr.checks`, `github.pr.merge`, `github.pr.enable_auto_merge`, `github.pr.comment`, `pulls.list`, `pulls.list_with_checks`, `pulls.get`, `pulls.update`, `pulls.create`, `pulls.merge`, `pulls.merge_safe`, `pulls.create_review_comment`, `pulls.get_diff`, `pulls.list_files`, `pulls.list_reviews`, `pull_requests.resolve_mergeable`, `repos.commit_pulls` |
+| Pull requests | `github.pr.list`, `github.pr.create`, `github.pr.view`, `github.pr.edit`, `github.pr.files`, `github.pr.commits`, `github.pr.checks`, `github.pr.merge`, `github.pr.enable_auto_merge`, `github.pr.comment`, `pulls.list`, `pulls.list_with_checks`, `pulls.get`, `pulls.update`, `pulls.create`, `pulls.merge`, `pulls.merge_safe`, `pulls.create_review_comment`, `pulls.get_diff`, `pulls.list_files`, `pulls.list_reviews`, `pull_requests.resolve_mergeable`, `repos.commit_pulls` |
 | Actions and checks | `github.actions.workflow_dispatch`, `github.actions.runs`, `github.actions.run`, `github.actions.run_jobs`, `github.actions.logs`, `actions.workflow_dispatch`, `actions.workflow_runs.list`, `actions.workflow_run.get`, `actions.workflow_run.jobs`, `check_runs.create`, `check_runs.update` |
 | Self-hosted runners | `actions.runners.registration_token`, `actions.runners.remove_token`, `actions.runners.generate_jitconfig`, `actions.runners.list`, `actions.runners.get`, `actions.runners.delete`, `actions.runners.downloads`, `actions.runners.labels.list`, `actions.runners.labels.add`, `actions.runners.labels.replace`, `actions.runners.labels.remove`, `actions.runner_groups.list`, `actions.runner_groups.create`, `actions.runner_groups.get`, `actions.runner_groups.update`, `actions.runner_groups.delete` |
 | User OAuth | `oauth.user.device_code`, `oauth.user.device_poll`, `oauth.user.exchange_code`, `oauth.user.refresh` |
@@ -154,9 +154,18 @@ raw REST responses for the same operation.
 - `github.pr.view` keeps the base PR read when branch-protection administration
   permission is unavailable. Its `branch_protection.available` is `false` and
   retains the structured permission error.
+- Canonical PR summaries, details, views, and lists expose `merged_at` and
+  `merge_commit_oid`. A PR reported as merged must carry both fields or the
+  response fails closed. `github.pr.commits` reads every commit page under one
+  stable head lease and returns each commit's message plus normalized signature
+  evidence; unsigned commits remain successful `verified: false` evidence. The
+  method fails closed rather than claim completeness when GitHub reports more
+  than the pull-request endpoint's 250-commit limit. Open-PR test-merge SHAs are
+  not exposed as actual merge commit OIDs.
 - `github.actions.workflow_dispatch` resolves one exact accepted run identity;
-  `github.actions.run` and `github.actions.run_jobs` return closed run, job, and
-  step evidence.
+  `github.actions.runs`, `github.actions.run`, and `github.actions.run_jobs`
+  return closed run, job, and step evidence. The run-list envelope uses typed
+  `runs`, never GitHub's raw `workflow_runs` payload.
 - `github.file.view` requires an exact `ref`, and `github.release.view` requires
   an exact `tag`. They return `state: "found" | "absent"`; a `404` is absence
   only after the same credential proves repository access. Masked private
@@ -177,6 +186,7 @@ Named helpers:
 | `pulls_update(owner, repo, number, edits, options)` | Update a closed set of editable PR fields. |
 | `pulls_merge_safe(owner, repo, number, options)` | Merge after checking branch protection. |
 | `pulls_enable_auto_merge(owner, repo, number, options)` | Enable GitHub auto-merge; `options.expected_head_oid` is required. |
+| `github_pr_commits(owner, repo, number, options)` | Read every commit and normalized signature under one stable PR head; `options.expected_head_oid` is optional. |
 | `actions_workflow_dispatch(owner, repo, workflow_id, ref, inputs, options)` | Dispatch a workflow. |
 | `actions_workflow_runs(owner, repo, options)` | List workflow runs. |
 | `actions_workflow_run(owner, repo, run_id, options)` | Fetch one workflow run by its exact id. |
@@ -335,6 +345,7 @@ harn connector check .
 for test in tests/*.harn; do
   harn run "$test" || exit 1
 done
+harn test tests
 ```
 
 `harn connector check .` runs the deterministic webhook fixtures declared in

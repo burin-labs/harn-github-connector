@@ -1,0 +1,362 @@
+import { call, github_pr_commits } from "../src/lib"
+
+const BASE = "https://github-api.test"
+
+fn auth() {
+  return {api_base_url: BASE, installation_token: "test-token"}
+}
+
+fn pull(number, head_sha, merged = false, commit_count = 1) {
+  return {
+    number: number,
+    title: "PR " + to_string(number),
+    state: if merged {
+      "closed"
+    } else {
+      "open"
+    },
+    merged: merged,
+    merged_at: if merged {
+      "2026-07-13T12:00:00Z"
+    } else {
+      nil
+    },
+    merge_commit_sha: if merged {
+      "dddddddddddddddddddddddddddddddddddddddd"
+    } else {
+      nil
+    },
+    html_url: "https://github.com/octo-org/octo-repo/pull/" + to_string(number),
+    base: {ref: "main", sha: "base-sha", repo: {full_name: "octo-org/octo-repo"}},
+    head: {ref: "feature/" + to_string(number), sha: head_sha, repo: {full_name: "octo-org/octo-repo"}},
+    labels: [],
+    commits: commit_count,
+  }
+}
+
+fn commit(sha, message, verified, reason) {
+  return {
+    sha: sha,
+    commit: {
+      message: message,
+      verification: {
+        verified: verified,
+        reason: reason,
+        signature: if verified {
+          "signature"
+        } else {
+          nil
+        },
+        payload: if verified {
+          "payload"
+        } else {
+          nil
+        },
+        verified_at: if verified {
+          "2026-07-13T12:00:00Z"
+        } else {
+          nil
+        },
+      },
+    },
+  }
+}
+
+fn workflow_run(id, head_sha) {
+  return {
+    id: id,
+    workflow_id: 17,
+    run_number: 9,
+    run_attempt: 1,
+    name: "CI",
+    event: "merge_group",
+    status: "completed",
+    conclusion: "success",
+    head_branch: "gh-readonly-queue/main/pr-42",
+    head_sha: head_sha,
+    html_url: "https://github.com/octo-org/octo-repo/actions/runs/" + to_string(id),
+    created_at: "2026-07-13T12:00:00Z",
+    run_started_at: "2026-07-13T12:00:01Z",
+    updated_at: "2026-07-13T12:02:00Z",
+  }
+}
+
+pipeline test_pr_commits_reads_every_page_on_one_stable_head(task) {
+  egress_policy({allow: ["github-api.test"], default: "deny"})
+  http_mock_clear()
+  const head_sha = "cccccccccccccccccccccccccccccccccccccccc"
+  http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/pulls/42",
+    {
+      responses: [
+        {
+          status: 200,
+          body: json_stringify(pull(42, head_sha, false, 3)),
+          headers: {"x-ratelimit-remaining": "20"},
+        },
+        {
+          status: 200,
+          body: json_stringify(pull(42, head_sha, false, 3)),
+          headers: {"x-ratelimit-remaining": "17"},
+        },
+      ],
+    },
+  )
+  http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/pulls/42/commits?per_page=2&page=1",
+    {
+      status: 200,
+      body: json_stringify(
+        [
+          commit("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "first", true, "valid"),
+          commit("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "second", false, "unsigned"),
+        ],
+      ),
+      headers: {"x-ratelimit-remaining": "19"},
+    },
+  )
+  http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/pulls/42/commits?per_page=2&page=2",
+    {
+      status: 200,
+      body: json_stringify([commit(head_sha, "third", true, "valid")]),
+      headers: {"x-ratelimit-remaining": "18"},
+    },
+  )
+  const result = github_pr_commits("octo-org", "octo-repo", 42, auth() + {per_page: 2, expected_head_oid: head_sha})
+  assert_eq(result.pull_number, 42, "receipt is bound to the exact pull request")
+  assert_eq(result.head_sha, head_sha, "receipt is bound to the stable head")
+  assert_eq(result.total_count, 3, "all pages are combined")
+  assert_eq(result.pages_fetched, 2, "pagination evidence is explicit")
+  assert_eq(result.commits[1].message, "second", "commit message is retained")
+  assert_eq(result.commits[1].signature.verified, false, "unsigned commit is typed evidence")
+  assert_eq(result.commits[1].signature.reason, "unsigned", "unsigned reason is retained")
+  assert_eq(result.commits[2].sha, head_sha, "terminal commit proves the observed head")
+  assert_eq(len(http_mock_calls()), 4, "head is checked before and after paginated reads")
+}
+
+pipeline test_pr_commits_rejects_malformed_signature_and_head_races(task) {
+  egress_policy({allow: ["github-api.test"], default: "deny"})
+  http_mock_clear()
+  const head_sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/pulls/43",
+    {status: 200, body: json_stringify(pull(43, head_sha)), headers: {"x-ratelimit-remaining": "20"}},
+  )
+  http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/pulls/43/commits?per_page=100&page=1",
+    {
+      status: 200,
+      body: json_stringify([{sha: head_sha, commit: {message: "malformed", verification: {verified: false}}}]),
+      headers: {"x-ratelimit-remaining": "19"},
+    },
+  )
+  const malformed = call("github.pr.commits", auth() + {repo: "octo-org/octo-repo", number: 43})
+  assert(is_err(malformed), "malformed signature evidence fails closed")
+  assert_eq(unwrap_err(malformed).code, "invalid_response", "boundary owns signature validation")
+  http_mock_clear()
+  http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/pulls/430",
+    {
+      status: 200,
+      body: json_stringify(pull(430, head_sha, false, 251)),
+      headers: {"x-ratelimit-remaining": "20"},
+    },
+  )
+  const capped = call("github.pr.commits", auth() + {repo: "octo-org/octo-repo", number: 430})
+  assert(is_err(capped), "provider cap cannot masquerade as a complete commit list")
+  assert_eq(unwrap_err(capped).code, "invalid_response", "provider completeness limit fails closed")
+  assert_eq(len(http_mock_calls()), 1, "known-incomplete reads stop before commit pagination")
+  http_mock_clear()
+  const old_head = "cccccccccccccccccccccccccccccccccccccccc"
+  const new_head = "dddddddddddddddddddddddddddddddddddddddd"
+  http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/pulls/44",
+    {
+      responses: [
+        {status: 200, body: json_stringify(pull(44, old_head)), headers: {"x-ratelimit-remaining": "20"}},
+        {status: 200, body: json_stringify(pull(44, new_head)), headers: {"x-ratelimit-remaining": "18"}},
+      ],
+    },
+  )
+  http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/pulls/44/commits?per_page=100&page=1",
+    {
+      status: 200,
+      body: json_stringify([commit(old_head, "old head", true, "valid")]),
+      headers: {"x-ratelimit-remaining": "19"},
+    },
+  )
+  const raced = call("github.pr.commits", auth() + {repo: "octo-org/octo-repo", number: 44})
+  assert(is_err(raced), "head change during pagination fails closed")
+  assert_eq(unwrap_err(raced).code, "stale_head", "head race uses the canonical conflict code")
+  assert_eq(unwrap_err(raced).expected_head_oid, old_head, "initial head is retained")
+  assert_eq(unwrap_err(raced).observed_head_oid, new_head, "final head is reported")
+}
+
+pipeline test_merged_pr_evidence_is_normalized_and_required(task) {
+  egress_policy({allow: ["github-api.test"], default: "deny"})
+  http_mock_clear()
+  const merged = pull(45, "head-45", true)
+  http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/pulls?state=closed",
+    {status: 200, body: json_stringify([merged]), headers: {"x-ratelimit-remaining": "20"}},
+  )
+  const listed = call("github.pr.list", auth() + {repo: "octo-org/octo-repo", filters: {state: "merged"}})
+  assert_eq(listed[0].merged_at, "2026-07-13T12:00:00Z", "list exposes merge time")
+  assert_eq(
+    listed[0].merge_commit_oid,
+    "dddddddddddddddddddddddddddddddddddddddd",
+    "list normalizes REST merge SHA",
+  )
+  http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/pulls/45",
+    {status: 200, body: json_stringify(merged), headers: {"x-ratelimit-remaining": "19"}},
+  )
+  http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/branches/main/protection",
+    {
+      status: 404,
+      body: json_stringify({message: "Not Found"}),
+      headers: {"x-ratelimit-remaining": "18"},
+    },
+  )
+  http_mock(
+    "POST",
+    BASE + "/graphql",
+    {
+      status: 200,
+      body: json_stringify(
+        {data: {repository: {pullRequest: {number: 45, autoMergeRequest: nil, mergeQueueEntry: nil}}}},
+      ),
+      headers: {"x-ratelimit-remaining": "17"},
+    },
+  )
+  const viewed = call("github.pr.view", auth() + {repo: "octo-org/octo-repo", number: 45})
+  assert_eq(viewed.merge_commit_oid, listed[0].merge_commit_oid, "view and list share one normalizer")
+  http_mock_clear()
+  const missing_oid = pull(46, "head-46", true) + {merge_commit_sha: nil}
+  http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/pulls?state=closed",
+    {status: 200, body: json_stringify([missing_oid]), headers: {"x-ratelimit-remaining": "20"}},
+  )
+  const malformed = call("github.pr.list", auth() + {repo: "octo-org/octo-repo", filters: {state: "merged"}})
+  assert(is_err(malformed), "merged PR without an OID fails closed")
+  assert_eq(
+    unwrap_err(malformed).code,
+    "invalid_response",
+    "merged evidence is required at the boundary",
+  )
+  http_mock_clear()
+  const open = pull(47, "head-47") + {merge_commit_sha: "synthetic-test-merge"}
+  http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/pulls?state=open",
+    {status: 200, body: json_stringify([open]), headers: {"x-ratelimit-remaining": "20"}},
+  )
+  const open_list = call("github.pr.list", auth() + {repo: "octo-org/octo-repo", filters: {state: "open"}})
+  assert_eq(
+    open_list[0].merge_commit_oid,
+    nil,
+    "open PR test-merge SHA is not published as merge evidence",
+  )
+}
+
+pipeline test_actions_runs_returns_closed_typed_envelope(task) {
+  egress_policy({allow: ["github-api.test"], default: "deny"})
+  http_mock_clear()
+  const url = BASE
+    + "/repos/octo-org/octo-repo/actions/workflows/ci.yml/runs?branch=main&event=merge_group&per_page=25&page=2"
+  http_mock(
+    "GET",
+    url,
+    {
+      responses: [
+        {
+          status: 200,
+          body: json_stringify(
+            {total_count: 1, workflow_runs: [workflow_run(701, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]},
+          ),
+          headers: {"x-ratelimit-remaining": "20"},
+        },
+        {
+          status: 200,
+          body: json_stringify({total_count: 1, workflow_runs: [{id: 702, status: "completed"}]}),
+          headers: {"x-ratelimit-remaining": "19"},
+        },
+      ],
+    },
+  )
+  const result = call(
+    "github.actions.runs",
+    auth()
+      + {
+      repo: "octo-org/octo-repo",
+      workflow_id: "ci.yml",
+      branch: "main",
+      event: "merge_group",
+      per_page: 25,
+      page: 2,
+    },
+  )
+  assert_eq(result.repo, "octo-org/octo-repo", "run list is repository-bound")
+  assert_eq(result.workflow_id, "ci.yml", "workflow filter is retained")
+  assert_eq(result.page, 2, "page evidence is explicit")
+  assert_eq(result.runs[0].id, 701, "raw workflow_runs is projected to typed runs")
+  assert_eq(result.runs[0].event, "merge_group", "run event is required and normalized")
+  assert_eq(result.runs[0].head_sha, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "run head is exact")
+  assert(result.get("workflow_runs") == nil, "raw GitHub envelope is not exposed")
+  const malformed = call(
+    "github.actions.runs",
+    auth()
+      + {
+      repo: "octo-org/octo-repo",
+      workflow_id: "ci.yml",
+      branch: "main",
+      event: "merge_group",
+      per_page: 25,
+      page: 2,
+    },
+  )
+  assert(is_err(malformed), "malformed run evidence fails closed")
+  assert_eq(unwrap_err(malformed).code, "invalid_response", "run shape is validated once")
+}
+
+pipeline test_canonical_contracts_distinguish_auth_and_network_failures(task) {
+  egress_policy({allow: ["github-api.test"], default: "deny"})
+  http_mock_clear()
+  http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/actions/runs",
+    {status: 401, body: json_stringify({message: "Bad credentials"}), headers: {}},
+  )
+  const unauthorized = call("github.actions.runs", auth() + {repo: "octo-org/octo-repo"})
+  assert(is_err(unauthorized), "authentication failure is not an empty run list")
+  assert_eq(unwrap_err(unauthorized).code, "auth", "authentication remains distinct")
+  assert_eq(unwrap_err(unauthorized).http_status, 401, "auth status is retained")
+  http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/pulls/47",
+    {status: 500, body: json_stringify({message: "server error"}), headers: {}},
+  )
+  const unavailable = call("github.pr.commits", auth() + {repo: "octo-org/octo-repo", number: 47})
+  assert(is_err(unavailable), "provider failure is not an empty commit list")
+  assert_eq(
+    unwrap_err(unavailable).code,
+    "network",
+    "provider failure remains network-class evidence",
+  )
+  assert_eq(unwrap_err(unavailable).http_status, 500, "provider status is retained")
+}

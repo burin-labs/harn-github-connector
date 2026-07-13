@@ -19,6 +19,7 @@ const GITHUB_OUTBOUND_METHODS = [
   "github.pr.view",
   "github.pr.edit",
   "github.pr.files",
+  "github.pr.commits",
   "github.pr.checks",
   "github.pr.merge",
   "github.pr.enable_auto_merge",
@@ -120,6 +121,8 @@ const GITHUB_CI_FAILURE_CONCLUSIONS = ["failure", "timed_out", "startup_failure"
 
 const GITHUB_CI_FAILURE_STATES = ["failure", "error"]
 
+const MAX_PULL_REQUEST_COMMIT_PAGES = 250
+
 type GithubCommitFileAddition = {path: string, contents_base64: string}
 
 type GithubCommitFileDeletion = {path: string}
@@ -159,6 +162,8 @@ type GithubPullRequestSummary = {
   github_state: string,
   draft: bool,
   merged: bool,
+  merged_at: string?,
+  merge_commit_oid: string?,
   mergeable: bool?,
   mergeable_state: string,
   base: GithubPullRequestRef,
@@ -203,6 +208,46 @@ type GithubCommitSignature = {
   signature_present: bool,
   payload_present: bool,
   verified_at: string?,
+}
+
+type GithubPullRequestCommit = {sha: string, message: string, signature: GithubCommitSignature}
+
+type GithubPullRequestCommits = {
+  repo: string,
+  pull_number: int,
+  head_ref: string,
+  head_sha: string,
+  total_count: int,
+  commits: list<GithubPullRequestCommit>,
+  pages_fetched: int,
+  per_page: int,
+}
+
+type GithubWorkflowRun = {
+  repo: string,
+  id: int,
+  workflow_id: int?,
+  run_number: int?,
+  run_attempt: int?,
+  name: string,
+  event: string,
+  status: string,
+  conclusion: string?,
+  head_branch: string,
+  head_sha: string,
+  url: string,
+  created_at: string?,
+  run_started_at: string?,
+  updated_at: string?,
+}
+
+type GithubWorkflowRuns = {
+  repo: string,
+  workflow_id: string?,
+  total_count: int,
+  runs: list<GithubWorkflowRun>,
+  page: int,
+  per_page: int,
 }
 
 type GithubConnectorState = {initialized: bool, active: bool, bindings: dict, ctx: dict}
@@ -405,6 +450,9 @@ pub fn call(method, args = {}) {
   }
   if method == "github.pr.files" {
     return __github_pr_files(args, cfg)
+  }
+  if method == "github.pr.commits" {
+    return __github_pr_commits(args, cfg)
   }
   if method == "github.pr.checks" {
     return __github_pr_checks(args, cfg)
@@ -756,6 +804,15 @@ pub fn pulls_merge_safe(owner, repo, number, options = nil) {
 pub fn pulls_enable_auto_merge(owner, repo, number, options = nil) {
   const opts = options ?? {}
   return call("github.pr.enable_auto_merge", opts + {owner: owner, repo: repo, pull_number: number})
+}
+
+/**
+ * Read every commit on one stable pull-request head, including normalized
+ * GitHub signature verification evidence for each commit.
+ */
+pub fn github_pr_commits(owner, repo, number, options = nil) {
+  const opts = options ?? {}
+  return call("github.pr.commits", opts + {owner: owner, repo: repo, pull_number: number})
 }
 
 /**
@@ -1844,7 +1901,7 @@ fn __github_pr_list(args, cfg) {
     if is_err(valid) {
       return valid
     }
-    if requested_state == "merged" && pull?.merged_at == nil && !(pull?.merged ?? false) {
+    if requested_state == "merged" && !__pull_is_merged(pull) {
       continue
     }
     typed = typed + [__typed_pr_summary(pull)]
@@ -2009,6 +2066,148 @@ fn __github_pr_files(args, cfg) {
   }
 }
 
+fn __github_pr_commits(args, cfg) {
+  const repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  const r = unwrap(repo)
+  const number = __positive_decimal(args?.pr_number ?? args?.number ?? args?.pull_number, nil)
+  if number == nil {
+    return __err("schema_drift", "github.pr.commits requires a positive pull-request number")
+  }
+  const per_page = if args?.per_page == nil {
+    100
+  } else {
+    __positive_decimal(args.per_page, 100)
+  }
+  if per_page == nil {
+    return __err("schema_drift", "github.pr.commits per_page must be an integer from 1 to 100")
+  }
+  const initial = __github_pull_identity(r, number, cfg, "github.pr.commits")
+  if is_err(initial) {
+    return initial
+  }
+  const initial_pull = unwrap(initial)
+  const head_sha = to_string(initial_pull.head.sha)
+  const expected_commit_count = __nonnegative_decimal(initial_pull?.commits)
+  if expected_commit_count == nil || expected_commit_count == 0 {
+    return __err("invalid_response", "github.pr.commits response omitted a positive commit count")
+  }
+  if expected_commit_count > 250 {
+    return __err(
+      "invalid_response",
+      "github.pr.commits cannot prove completeness above GitHub's 250-commit pull-request limit",
+    )
+  }
+  const expected_head_oid = trim(to_string(args?.expected_head_oid ?? ""))
+  if expected_head_oid != "" && expected_head_oid != head_sha {
+    return __stale_pr_head(expected_head_oid, head_sha)
+  }
+  const pages = __github_pr_commit_pages(r, number, expected_commit_count, per_page, cfg)
+  if is_err(pages) {
+    return pages
+  }
+  const page_result = unwrap(pages)
+  const commits: list<GithubPullRequestCommit> = page_result.commits
+  const terminal_commit = commits[len(commits) - 1]
+  if terminal_commit == nil {
+    return __err("invalid_response", "github.pr.commits could not resolve the terminal commit")
+  }
+  const terminal_sha = terminal_commit.sha
+  if terminal_sha != head_sha {
+    return __stale_pr_head(head_sha, terminal_sha)
+  }
+  const final = __github_pull_identity(r, number, cfg, "github.pr.commits")
+  if is_err(final) {
+    return final
+  }
+  const observed_head_oid = to_string(unwrap(final).head.sha)
+  if observed_head_oid != head_sha {
+    return __stale_pr_head(head_sha, observed_head_oid)
+  }
+  const observed_commit_count = __nonnegative_decimal(unwrap(final)?.commits)
+  if observed_commit_count != expected_commit_count {
+    return __err(
+      "stale_head",
+      "pull request commit count changed while reading canonical evidence",
+      {
+        expected_head_oid: head_sha,
+        observed_head_oid: observed_head_oid,
+        expected_commit_count: expected_commit_count,
+        observed_commit_count: observed_commit_count,
+      },
+    )
+  }
+  const result: GithubPullRequestCommits = {
+    repo: r.full_name,
+    pull_number: number,
+    head_ref: to_string(initial_pull.head.ref),
+    head_sha: head_sha,
+    total_count: expected_commit_count,
+    commits: commits,
+    pages_fetched: page_result.pages_fetched,
+    per_page: per_page,
+  }
+  return result
+}
+
+fn __github_pr_commit_pages(repo, number, expected_commit_count, per_page, cfg) {
+  let commits: list<GithubPullRequestCommit> = []
+  let seen_shas = {}
+  let page = 1
+  while page <= MAX_PULL_REQUEST_COMMIT_PAGES {
+    const raw_page = __github_json(
+      "GET",
+      __github_api_url(
+        cfg.api_base_url,
+        "/repos/" + repo.owner + "/" + repo.name + "/pulls/" + to_string(number)
+          + "/commits?per_page="
+          + to_string(per_page)
+          + "&page="
+          + to_string(page),
+      ),
+      nil,
+      cfg,
+    )
+    if is_err(raw_page) {
+      return raw_page
+    }
+    if type_of(raw_page) != "list" {
+      return __err("invalid_response", "github.pr.commits expected GitHub to return a commit list")
+    }
+    for raw_commit in raw_page {
+      const typed = __typed_pull_request_commit(repo.full_name, raw_commit)
+      if is_err(typed) {
+        return typed
+      }
+      const commit = unwrap(typed)
+      if seen_shas.get(commit.sha) {
+        return __err("invalid_response", "github.pr.commits returned a duplicate commit across pages")
+      }
+      seen_shas[commit.sha] = true
+      commits = commits + [commit]
+    }
+    if len(commits) == expected_commit_count {
+      break
+    }
+    if len(commits) > expected_commit_count || len(raw_page) < per_page {
+      return __err(
+        "invalid_response",
+        "github.pr.commits pagination did not match the pull-request commit count",
+      )
+    }
+    if page == MAX_PULL_REQUEST_COMMIT_PAGES {
+      return __err("invalid_response", "github.pr.commits exceeded the bounded pagination limit")
+    }
+    page = page + 1
+  }
+  if len(commits) == 0 {
+    return __err("invalid_response", "github.pr.commits returned no commits for the pull request")
+  }
+  return Ok({commits: commits, pages_fetched: page})
+}
+
 fn __github_pr_comment(args, cfg) {
   const commented = __github_issue_comment(
     args + {issue_number: args?.pr_number ?? args?.number ?? args?.pull_number},
@@ -2150,7 +2349,56 @@ fn __github_actions_runs(args, cfg) {
     return repo
   }
   const r = unwrap(repo)
-  return __actions_workflow_runs_list(args + {owner: r.owner, repo: r.name}, cfg)
+  const per_page = if args?.per_page == nil {
+    30
+  } else {
+    __positive_decimal(args.per_page, 100)
+  }
+  const page = if args?.page == nil {
+    1
+  } else {
+    __positive_decimal(args.page, nil)
+  }
+  if per_page == nil {
+    return __err("schema_drift", "github.actions.runs per_page must be an integer from 1 to 100")
+  }
+  if page == nil {
+    return __err("schema_drift", "github.actions.runs page must be a positive integer")
+  }
+  const response = __actions_workflow_runs_list(args + {owner: r.owner, repo: r.name}, cfg)
+  if is_err(response) {
+    return response
+  }
+  if type_of(response) != "dict" || response?.total_count == nil
+    || type_of(response?.workflow_runs) != "list" {
+    return __err("invalid_response", "github.actions.runs expected total_count and workflow_runs")
+  }
+  const total_count = __nonnegative_decimal(response.total_count)
+  if total_count == nil {
+    return __err("invalid_response", "github.actions.runs expected a non-negative total_count")
+  }
+  let runs: list<GithubWorkflowRun> = []
+  for run in response.workflow_runs {
+    const typed = __typed_workflow_run(r.full_name, run)
+    if is_err(typed) {
+      return typed
+    }
+    runs = runs + [unwrap(typed)]
+  }
+  const workflow_id = args?.workflow_id ?? args?.workflow ?? args?.workflow_file
+  const result: GithubWorkflowRuns = {
+    repo: r.full_name,
+    workflow_id: if workflow_id == nil {
+      nil
+    } else {
+      to_string(workflow_id)
+    },
+    total_count: total_count,
+    runs: runs,
+    page: page,
+    per_page: per_page,
+  }
+  return result
 }
 
 fn __github_actions_run(args, cfg) {
@@ -2163,7 +2411,11 @@ fn __github_actions_run(args, cfg) {
   if is_err(run) {
     return run
   }
-  return __typed_workflow_run(r.full_name, run)
+  const typed = __typed_workflow_run(r.full_name, run)
+  if is_err(typed) {
+    return typed
+  }
+  return unwrap(typed)
 }
 
 fn __github_actions_run_jobs(args, cfg) {
@@ -2371,13 +2623,23 @@ fn __github_commit_signature(args, cfg) {
   if is_err(commit) {
     return commit
   }
+  const typed = __typed_commit_signature(r.full_name, commit, "github.commit.signature")
+  if is_err(typed) {
+    return typed
+  }
+  return unwrap(typed)
+}
+
+fn __typed_commit_signature(repo, commit, surface) {
   const verification = commit?.commit?.verification
-  if commit?.sha == nil || type_of(verification) != "dict" || type_of(verification?.verified) != "bool"
+  if type_of(commit) != "dict" || trim(to_string(commit?.sha ?? "")) == ""
+    || type_of(verification) != "dict"
+    || type_of(verification?.verified) != "bool"
     || trim(to_string(verification?.reason ?? "")) == "" {
-    return __err("invalid_response", "github.commit.signature response omitted verification evidence")
+    return __err("invalid_response", surface + " response omitted verification evidence")
   }
   const result: GithubCommitSignature = {
-    repo: r.full_name,
+    repo: repo,
     sha: to_string(commit.sha),
     verified: verification.verified,
     reason: lowercase(to_string(verification.reason)),
@@ -2385,7 +2647,24 @@ fn __github_commit_signature(args, cfg) {
     payload_present: verification?.payload != nil && trim(to_string(verification.payload)) != "",
     verified_at: verification?.verified_at,
   }
-  return result
+  return Ok(result)
+}
+
+fn __typed_pull_request_commit(repo, commit) {
+  if type_of(commit) != "dict" || trim(to_string(commit?.sha ?? "")) == ""
+    || commit?.commit?.message == nil {
+    return __err("invalid_response", "github.pr.commits response omitted commit sha or message")
+  }
+  const signature = __typed_commit_signature(repo, commit, "github.pr.commits")
+  if is_err(signature) {
+    return signature
+  }
+  const result: GithubPullRequestCommit = {
+    sha: to_string(commit.sha),
+    message: to_string(commit.commit.message),
+    signature: unwrap(signature),
+  }
+  return Ok(result)
 }
 
 fn __github_release_assets(args, cfg) {
@@ -3087,6 +3366,14 @@ fn __positive_decimal(value, max_value) {
     return nil
   }
   return parsed
+}
+
+fn __nonnegative_decimal(value) {
+  const raw = trim(to_string(value ?? ""))
+  if len(regex_captures("^[0-9]+$", raw)) == 0 {
+    return nil
+  }
+  return to_int(raw)
 }
 
 /**
@@ -3905,7 +4192,13 @@ fn __typed_pr_summary(pull) {
     state: state,
     github_state: pull?.state ?? "",
     draft: pull?.draft ?? false,
-    merged: pull?.merged ?? false,
+    merged: __pull_is_merged(pull),
+    merged_at: if pull?.merged_at == nil {
+      nil
+    } else {
+      to_string(pull.merged_at)
+    },
+    merge_commit_oid: __pull_merge_commit_oid(pull),
     mergeable: pull?.mergeable,
     mergeable_state: pull?.mergeable_state ?? "unknown",
     base: __typed_ref(pull?.base),
@@ -3925,7 +4218,6 @@ fn __typed_pr_details(pull) {
     created_at: pull?.created_at,
     updated_at: pull?.updated_at,
     closed_at: pull?.closed_at,
-    merged_at: pull?.merged_at,
   }
 }
 
@@ -3977,7 +4269,61 @@ fn __validate_pull_response(pull, surface) {
     || trim(to_string(pull?.head?.sha ?? "")) == "" {
     return __err("invalid_response", surface + " response omitted required pull-request fields")
   }
+  const merge_commit_oid = __pull_merge_commit_oid(pull)
+  if __pull_is_merged(pull)
+    && (type_of(pull?.merged_at) != "string"
+    || trim(pull.merged_at) == ""
+    || merge_commit_oid == nil
+    || len(regex_captures("^[0-9a-fA-F]{40}$", merge_commit_oid)) == 0) {
+    return __err("invalid_response", surface + " response omitted required merged pull-request evidence")
+  }
   return Ok(true)
+}
+
+fn __pull_is_merged(pull) {
+  return (pull?.merged ?? false) || pull?.merged_at != nil
+}
+
+fn __pull_merge_commit_oid(pull) {
+  if !__pull_is_merged(pull) {
+    return nil
+  }
+  const oid = pull?.merge_commit_oid ?? pull?.merge_commit_sha
+  if oid == nil || trim(to_string(oid)) == "" {
+    return nil
+  }
+  return lowercase(to_string(oid))
+}
+
+fn __github_pull_identity(repo, number, cfg, surface) {
+  const pull = __github_json(
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + repo.owner + "/" + repo.name + "/pulls/" + to_string(number),
+    ),
+    nil,
+    cfg,
+  )
+  if is_err(pull) {
+    return pull
+  }
+  const valid = __validate_pull_response(pull, surface)
+  if is_err(valid) {
+    return valid
+  }
+  if to_int(pull.number) != number {
+    return __err("invalid_response", surface + " response did not match the requested pull request")
+  }
+  return Ok(pull)
+}
+
+fn __stale_pr_head(expected_head_oid, observed_head_oid) {
+  return __err(
+    "stale_head",
+    "pull request head changed while reading canonical evidence",
+    {expected_head_oid: expected_head_oid, observed_head_oid: observed_head_oid},
+  )
 }
 
 fn __validate_pull_identity(pull, surface) {
@@ -4097,17 +4443,30 @@ fn __typed_workflow_dispatch(repo, ref, resolved) {
 }
 
 fn __typed_workflow_run(repo, run) {
-  if type_of(run) != "dict" || run?.id == nil || trim(to_string(run?.status ?? "")) == ""
+  const id = __actions_run_id(run?.id)
+  if type_of(run) != "dict" || id == nil || trim(to_string(run?.status ?? "")) == ""
     || trim(to_string(run?.event ?? "")) == ""
     || trim(to_string(run?.head_sha ?? "")) == "" {
     return __err("invalid_response", "github.actions.run response omitted exact run evidence")
   }
-  return {
+  const typed: GithubWorkflowRun = {
     repo: repo,
-    id: to_int(run.id),
-    workflow_id: run?.workflow_id,
-    run_number: run?.run_number,
-    run_attempt: run?.run_attempt,
+    id: id,
+    workflow_id: if run?.workflow_id == nil {
+      nil
+    } else {
+      to_int(run.workflow_id)
+    },
+    run_number: if run?.run_number == nil {
+      nil
+    } else {
+      to_int(run.run_number)
+    },
+    run_attempt: if run?.run_attempt == nil {
+      nil
+    } else {
+      to_int(run.run_attempt)
+    },
     name: to_string(run?.name ?? ""),
     event: to_string(run.event),
     status: lowercase(to_string(run.status)),
@@ -4119,10 +4478,23 @@ fn __typed_workflow_run(repo, run) {
     head_branch: to_string(run?.head_branch ?? ""),
     head_sha: to_string(run.head_sha),
     url: to_string(run?.html_url ?? run?.url ?? ""),
-    created_at: run?.created_at,
-    run_started_at: run?.run_started_at,
-    updated_at: run?.updated_at,
+    created_at: if run?.created_at == nil {
+      nil
+    } else {
+      to_string(run.created_at)
+    },
+    run_started_at: if run?.run_started_at == nil {
+      nil
+    } else {
+      to_string(run.run_started_at)
+    },
+    updated_at: if run?.updated_at == nil {
+      nil
+    } else {
+      to_string(run.updated_at)
+    },
   }
+  return Ok(typed)
 }
 
 fn __typed_workflow_job(job) {
@@ -4309,10 +4681,7 @@ fn __check_rollup(checks) {
 }
 
 fn __classify_pr_state(pull, rollup, queue) {
-  if pull?.merged ?? false {
-    return "merged"
-  }
-  if pull?.state == "closed" && pull?.merged_at != nil {
+  if __pull_is_merged(pull) {
     return "merged"
   }
   if queue != nil {

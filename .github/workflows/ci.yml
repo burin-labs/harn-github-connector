@@ -83,13 +83,16 @@ jobs:
       - name: Format
         run: harn fmt --check src tests
 
-      - name: Run smoke tests
+      - name: Run smoke pipelines
         shell: bash
         run: |
           set -euo pipefail
           for test in tests/*.harn; do
             harn run "${test}"
           done
+
+      - name: Run tests
+        run: harn test tests
 
       - name: Connector contract
         run: harn connector check .
