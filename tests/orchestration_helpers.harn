@@ -40,7 +40,7 @@ fn dispatch_204() {
   return ""
 }
 
-pipeline test_dispatch_identity_returns_returned_run_id_without_monitoring(task) {
+pipeline test_dispatch_identity_hydrates_returned_run_id_after_eventual_consistency(task) {
   egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
   http_mock_clear()
   const runs_url = BASE
@@ -63,6 +63,24 @@ pipeline test_dispatch_identity_returns_returned_run_id_without_monitoring(task)
     BASE + "/repos/octo-org/octo-repo/actions/workflows/identity-returned.yml/dispatches",
     {status: 200, body: dispatch_returning(321), headers: {"x-ratelimit-remaining": "30"}},
   )
+  http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/actions/runs/321",
+    {
+      responses: [
+        {
+          status: 404,
+          body: json_stringify({message: "Not Found"}),
+          headers: {"x-ratelimit-remaining": "29"},
+        },
+        {
+          status: 200,
+          body: json_stringify(run_payload(321, "queued", nil)),
+          headers: {"x-ratelimit-remaining": "28"},
+        },
+      ],
+    },
+  )
   const result = github_dispatch_workflow_and_resolve_run(
     "octo-org",
     "octo-repo",
@@ -75,15 +93,21 @@ pipeline test_dispatch_identity_returns_returned_run_id_without_monitoring(task)
   assert_eq(result.status, "dispatch_accepted", "identity boundary status")
   assert_eq(result.run_id, 321, "returned run id is pinned")
   assert_eq(result.candidate_run_ids, [321], "returned identity is structured")
-  assert_eq(result.head_sha, nil, "direct-id dispatch has no observed source sha")
-  assert_eq(result.head_branch, nil, "direct-id dispatch has no observed source branch")
-  assert_eq(result.event, nil, "direct-id dispatch has no observed event")
+  assert_eq(
+    result.head_sha,
+    "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+    "direct-id dispatch hydrates the observed source sha",
+  )
+  assert_eq(result.head_branch, "main", "direct-id dispatch hydrates the observed source branch")
+  assert_eq(result.event, "workflow_dispatch", "direct-id dispatch hydrates the observed event")
+  assert(result.run_url.contains("/actions/runs/321"), "direct-id dispatch hydrates the run URL")
   assert_eq(result.conclusion, nil, "terminal state is not observed")
   assert_eq(result.timed_out, false, "identity resolution did not time out")
   const calls = http_mock_calls()
-  assert_eq(len(calls), 2, "identity boundary stops after snapshot and dispatch")
+  assert_eq(len(calls), 4, "identity boundary retries the exact run until metadata is observable")
   assert_eq(calls[0].url, runs_url, "snapshot precedes dispatch")
   assert_eq(calls[1].method, "POST", "dispatch follows snapshot")
+  assert_eq(calls[2].url, calls[3].url, "eventual-consistency retry keeps the exact run identity")
   http_mock_clear()
 }
 
