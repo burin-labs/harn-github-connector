@@ -159,6 +159,7 @@ Named helpers:
 | `github_latest_release(owner, repo, options)` | Fetch latest release metadata in a stable envelope. |
 | `github_release_assets(owner, repo, release_id, options)` | List release assets in a stable envelope; defaults to the latest release. |
 | `issues_create_with_template(owner, repo, template, vars, options)` | Render a small title/body template, then create an issue. |
+| `github_dispatch_workflow_and_resolve_run(owner, repo, workflow_id, ref, inputs, options)` | Dispatch a workflow and return its exact run identity before terminal monitoring. |
 | `github_dispatch_workflow_and_wait(owner, repo, workflow_id, ref, inputs, options)` | Dispatch a workflow and wait for its exact run, rejecting ambiguous unseen matches. |
 | `github_wait_for_workflow_run(owner, repo, run_id_or_filter, options)` | Poll an existing workflow run or a filtered run lookup. |
 | `github_ensure_auto_merge(owner, repo, pull_number, options)` | Enable auto-merge and normalize already-enabled responses. |

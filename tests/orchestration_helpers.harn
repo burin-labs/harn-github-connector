@@ -1,5 +1,6 @@
 import {
   github_close_pr,
+  github_dispatch_workflow_and_resolve_run,
   github_dispatch_workflow_and_wait,
   github_ensure_auto_merge,
   github_find_open_pr,
@@ -37,6 +38,50 @@ fn dispatch_returning(run_id) {
 
 fn dispatch_204() {
   return ""
+}
+
+pipeline test_dispatch_identity_returns_returned_run_id_without_monitoring(task) {
+  egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
+  http_mock_clear()
+  const runs_url = BASE
+    + "/repos/octo-org/octo-repo/actions/workflows/identity-returned.yml/runs?branch=main&event=workflow_dispatch&per_page=10"
+  http_mock(
+    "GET",
+    runs_url,
+    {
+      responses: [
+        {
+          status: 200,
+          body: json_stringify({total_count: 0, workflow_runs: []}),
+          headers: {"x-ratelimit-remaining": "31"},
+        },
+      ],
+    },
+  )
+  http_mock(
+    "POST",
+    BASE + "/repos/octo-org/octo-repo/actions/workflows/identity-returned.yml/dispatches",
+    {status: 200, body: dispatch_returning(321), headers: {"x-ratelimit-remaining": "30"}},
+  )
+  const result = github_dispatch_workflow_and_resolve_run(
+    "octo-org",
+    "octo-repo",
+    "identity-returned.yml",
+    "main",
+    nil,
+    auth(),
+  )
+  assert_eq(result.ok, true, "returned run identity succeeds")
+  assert_eq(result.status, "dispatch_accepted", "identity boundary status")
+  assert_eq(result.run_id, 321, "returned run id is pinned")
+  assert_eq(result.candidate_run_ids, [321], "returned identity is structured")
+  assert_eq(result.conclusion, nil, "terminal state is not observed")
+  assert_eq(result.timed_out, false, "identity resolution did not time out")
+  const calls = http_mock_calls()
+  assert_eq(len(calls), 2, "identity boundary stops after snapshot and dispatch")
+  assert_eq(calls[0].url, runs_url, "snapshot precedes dispatch")
+  assert_eq(calls[1].method, "POST", "dispatch follows snapshot")
+  http_mock_clear()
 }
 
 pipeline test_dispatch_with_run_id_completes_success(task) {
@@ -114,7 +159,7 @@ pipeline test_dispatch_with_run_id_completes_success(task) {
   http_mock_clear()
 }
 
-pipeline test_dispatch_selects_only_unseen_exact_run(task) {
+pipeline test_dispatch_identity_selects_only_unseen_exact_run(task) {
   egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
   http_mock_clear()
   const sha = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
@@ -158,16 +203,7 @@ pipeline test_dispatch_selects_only_unseen_exact_run(task) {
     BASE + "/repos/octo-org/octo-repo/actions/workflows/release.yml/dispatches",
     {status: 204, body: dispatch_204(), headers: {"x-ratelimit-remaining": "20"}},
   )
-  http_mock(
-    "GET",
-    BASE + "/repos/octo-org/octo-repo/actions/runs/901",
-    {
-      status: 200,
-      body: json_stringify(run_payload(901, "completed", "failure", "not-a-timestamp")),
-      headers: {"x-ratelimit-remaining": "18"},
-    },
-  )
-  const result = github_dispatch_workflow_and_wait(
+  const result = github_dispatch_workflow_and_resolve_run(
     "octo-org",
     "octo-repo",
     "release.yml",
@@ -175,20 +211,16 @@ pipeline test_dispatch_selects_only_unseen_exact_run(task) {
     nil,
     auth() + {head_sha: sha},
   )
-  assert_eq(result.status, "completed", "status completed even on failing conclusion")
-  assert_eq(result.ok, true, "ok=true when wait completes")
-  assert_eq(result.conclusion, "failure", "failure conclusion surfaces")
+  assert_eq(result.status, "dispatch_accepted", "identity returns before completion")
+  assert_eq(result.ok, true, "one unseen exact identity succeeds")
+  assert_eq(result.conclusion, nil, "terminal conclusion is not fetched")
   assert_eq(result.run_id, 901, "only unseen exact run selected")
   assert_eq(result.candidate_run_ids, [901], "selected identity is structured")
   const calls = http_mock_calls()
+  assert_eq(len(calls), 3, "identity boundary performs no terminal run GET")
   assert_eq(calls[0].url, runs_url, "pre-dispatch exact ids snapshotted")
   assert_eq(calls[1].method, "POST", "dispatch occurs after snapshot")
   assert_eq(calls[2].url, runs_url, "same exact filter locates unseen runs")
-  assert_eq(
-    calls[3].url,
-    BASE + "/repos/octo-org/octo-repo/actions/runs/901",
-    "selected id is pinned",
-  )
   http_mock_clear()
 }
 
@@ -241,7 +273,7 @@ pipeline test_dispatch_rejects_multiple_unseen_exact_runs(task) {
   http_mock_clear()
 }
 
-pipeline test_dispatch_times_out_when_run_never_appears(task) {
+pipeline test_dispatch_identity_returns_run_not_found_when_run_never_appears(task) {
   egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
   http_mock_clear()
   const runs_url = BASE
@@ -263,7 +295,7 @@ pipeline test_dispatch_times_out_when_run_never_appears(task) {
     BASE + "/repos/octo-org/octo-repo/actions/workflows/never.yml/dispatches",
     {status: 204, body: "", headers: {"x-ratelimit-remaining": "10"}},
   )
-  const result = github_dispatch_workflow_and_wait(
+  const result = github_dispatch_workflow_and_resolve_run(
     "octo-org",
     "octo-repo",
     "never.yml",
@@ -301,7 +333,7 @@ pipeline test_dispatch_returns_dispatch_failed(task) {
       headers: {"x-ratelimit-remaining": "5"},
     },
   )
-  const result = github_dispatch_workflow_and_wait("octo-org", "octo-repo", "broken.yml", "main", nil, auth())
+  const result = github_dispatch_workflow_and_resolve_run("octo-org", "octo-repo", "broken.yml", "main", nil, auth())
   assert_eq(result.ok, false, "ok=false")
   assert_eq(result.status, "dispatch_failed", "status=dispatch_failed")
   assert(result.error != nil, "error captured")
@@ -326,7 +358,14 @@ pipeline test_dispatch_returns_poll_failed_when_snapshot_fails(task) {
       ],
     },
   )
-  const result = github_dispatch_workflow_and_wait("octo-org", "octo-repo", "private.yml", "main", nil, auth())
+  const result = github_dispatch_workflow_and_resolve_run(
+    "octo-org",
+    "octo-repo",
+    "private.yml",
+    "main",
+    nil,
+    auth(),
+  )
   assert_eq(result.ok, false, "snapshot error fails closed")
   assert_eq(result.status, "poll_failed", "snapshot error uses existing poll status")
   assert_eq(result.error.code, "missing_scopes", "connector error is preserved")

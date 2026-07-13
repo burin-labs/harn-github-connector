@@ -885,13 +885,14 @@ const DEFAULT_CHECKS_TIMEOUT_MS = 1800000
 const DEFAULT_LOG_TAIL_LINES = 200
 
 /**
- * Dispatch a workflow_dispatch workflow and wait for it to finish. Returns a
+ * Dispatch a workflow_dispatch workflow and resolve its exact run identity.
+ * Returns immediately after pinning a run ID, before terminal monitoring, in a
  * stable `{ok, status, conclusion, run_id, candidate_run_ids, run_url,
  * workflow_id, created_at, started_at, updated_at, attempts, timed_out, error}`
- * envelope. `status` is one of `completed`, `timed_out`, `dispatch_failed`,
- * `ambiguous_dispatch`, `run_not_found`, or `poll_failed`.
+ * envelope. Success has `status: "dispatch_accepted"`; failures preserve
+ * `poll_failed`, `dispatch_failed`, `ambiguous_dispatch`, or `run_not_found`.
  */
-pub fn github_dispatch_workflow_and_wait(
+pub fn github_dispatch_workflow_and_resolve_run(
   owner,
   repo,
   workflow_id,
@@ -934,10 +935,37 @@ pub fn github_dispatch_workflow_and_wait(
     )
   }
   const dispatch_run_id = __extract_dispatch_run_id(dispatch)
+  if dispatch_run_id != nil {
+    return __workflow_wait_envelope(true, "dispatch_accepted", workflow_id, dispatch_run_id, [], false, nil)
+  }
   const dispatch_filter = filter + {excluded_run_ids: snapshot_run_ids, require_unambiguous_dispatch: true}
-  const wait_options = opts + {workflow_id: workflow_id, filter: dispatch_filter}
-  const target = dispatch_run_id ?? dispatch_filter
-  return github_wait_for_workflow_run(owner, repo, target, wait_options)
+  const cfg = __workflow_wait_config(opts + {workflow_id: workflow_id}, dispatch_filter)
+    + {return_on_identity: true}
+  return __workflow_wait_loop(owner, repo, cfg)
+}
+
+/**
+ * Dispatch a workflow_dispatch workflow and wait for it to finish. Returns a
+ * stable `{ok, status, conclusion, run_id, candidate_run_ids, run_url,
+ * workflow_id, created_at, started_at, updated_at, attempts, timed_out, error}`
+ * envelope. `status` is one of `completed`, `timed_out`, `dispatch_failed`,
+ * `ambiguous_dispatch`, `run_not_found`, or `poll_failed`.
+ */
+pub fn github_dispatch_workflow_and_wait(
+  owner,
+  repo,
+  workflow_id,
+  ref = "main",
+  inputs = nil,
+  options = nil,
+) {
+  const opts = options ?? {}
+  const identity = github_dispatch_workflow_and_resolve_run(owner, repo, workflow_id, ref, inputs, opts)
+  if !identity.ok {
+    return identity
+  }
+  const monitored = github_wait_for_workflow_run(owner, repo, identity.run_id, opts + {workflow_id: workflow_id})
+  return monitored + {attempts: identity.attempts + monitored.attempts}
 }
 
 /**
@@ -1076,6 +1104,9 @@ fn __workflow_wait_loop(owner, repo, cfg) {
         )
       }
       run_id = located.run_id
+    }
+    if run_id != nil && (cfg?.return_on_identity ?? false) {
+      return __workflow_wait_envelope(true, "dispatch_accepted", cfg.workflow_id, run_id, attempts, false, nil)
     }
     if run_id != nil {
       const probed = __workflow_wait_probe_step(owner, repo, run_id, cfg.auth, attempt)
