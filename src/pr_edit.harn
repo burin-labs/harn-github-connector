@@ -61,6 +61,5 @@ pub fn pr_edit_result(summary: dict, pull: dict) -> dict {
     updated_at: pull?.updated_at,
     closed_at: pull?.closed_at,
     merged_at: pull?.merged_at,
-    raw: pull,
   }
 }

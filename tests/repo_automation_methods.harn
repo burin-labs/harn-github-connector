@@ -221,9 +221,14 @@ pipeline test_repo_automation_methods(task) {
       headers: {"x-ratelimit-remaining": "5"},
     },
   )
-  const auto_merge = pulls_enable_auto_merge("octo-org", "octo-repo", 7, auth + {method: "squash"})
+  const auto_merge = pulls_enable_auto_merge(
+    "octo-org",
+    "octo-repo",
+    7,
+    auth + {method: "squash", expected_head_oid: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+  )
   assert_eq(auto_merge.state, "enabled", "auto-merge enabled state")
-  assert_eq(auto_merge.requested_method, "SQUASH", "auto-merge merge method normalized")
+  assert_eq(auto_merge.merge_method, "SQUASH", "auto-merge merge method normalized")
   const calls = http_mock_calls()
   const dispatch_body = json_parse(calls[1].body)
   const mutation_body = json_parse(calls[10].body)

@@ -474,13 +474,15 @@ pipeline test_ensure_auto_merge_already_enabled(task) {
       headers: {"x-ratelimit-remaining": "20"},
     },
   )
-  const result = github_ensure_auto_merge("octo-org", "octo-repo", 9, auth() + {method: "squash"})
-  assert_eq(result.ok, true, "ok=true")
+  const result = github_ensure_auto_merge(
+    "octo-org",
+    "octo-repo",
+    9,
+    auth() + {method: "squash", expected_head_oid: "abc"},
+  )
   assert_eq(result.state, "already_enabled", "already_enabled state")
   assert_eq(result.already_enabled, true, "already_enabled flag")
-  assert_eq(result.requested_method, "SQUASH", "requested method normalized")
   assert_eq(result.merge_method, "SQUASH", "merge method recorded from existing auto_merge")
-  assert_eq(result.strategy, "graphql_auto_merge", "strategy")
   http_mock_clear()
 }
 
@@ -527,11 +529,10 @@ pipeline test_ensure_auto_merge_enables_via_graphql(task) {
       headers: {"x-ratelimit-remaining": "18"},
     },
   )
-  const result = github_ensure_auto_merge("octo-org", "octo-repo", 12, auth())
-  assert_eq(result.ok, true, "ok=true")
+  const result = github_ensure_auto_merge("octo-org", "octo-repo", 12, auth() + {expected_head_oid: "fff"})
   assert_eq(result.state, "enabled", "state=enabled")
   assert_eq(result.already_enabled, false, "not already enabled")
-  assert_eq(result.requested_method, "MERGE", "default method MERGE")
+  assert_eq(result.merge_method, "MERGE", "default method MERGE")
   assert_eq(result.url, "https://github.com/octo-org/octo-repo/pull/12", "url surfaced")
   http_mock_clear()
 }
@@ -544,10 +545,9 @@ pipeline test_ensure_auto_merge_failed(task) {
     BASE + "/repos/octo-org/octo-repo/pulls/77",
     {status: 404, body: "{\"message\":\"Not Found\"}", headers: {"x-ratelimit-remaining": "10"}},
   )
-  const result = github_ensure_auto_merge("octo-org", "octo-repo", 77, auth())
-  assert_eq(result.ok, false, "ok=false")
-  assert_eq(result.state, "failed", "state=failed")
-  assert(result.error != nil, "error attached")
+  const result = github_ensure_auto_merge("octo-org", "octo-repo", 77, auth() + {expected_head_oid: "missing"})
+  assert(is_err(result), "provider error remains a Result failure")
+  assert_eq(unwrap_err(result).http_status, 404, "HTTP status remains structured")
   http_mock_clear()
 }
 

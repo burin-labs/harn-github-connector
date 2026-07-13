@@ -52,6 +52,7 @@ pipeline default() {
   const edited = call(
     "github.pr.edit",
     auth
+      + {poll_interval_ms: 0}
       + {
       repo: "octo-org/octo-repo",
       number: 42,

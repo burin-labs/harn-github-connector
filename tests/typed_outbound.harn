@@ -65,7 +65,9 @@ pipeline default() {
   const prs = call("github.pr.list", auth + {repo: "octo-org/octo-repo", filters: {state: "open", per_page: 4}})
   assert_eq(prs[0].state, "green", "clean PR classified green")
   assert_eq(prs[1].state, "dirty", "dirty PR classified dirty")
-  assert_eq(prs[2].state, "queued", "queued PR classified queued")
+  assert_eq(prs[2].state, "green", "auto-merge arming is not queue evidence")
+  assert_eq(prs[2].auto_merge_armed, true, "auto-merge arming is retained separately")
+  assert_eq(prs[2].in_merge_queue, nil, "list does not invent queue membership")
   assert_eq(prs[3].state, "merged", "merged PR classified merged")
   assert_eq(prs[0].head.sha, "green-sha", "typed head sha")
   http_mock(
@@ -121,6 +123,84 @@ pipeline default() {
           status: 200,
           body: json_stringify({required_status_checks: {strict: true, contexts: ["Harn CI"]}}),
           headers: {"x-ratelimit-remaining": "18"},
+        },
+      ],
+    },
+  )
+  http_mock(
+    "POST",
+    base + "/graphql",
+    {
+      responses: [
+        {
+          status: 200,
+          body: json_stringify(
+            {data: {repository: {pullRequest: {number: 101, autoMergeRequest: nil, mergeQueueEntry: nil}}}},
+          ),
+          headers: {"x-ratelimit-remaining": "18"},
+        },
+        {
+          status: 200,
+          body: json_stringify(
+            {
+              data: {
+                repository: {
+                  mergeQueue: {
+                    url: "https://github.com/octo-org/octo-repo/queue/main",
+                    entries: {
+                      nodes: [
+                        {
+                          id: "MQE_103",
+                          position: 1,
+                          state: "AWAITING_CHECKS",
+                          enqueuedAt: "2026-05-02T12:04:00Z",
+                          jump: false,
+                          solo: false,
+                          estimatedTimeToMerge: 120,
+                          headCommit: {oid: "queued-sha"},
+                          pullRequest: {
+                            number: 103,
+                            url: "https://github.com/octo-org/octo-repo/pull/103",
+                            headRefOid: "queued-sha",
+                            baseRefName: "main",
+                          },
+                        },
+                      ],
+                    },
+                  },
+                },
+              },
+            },
+          ),
+          headers: {"x-ratelimit-remaining": "12"},
+        },
+        {
+          status: 200,
+          body: json_stringify(
+            {
+              data: {
+                enqueuePullRequest: {
+                  mergeQueueEntry: {
+                    id: "MQE_105",
+                    position: 2,
+                    state: "QUEUED",
+                    enqueuedAt: "2026-05-02T12:05:00Z",
+                    jump: false,
+                    solo: false,
+                    estimatedTimeToMerge: 180,
+                    headCommit: {oid: "enqueue-sha"},
+                    pullRequest: {
+                      number: 105,
+                      url: "https://github.com/octo-org/octo-repo/pull/105",
+                      headRefOid: "enqueue-sha",
+                      baseRefName: "main",
+                    },
+                  },
+                },
+              },
+            },
+          ),
+          headers: {"x-ratelimit-remaining": "11"},
         },
       ],
     },
@@ -208,37 +288,23 @@ pipeline default() {
   const logs = call("github.actions.logs", auth + {repo: "octo-org/octo-repo", check_id: 8001})
   assert_eq(logs.run_id, 6001, "check id resolves action run id")
   assert(logs.content.contains("succeeded"), "logs content returned")
-  http_mock(
-    "GET",
-    base + "/repos/octo-org/octo-repo/merge_queue/queues/main",
-    {
-      status: 200,
-      body: json_stringify(
-        {
-          base: "main",
-          entries: [{pull_request_number: 103, status: "queued", head_branch: "feature/queued"}],
-        },
-      ),
-      headers: {"x-ratelimit-remaining": "12"},
-    },
-  )
   const queue = call("github.merge_queue.entries", auth + {repo: "octo-org/octo-repo", branch: "main"})
   assert_eq(queue.entries[0].pull_number, 103, "merge queue entry PR number")
   http_mock(
-    "POST",
-    base + "/repos/octo-org/octo-repo/merge_queue/queues/main/items",
+    "GET",
+    base + "/repos/octo-org/octo-repo/pulls/105",
     {
-      status: 201,
-      body: json_stringify({pull_number: 105, status: "queued", priority: "normal"}),
+      status: 200,
+      body: json_stringify({number: 105, node_id: "PR_105", head: {sha: "enqueue-sha"}}),
       headers: {"x-ratelimit-remaining": "11"},
     },
   )
   const enqueued = call(
     "github.merge_queue.enqueue",
     auth
-      + {repo: "octo-org/octo-repo", branch: "main", pr_number: 105, method: "squash", priority: "normal"},
+      + {repo: "octo-org/octo-repo", pr_number: 105, expected_head_oid: "enqueue-sha"},
   )
-  assert_eq(enqueued.entry.status, "queued", "enqueue returns typed entry")
+  assert_eq(enqueued.entry.state, "queued", "enqueue returns typed entry")
   http_mock(
     "POST",
     base + "/repos/octo-org/octo-repo/issues",
