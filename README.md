@@ -151,6 +151,7 @@ Named helpers:
 | `pulls_enable_auto_merge(owner, repo, number, options)` | Enable GitHub auto-merge. |
 | `actions_workflow_dispatch(owner, repo, workflow_id, ref, inputs, options)` | Dispatch a workflow. |
 | `actions_workflow_runs(owner, repo, options)` | List workflow runs. |
+| `actions_workflow_run(owner, repo, run_id, options)` | Fetch one workflow run by its exact id. |
 | `actions_workflow_run_jobs(owner, repo, run_id, options)` | List a workflow run's jobs and steps; options support `filter`, `per_page`, and `page`. |
 | `api_call(path, method, body, options)` | Call one REST endpoint. Prefer typed helpers when available. |
 | `repos_get_text(owner, repo, path, ref, options)` | Decode repository file content as UTF-8 text. |

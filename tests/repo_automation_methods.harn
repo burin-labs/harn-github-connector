@@ -1,5 +1,6 @@
 import {
   actions_workflow_dispatch,
+  actions_workflow_run,
   actions_workflow_runs,
   api_call,
   call,
@@ -98,7 +99,7 @@ pipeline test_repo_automation_methods(task) {
       headers: {"x-ratelimit-remaining": "7"},
     },
   )
-  const run = call("actions.workflow_run.get", auth + {owner: "octo-org", repo: "octo-repo", run_id: 123})
+  const run = actions_workflow_run("octo-org", "octo-repo", 123, auth)
   assert_eq(run.conclusion, "success", "workflow run get response")
   http_mock(
     "GET",
