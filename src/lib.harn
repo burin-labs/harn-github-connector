@@ -3,6 +3,7 @@ import {
   connector_http_rate_limit,
   connector_http_request,
 } from "std/connectors/shared"
+import { pr_edit_body, pr_edit_result } from "./pr_edit"
 
 const GITHUB_PROVIDER_ID = "github"
 
@@ -15,6 +16,7 @@ const GITHUB_USER_AGENT = "harn-github-connector"
 const GITHUB_OUTBOUND_METHODS = [
   "github.pr.list",
   "github.pr.view",
+  "github.pr.edit",
   "github.pr.checks",
   "github.pr.merge",
   "github.pr.enable_auto_merge",
@@ -41,6 +43,7 @@ const GITHUB_OUTBOUND_METHODS = [
   "pulls.list",
   "pulls.list_with_checks",
   "pulls.get",
+  "pulls.update",
   "pulls.create",
   "pulls.merge",
   "pulls.merge_safe",
@@ -133,6 +136,8 @@ type GithubSignedCommitReceipt = {
   signature_state: string,
 }
 
+type GithubConnectorState = {initialized: bool, active: bool, bindings: dict, ctx: dict}
+
 const TOKEN_CACHE_KEY = "harn-github-connector.token_cache"
 
 const DEFAULT_TOKEN_REFRESH_SKEW_SECONDS = 300
@@ -145,7 +150,7 @@ const DEFAULT_RATE_LIMIT_MAX_SLEEP_SECONDS = 60
 
 const MAX_BODY_BYTES = 1048576
 
-let GITHUB_STATE = {initialized: false, active: false, bindings: {}, ctx: {}}
+let GITHUB_STATE: GithubConnectorState = {initialized: false, active: false, bindings: {}, ctx: {}}
 
 /** Return this connector's Harn provider id. */
 pub fn provider_id() {
@@ -214,7 +219,15 @@ pub fn payload_schema() {
 
 /** Initialize connector state with orchestrator context. */
 pub fn init(ctx = nil) {
-  const next = __state() + {initialized: true, ctx: ctx ?? {}}
+  const next = __state()
+    + {
+    initialized: true,
+    ctx: if type_of(ctx) == "dict" {
+      ctx
+    } else {
+      {}
+    },
+  }
   __set_state(next)
   return next
 }
@@ -314,6 +327,9 @@ pub fn call(method, args = {}) {
   }
   if method == "github.pr.view" {
     return __github_pr_view(args, cfg)
+  }
+  if method == "github.pr.edit" {
+    return __github_pr_edit(args, cfg)
   }
   if method == "github.pr.checks" {
     return __github_pr_checks(args, cfg)
@@ -436,6 +452,9 @@ pub fn call(method, args = {}) {
       nil,
       cfg,
     )
+  }
+  if method == "pulls.update" {
+    return __pulls_update(args, cfg)
   }
   if method == "pulls.create" {
     return __pulls_create(args, cfg)
@@ -615,6 +634,16 @@ pub fn call(method, args = {}) {
 pub fn pulls_list_with_checks(owner, repo, state = "open", limit = 100, options = nil) {
   const opts = options ?? {}
   return call("pulls.list_with_checks", opts + {owner: owner, repo: repo, state: state, limit: limit})
+}
+
+/** Update the editable fields of one pull request. */
+pub fn pulls_update(owner, repo, number, edits, options = nil) {
+  const opts = options ?? {}
+  const body = pr_edit_body(edits ?? {})
+  if is_err(body) {
+    return body
+  }
+  return call("pulls.update", opts + unwrap(body) + {owner: owner, repo: repo, pull_number: number})
 }
 
 /** Merge a PR after checking the base branch protection settings. */
@@ -1579,6 +1608,23 @@ fn __github_pr_view(args, cfg) {
     return protection
   }
   return __typed_pr_view(pull, unwrap(protection))
+}
+
+fn __github_pr_edit(args, cfg) {
+  const repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  const r = unwrap(repo)
+  const number = args?.pr_number ?? args?.number ?? args?.pull_number
+  if number == nil {
+    return __err("schema_drift", "github.pr.edit requires number, pr_number, or pull_number")
+  }
+  const updated = __pulls_update(args + {owner: r.owner, repo: r.name, pull_number: number}, cfg)
+  if is_err(updated) {
+    return updated
+  }
+  return __typed_pr_edit(updated)
 }
 
 fn __github_pr_checks(args, cfg) {
@@ -3017,6 +3063,10 @@ fn __typed_pr_view(pull, protection) {
   }
 }
 
+fn __typed_pr_edit(pull) {
+  return pr_edit_result(__typed_pr_summary(pull), pull)
+}
+
 fn __typed_ref(ref) {
   return {
     ref: ref?.ref ?? "",
@@ -3320,11 +3370,11 @@ pub fn invalidate_installation_token(installation_id) {
   store_set(TOKEN_CACHE_KEY, cache)
 }
 
-fn __state() {
+fn __state() -> GithubConnectorState {
   return GITHUB_STATE
 }
 
-fn __set_state(state) {
+fn __set_state(state: GithubConnectorState) {
   GITHUB_STATE = state
   return state
 }
@@ -5589,6 +5639,32 @@ fn __api_call_author_mode_body(args, method, path, cfg) {
     return __commit_write_body(args + raw_body, ["path", "method", "body"], cfg)
   }
   return Ok(args?.body)
+}
+
+fn __pulls_update_body(args) {
+  const context_fields = __config_keys()
+    + ["owner", "repo", "repository", "repo_ref", "repo_full_name", "number", "pr_number", "pull_number"]
+  return pr_edit_body(args, context_fields)
+}
+
+fn __pulls_update(args, cfg) {
+  const number = args?.pull_number ?? args?.number ?? args?.pr_number
+  if number == nil {
+    return __err("schema_drift", "pulls.update requires pull_number, number, or pr_number")
+  }
+  const body = __pulls_update_body(args)
+  if is_err(body) {
+    return body
+  }
+  return __github_json(
+    "PATCH",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/pulls/" + to_string(number),
+    ),
+    unwrap(body),
+    cfg,
+  )
 }
 
 fn __pulls_create(args, cfg) {

@@ -1,0 +1,106 @@
+import { call, pulls_update } from "../src/lib"
+
+pipeline default() {
+  egress_policy({allow: ["github-api.test"], default: "deny"})
+  http_mock_clear()
+  const base = "https://github-api.test"
+  const auth = {api_base_url: base, installation_token: "github-installation-token"}
+  http_mock(
+    "PATCH",
+    base + "/repos/octo-org/octo-repo/pulls/42",
+    {
+      responses: [
+        {
+          status: 200,
+          body: json_stringify(
+            {
+              number: 42,
+              title: "Updated title",
+              state: "open",
+              html_url: "https://github.com/octo-org/octo-repo/pull/42",
+              base: {ref: "main", sha: "base-sha", repo: {full_name: "octo-org/octo-repo"}},
+              head: {ref: "feature", sha: "head-sha", repo: {full_name: "octo-org/octo-repo"}},
+            },
+          ),
+          headers: {"x-ratelimit-remaining": "20"},
+        },
+        {
+          status: 200,
+          body: json_stringify(
+            {
+              number: 42,
+              title: "Release title",
+              body: "Release body",
+              state: "open",
+              html_url: "https://github.com/octo-org/octo-repo/pull/42",
+              base: {ref: "main", sha: "base-sha", repo: {full_name: "octo-org/octo-repo"}},
+              head: {ref: "release", sha: "head-sha", repo: {full_name: "octo-org/octo-repo"}},
+            },
+          ),
+          headers: {"x-ratelimit-remaining": "19"},
+        },
+        {
+          status: 422,
+          body: json_stringify({message: "Validation Failed"}),
+          headers: {"x-ratelimit-remaining": "18"},
+        },
+      ],
+    },
+  )
+  const low_level = pulls_update("octo-org", "octo-repo", 42, {title: "Updated title"}, auth)
+  assert_eq(low_level.title, "Updated title", "low-level update returns provider response")
+  const edited = call(
+    "github.pr.edit",
+    auth
+      + {
+      repo: "octo-org/octo-repo",
+      number: 42,
+      title: "Release title",
+      body: "Release body",
+      maintainer_can_modify: false,
+    },
+  )
+  assert_eq(edited.number, 42, "typed edit keeps PR number")
+  assert_eq(edited.title, "Release title", "typed edit keeps title")
+  assert_eq(edited.body, "Release body", "typed edit keeps body")
+  assert_eq(edited.base.ref, "main", "typed edit normalizes base ref")
+  assert(edited.ok && edited.updated, "typed edit reports completed mutation")
+  const calls_after_success = http_mock_calls()
+  assert_eq(calls_after_success[0].method, "PATCH", "low-level edit uses PATCH")
+  assert_eq(calls_after_success[0].url, base + "/repos/octo-org/octo-repo/pulls/42", "edit URL")
+  const low_body = json_parse(calls_after_success[0].body)
+  assert_eq(low_body.keys(), ["title"], "low-level edit forwards only editable fields")
+  const typed_body = json_parse(calls_after_success[1].body)
+  assert_eq(typed_body.title, "Release title", "typed edit forwards title")
+  assert_eq(typed_body.body, "Release body", "typed edit forwards body")
+  assert_eq(typed_body.maintainer_can_modify, false, "typed edit forwards explicit false")
+  const empty = call("pulls.update", auth + {owner: "octo-org", repo: "octo-repo", pull_number: 42})
+  assert(is_err(empty), "empty edits fail before dispatch")
+  assert_eq(unwrap_err(empty).code, "schema_drift", "empty edit error category")
+  const unknown = call(
+    "pulls.update",
+    auth + {owner: "octo-org", repo: "octo-repo", pull_number: 42, title: "x", head: "other"},
+  )
+  assert(is_err(unknown), "unknown editable fields fail before dispatch")
+  const bad_state = call(
+    "pulls.update",
+    auth + {owner: "octo-org", repo: "octo-repo", pull_number: 42, state: "merged"},
+  )
+  assert(is_err(bad_state), "invalid state fails before dispatch")
+  const smuggled_option = pulls_update(
+    "octo-org",
+    "octo-repo",
+    42,
+    {title: "x", installation_token: "attacker-selected"},
+    auth,
+  )
+  assert(is_err(smuggled_option), "edit fields cannot override connector options")
+  assert_eq(len(http_mock_calls()), 2, "invalid edits perform no network request")
+  const provider_error = call(
+    "pulls.update",
+    auth + {owner: "octo-org", repo: "octo-repo", pull_number: 42, title: "Rejected"},
+  )
+  assert(is_err(provider_error), "provider validation error remains typed failure")
+  assert_eq(len(http_mock_calls()), 3, "provider error performs exactly one request")
+  http_mock_clear()
+}

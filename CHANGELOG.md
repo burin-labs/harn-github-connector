@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add typed `github.pr.edit` and `pulls.update` operations for a closed set of
+  editable pull-request fields, with validation before network dispatch and a
+  normalized edit result.
 - Add typed `github.branch.create_signed_commit` dispatch and
   `github_create_signed_commit` helper. It uses GraphQL
   `createCommitOnBranch`, requires an expected head OID, omits custom commit
