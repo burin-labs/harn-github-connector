@@ -25,6 +25,7 @@ const GITHUB_OUTBOUND_METHODS = [
   "github.actions.runs",
   "github.actions.run",
   "github.actions.logs",
+  "github.release.view",
   "github.release.latest",
   "github.release.assets",
   "github.merge_queue.entries",
@@ -354,6 +355,9 @@ pub fn call(method, args = {}) {
   }
   if method == "github.actions.logs" {
     return __github_actions_logs(args, cfg)
+  }
+  if method == "github.release.view" {
+    return __github_release_view(args, cfg)
   }
   if method == "github.release.latest" {
     return __github_release_latest(args, cfg)
@@ -822,6 +826,16 @@ pub fn repos_list_release_assets(owner, repo, release_id, options = nil) {
 pub fn github_latest_release(owner, repo, options = nil) {
   const opts = options ?? {}
   return call("github.release.latest", opts + {owner: owner, repo: repo})
+}
+
+/** Fetch release metadata by tag, or the latest release when the tag is nil. */
+pub fn github_release(owner, repo, tag = nil, options = nil) {
+  const opts = options ?? {}
+  let args = opts + {owner: owner, repo: repo}
+  if tag != nil {
+    args["tag"] = tag
+  }
+  return call("github.release.view", args)
 }
 
 /**
@@ -1807,6 +1821,42 @@ fn __github_release_latest(args, cfg) {
   }
   const r = unwrap(repo)
   const release = __repos_get_latest_release(args + {owner: r.owner, repo: r.name}, cfg)
+  if is_err(release) {
+    return __release_error_envelope(r.full_name, unwrap_err(release))
+  }
+  return __release_envelope(r.full_name, unwrap(release))
+}
+
+fn __github_release_view(args, cfg) {
+  const repo = __repo_parts(args)
+  if is_err(repo) {
+    return __release_error_envelope(nil, unwrap_err(repo))
+  }
+  const r = unwrap(repo)
+  const raw_tag = args?.tag
+  if raw_tag == nil {
+    return __github_release_latest(args, cfg)
+  }
+  const tag = trim(to_string(raw_tag))
+  if tag == "" {
+    return __release_error_envelope(
+      r.full_name,
+      {
+        code: "schema_drift",
+        category: "schema_drift",
+        message: "github.release.view tag must be non-empty",
+      },
+    )
+  }
+  const release = __github_json(
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + r.owner + "/" + r.name + "/releases/tags/" + url_encode(tag),
+    ),
+    nil,
+    cfg,
+  )
   if is_err(release) {
     return __release_error_envelope(r.full_name, unwrap_err(release))
   }
