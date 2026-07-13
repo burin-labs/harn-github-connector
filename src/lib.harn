@@ -628,12 +628,19 @@ pub fn call(method, args = {}) {
       cfg,
     )
   }
-  return __github_json(
+  const graph = __github_json(
     "POST",
     __github_api_url(cfg.api_base_url, "/graphql"),
     {query: args.query, variables: args.variables ?? {}},
     cfg,
   )
+  if is_err(graph) {
+    return graph
+  }
+  if graph?.errors != nil && len(graph.errors) > 0 {
+    return __err("graphql", "github GraphQL returned errors: " + json_stringify(graph.errors))
+  }
+  return graph
 }
 
 /** List PRs in the same shape consumed by managed merge_captain. */
@@ -1576,7 +1583,20 @@ fn __github_pr_list(args, cfg) {
     return repo
   }
   const r = unwrap(repo)
-  const filters = args?.filters ?? args ?? {}
+  let filters = (args?.filters ?? args ?? {}) + {}
+  const requested_state = lowercase(to_string(filters.state ?? "open"))
+  if !["open", "closed", "all", "merged"].contains(requested_state) {
+    return __err("schema_drift", "github.pr.list state must be open, closed, all, or merged")
+  }
+  filters["state"] = if requested_state == "merged" {
+    "closed"
+  } else {
+    requested_state
+  }
+  const head = trim(to_string(filters.head ?? ""))
+  if head != "" && !contains(head, ":") {
+    filters["head"] = r.owner + ":" + head
+  }
   const pulls = __github_json(
     "GET",
     __github_api_url(
@@ -1591,6 +1611,9 @@ fn __github_pr_list(args, cfg) {
   }
   let typed = []
   for pull in pulls {
+    if requested_state == "merged" && pull?.merged_at == nil && !(pull?.merged ?? false) {
+      continue
+    }
     typed = typed + [__typed_pr_summary(pull)]
   }
   return typed
