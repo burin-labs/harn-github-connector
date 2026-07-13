@@ -132,14 +132,42 @@ Call methods through `call(method, args)` unless a named helper fits better.
 
 | Area | Methods |
 |---|---|
-| Pull requests | `github.pr.list`, `github.pr.view`, `github.pr.edit`, `github.pr.checks`, `github.pr.merge`, `github.pr.enable_auto_merge`, `github.pr.comment`, `pulls.list`, `pulls.list_with_checks`, `pulls.get`, `pulls.update`, `pulls.create`, `pulls.merge`, `pulls.merge_safe`, `pulls.create_review_comment`, `pulls.get_diff`, `pulls.list_files`, `pulls.list_reviews`, `pull_requests.resolve_mergeable`, `repos.commit_pulls` |
-| Actions and checks | `github.actions.workflow_dispatch`, `github.actions.runs`, `github.actions.run`, `github.actions.logs`, `actions.workflow_dispatch`, `actions.workflow_runs.list`, `actions.workflow_run.get`, `actions.workflow_run.jobs`, `check_runs.create`, `check_runs.update` |
+| Pull requests | `github.pr.list`, `github.pr.create`, `github.pr.view`, `github.pr.edit`, `github.pr.files`, `github.pr.checks`, `github.pr.merge`, `github.pr.enable_auto_merge`, `github.pr.comment`, `pulls.list`, `pulls.list_with_checks`, `pulls.get`, `pulls.update`, `pulls.create`, `pulls.merge`, `pulls.merge_safe`, `pulls.create_review_comment`, `pulls.get_diff`, `pulls.list_files`, `pulls.list_reviews`, `pull_requests.resolve_mergeable`, `repos.commit_pulls` |
+| Actions and checks | `github.actions.workflow_dispatch`, `github.actions.runs`, `github.actions.run`, `github.actions.run_jobs`, `github.actions.logs`, `actions.workflow_dispatch`, `actions.workflow_runs.list`, `actions.workflow_run.get`, `actions.workflow_run.jobs`, `check_runs.create`, `check_runs.update` |
 | Self-hosted runners | `actions.runners.registration_token`, `actions.runners.remove_token`, `actions.runners.generate_jitconfig`, `actions.runners.list`, `actions.runners.get`, `actions.runners.delete`, `actions.runners.downloads`, `actions.runners.labels.list`, `actions.runners.labels.add`, `actions.runners.labels.replace`, `actions.runners.labels.remove`, `actions.runner_groups.list`, `actions.runner_groups.create`, `actions.runner_groups.get`, `actions.runner_groups.update`, `actions.runner_groups.delete` |
 | User OAuth | `oauth.user.device_code`, `oauth.user.device_poll`, `oauth.user.exchange_code`, `oauth.user.refresh` |
 | Issues | `github.issue.create`, `github.issue.comment`, `issues.create_comment`, `issues.create`, `issues.create_with_template`, `issues.update`, `issues.add_labels` |
-| Repository and release data | `github.release.latest`, `github.release.assets`, `github.branch.protection`, `github.branch.create_signed_commit`, `repos.get_content`, `repos.get_text`, `repos.create_or_update_file`, `repos.put_content`, `repos.delete_file`, `repos.get_latest_release`, `repos.list_release_assets`, `repos.get_branch_protection`, `git.create_commit`, `git.delete_ref` |
-| Merge queue | `github.merge_queue.entries`, `github.merge_queue.enqueue` |
+| Repository and release data | `github.file.view`, `github.release.view`, `github.release.latest`, `github.release.assets`, `github.commit.signature`, `github.branch.protection`, `github.branch.create_signed_commit`, `repos.get_content`, `repos.get_text`, `repos.create_or_update_file`, `repos.put_content`, `repos.delete_file`, `repos.get_latest_release`, `repos.list_release_assets`, `repos.get_branch_protection`, `git.create_commit`, `git.delete_ref` |
+| Merge queue | `github.merge_queue.entries`, `github.merge_queue.membership`, `github.merge_queue.enqueue` |
 | Raw access | `api_call`, `graphql` |
+
+The namespaced methods above are the canonical automation boundary. Covered
+operations return one closed normalized record or `Err({code, category,
+message, http_status?})`; callers should not issue their own GraphQL or parse
+raw REST responses for the same operation.
+
+- `github.pr.enable_auto_merge` and `github.merge_queue.enqueue` require
+  `expected_head_oid`. A mismatched lease returns `stale_head` without mutating.
+- `github.merge_queue.membership` reports `queued: true` only when GitHub
+  returns a `mergeQueueEntry`. An `autoMergeRequest` is reported separately as
+  `auto_merge_armed`.
+- `github.pr.view` keeps the base PR read when branch-protection administration
+  permission is unavailable. Its `branch_protection.available` is `false` and
+  retains the structured permission error.
+- `github.actions.workflow_dispatch` resolves one exact accepted run identity;
+  `github.actions.run` and `github.actions.run_jobs` return closed run, job, and
+  step evidence.
+- `github.file.view` requires an exact `ref`, and `github.release.view` requires
+  an exact `tag`. They return `state: "found" | "absent"`; a `404` is absence
+  only after the same credential proves repository access. Masked private
+  resources and transport failures remain `Err`.
+- `github.commit.signature` returns GitHub's normalized `verified`, `reason`,
+  material-presence, and `verified_at` evidence. Unsigned and invalid
+  signatures are successful reads with `verified: false`, not transport errors.
+
+`api_call`, `graphql`, and the unnamespaced methods remain low-level escape
+hatches for operations without a canonical method. They are not compatibility
+paths for the methods above.
 
 Named helpers:
 
@@ -148,7 +176,7 @@ Named helpers:
 | `pulls_list_with_checks(owner, repo, state, limit, options)` | List PRs with merge state and CI rollup. |
 | `pulls_update(owner, repo, number, edits, options)` | Update a closed set of editable PR fields. |
 | `pulls_merge_safe(owner, repo, number, options)` | Merge after checking branch protection. |
-| `pulls_enable_auto_merge(owner, repo, number, options)` | Enable GitHub auto-merge. |
+| `pulls_enable_auto_merge(owner, repo, number, options)` | Enable GitHub auto-merge; `options.expected_head_oid` is required. |
 | `actions_workflow_dispatch(owner, repo, workflow_id, ref, inputs, options)` | Dispatch a workflow. |
 | `actions_workflow_runs(owner, repo, options)` | List workflow runs. |
 | `actions_workflow_run(owner, repo, run_id, options)` | Fetch one workflow run by its exact id. |
@@ -163,13 +191,14 @@ Named helpers:
 | `github_dispatch_workflow_and_resolve_run(owner, repo, workflow_id, ref, inputs, options)` | Dispatch a workflow and return its exact run identity before terminal monitoring. |
 | `github_dispatch_workflow_and_wait(owner, repo, workflow_id, ref, inputs, options)` | Dispatch a workflow and wait for its exact run, rejecting ambiguous unseen matches. |
 | `github_wait_for_workflow_run(owner, repo, run_id_or_filter, options)` | Poll an existing workflow run or a filtered run lookup. |
-| `github_ensure_auto_merge(owner, repo, pull_number, options)` | Enable auto-merge and normalize already-enabled responses. |
+| `github_ensure_auto_merge(owner, repo, pull_number, options)` | Enable auto-merge under required `options.expected_head_oid`; returns the canonical `Result`. |
 | `github_wait_for_pr_checks(owner, repo, pull_number_or_ref, options)` | Wait for visible PR or commit checks; optionally attach failing Actions log tails. |
 | `github_find_open_pr(owner, repo, options)` | Find the first open PR matching `head_ref`, `base_ref`, `title`, or `labels`. |
 | `github_close_pr(owner, repo, pull_number, comment, options)` | Close a PR and optionally post a final comment. |
 | `github_resolve_mergeable(owner, repo, pull_number, options)` | Resolve a PR's async `mergeable`/`mergeable_state` with bounded polling; returns `{mergeable, mergeable_state, is_conflict, ...}`. |
 | `github_resolve_pr_for_sha(owner, repo, sha, options)` | Resolve the PR for a commit SHA, preferring payload `pull_requests[]` and falling back to `repos.commit_pulls`. |
 | `github_create_signed_commit(request, options)` | Atomically append file additions/deletions at an expected head OID through GitHub's verified App-signing path. |
+| `github_release(owner, repo, tag, options)` | Look up one exact release tag with proven-absence semantics. |
 | `github_extract_mentions(body)` | Pure string parse of `@handle command args...` mentions in a body. |
 | `actions_runner_registration_token(scope, options)` | Create a self-hosted runner registration token (`scope` is `{org}` or `{owner, repo}`). |
 | `actions_runner_generate_jitconfig(scope, name, runner_group_id, labels, options)` | Generate a stateless single-use JIT runner config. |
