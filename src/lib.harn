@@ -943,7 +943,9 @@ pub fn github_dispatch_workflow_and_resolve_run(
   }
   const dispatch_run_id = __extract_dispatch_run_id(dispatch)
   if dispatch_run_id != nil {
-    return __workflow_wait_envelope(true, "dispatch_accepted", workflow_id, dispatch_run_id, [], false, nil)
+    const direct_cfg = __workflow_wait_config(opts + {workflow_id: workflow_id}, dispatch_run_id)
+      + {return_on_identity: true}
+    return __workflow_wait_loop(owner, repo, direct_cfg)
   }
   const dispatch_filter = filter + {excluded_run_ids: snapshot_run_ids, require_unambiguous_dispatch: true}
   const cfg = __workflow_wait_config(opts + {workflow_id: workflow_id}, dispatch_filter)
@@ -1115,18 +1117,19 @@ fn __workflow_wait_loop(owner, repo, cfg) {
       run_id = located.run_id
       identity_run = located?.run
     }
-    if run_id != nil && (cfg?.return_on_identity ?? false) {
-      if identity_run != nil {
+    if run_id != nil {
+      if (cfg?.return_on_identity ?? false) && identity_run != nil {
         return __workflow_envelope_from_run(true, "dispatch_accepted", identity_run, attempts, false, nil)
           + {workflow_id: cfg.workflow_id}
       }
-      return __workflow_wait_envelope(true, "dispatch_accepted", cfg.workflow_id, run_id, attempts, false, nil)
-    }
-    if run_id != nil {
       const probed = __workflow_wait_probe_step(owner, repo, run_id, cfg.auth, attempt)
       attempts = attempts + probed.attempts
       if probed.run != nil {
         last_run = probed.run
+        if cfg?.return_on_identity ?? false {
+          return __workflow_envelope_from_run(true, "dispatch_accepted", probed.run, attempts, false, nil)
+            + {workflow_id: cfg.workflow_id}
+        }
       }
       if probed.completed {
         return __workflow_envelope_from_run(true, "completed", probed.run, attempts, false, nil)
