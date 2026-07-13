@@ -133,7 +133,7 @@ Call methods through `call(method, args)` unless a named helper fits better.
 | Area | Methods |
 |---|---|
 | Pull requests | `github.pr.list`, `github.pr.view`, `github.pr.edit`, `github.pr.checks`, `github.pr.merge`, `github.pr.enable_auto_merge`, `github.pr.comment`, `pulls.list`, `pulls.list_with_checks`, `pulls.get`, `pulls.update`, `pulls.create`, `pulls.merge`, `pulls.merge_safe`, `pulls.create_review_comment`, `pulls.get_diff`, `pulls.list_files`, `pulls.list_reviews`, `pull_requests.resolve_mergeable`, `repos.commit_pulls` |
-| Actions and checks | `github.actions.workflow_dispatch`, `github.actions.runs`, `github.actions.run`, `github.actions.logs`, `actions.workflow_dispatch`, `actions.workflow_runs.list`, `actions.workflow_run.get`, `check_runs.create`, `check_runs.update` |
+| Actions and checks | `github.actions.workflow_dispatch`, `github.actions.runs`, `github.actions.run`, `github.actions.logs`, `actions.workflow_dispatch`, `actions.workflow_runs.list`, `actions.workflow_run.get`, `actions.workflow_run.jobs`, `check_runs.create`, `check_runs.update` |
 | Self-hosted runners | `actions.runners.registration_token`, `actions.runners.remove_token`, `actions.runners.generate_jitconfig`, `actions.runners.list`, `actions.runners.get`, `actions.runners.delete`, `actions.runners.downloads`, `actions.runners.labels.list`, `actions.runners.labels.add`, `actions.runners.labels.replace`, `actions.runners.labels.remove`, `actions.runner_groups.list`, `actions.runner_groups.create`, `actions.runner_groups.get`, `actions.runner_groups.update`, `actions.runner_groups.delete` |
 | User OAuth | `oauth.user.device_code`, `oauth.user.device_poll`, `oauth.user.exchange_code`, `oauth.user.refresh` |
 | Issues | `github.issue.create`, `github.issue.comment`, `issues.create_comment`, `issues.create`, `issues.create_with_template`, `issues.update`, `issues.add_labels` |
@@ -151,6 +151,7 @@ Named helpers:
 | `pulls_enable_auto_merge(owner, repo, number, options)` | Enable GitHub auto-merge. |
 | `actions_workflow_dispatch(owner, repo, workflow_id, ref, inputs, options)` | Dispatch a workflow. |
 | `actions_workflow_runs(owner, repo, options)` | List workflow runs. |
+| `actions_workflow_run_jobs(owner, repo, run_id, options)` | List a workflow run's jobs and steps; options support `filter`, `per_page`, and `page`. |
 | `api_call(path, method, body, options)` | Call one REST endpoint. Prefer typed helpers when available. |
 | `repos_get_text(owner, repo, path, ref, options)` | Decode repository file content as UTF-8 text. |
 | `repos_get_latest_release(owner, repo, options)` | Fetch latest release metadata. |

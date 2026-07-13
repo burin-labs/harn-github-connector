@@ -1,0 +1,107 @@
+import { actions_workflow_run_jobs, call } from "../src/lib"
+
+fn auth(base) {
+  return {api_base_url: base, installation_token: "test-token"}
+}
+
+fn jobs_fixture(harness: Harness) {
+  return json_parse(harness.fs.read_text(source_dir() + "/fixtures/actions_workflow_run_jobs.json"))
+}
+
+pipeline test_actions_workflow_run_jobs_returns_canonical_payload(task) {
+  egress_policy({allow: ["github-api.test"], default: "deny"})
+  http_mock_clear()
+  const base = "https://github-api.test"
+  const fixture = jobs_fixture(harness)
+  const url = base
+    + "/repos/octo-org/octo-repo/actions/runs/29679449/jobs?filter=all&per_page=25&page=2"
+  http_mock(
+    "GET",
+    url,
+    {status: 200, body: json_stringify(fixture), headers: {"x-ratelimit-remaining": "10"}},
+  )
+  const result = actions_workflow_run_jobs(
+    "octo-org",
+    "octo-repo",
+    29679449,
+    auth(base) + {filter: "all", per_page: 25, page: 2},
+  )
+  assert_eq(result, fixture, "GitHub jobs payload is returned unchanged")
+  assert_eq(result.jobs[0].run_id, 29679449, "job retains workflow run id")
+  assert_eq(result.jobs[0].steps[1].name, "Run tests", "job retains canonical nested steps")
+  assert_eq(result.jobs[0].steps[1].conclusion, "success", "step conclusion is retained")
+  const calls = http_mock_calls()
+  assert_eq(len(calls), 1, "one exact REST request")
+  assert_eq(calls[0].method, "GET", "workflow jobs uses GET")
+  assert_eq(calls[0].url, url, "workflow jobs forwards filter and pagination options")
+}
+
+pipeline test_actions_workflow_run_jobs_requires_run_id(task) {
+  egress_policy({allow: ["github-api.test"], default: "deny"})
+  http_mock_clear()
+  const base = "https://github-api.test"
+  const missing = call("actions.workflow_run.jobs", auth(base) + {owner: "octo-org", repo: "octo-repo"})
+  assert(is_err(missing), "missing run_id fails closed")
+  assert_eq(
+    unwrap_err(missing),
+    {
+      code: "schema_drift",
+      category: "schema_drift",
+      message: "actions.workflow_run.jobs requires a positive decimal run_id",
+    },
+    "missing run_id returns the exact typed validation error",
+  )
+  const blank = actions_workflow_run_jobs("octo-org", "octo-repo", "   ", auth(base))
+  assert(is_err(blank), "blank run_id fails closed")
+  assert_eq(unwrap_err(blank).code, "schema_drift", "blank run_id uses the validation code")
+  const path_escape = actions_workflow_run_jobs("octo-org", "octo-repo", "1/jobs/../2", auth(base))
+  assert(is_err(path_escape), "path-bearing run id fails closed")
+  assert_eq(unwrap_err(path_escape).code, "schema_drift", "path-bearing run id uses validation code")
+  assert_eq(len(http_mock_calls()), 0, "invalid run ids perform no network requests")
+}
+
+pipeline test_actions_workflow_run_jobs_validates_query_options(task) {
+  egress_policy({allow: ["github-api.test"], default: "deny"})
+  http_mock_clear()
+  const base = "https://github-api.test"
+  const bad_filter = actions_workflow_run_jobs("octo-org", "octo-repo", 29679449, auth(base) + {filter: "recent"})
+  assert(is_err(bad_filter), "unknown job filter fails closed")
+  assert_eq(
+    unwrap_err(bad_filter).message,
+    "actions.workflow_run.jobs filter must be latest or all",
+    "filter error names the closed option set",
+  )
+  const oversized_page = actions_workflow_run_jobs("octo-org", "octo-repo", 29679449, auth(base) + {per_page: 101})
+  assert(is_err(oversized_page), "oversized page fails closed")
+  const zero_page = actions_workflow_run_jobs("octo-org", "octo-repo", 29679449, auth(base) + {page: 0})
+  assert(is_err(zero_page), "zero page fails closed")
+  assert_eq(len(http_mock_calls()), 0, "invalid query options perform no network requests")
+}
+
+pipeline test_actions_workflow_run_jobs_preserves_http_failure(task) {
+  egress_policy({allow: ["github-api.test"], default: "deny"})
+  http_mock_clear()
+  const base = "https://github-api.test"
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/actions/runs/29679449/jobs",
+    {
+      status: 403,
+      body: json_stringify({message: "Resource not accessible by integration"}),
+      headers: {"x-ratelimit-remaining": "10"},
+    },
+  )
+  const result = actions_workflow_run_jobs("octo-org", "octo-repo", 29679449, auth(base))
+  assert(is_err(result), "GitHub HTTP failure remains typed")
+  assert_eq(
+    unwrap_err(result),
+    {
+      code: "missing_scopes",
+      category: "permission",
+      message: "github API request failed with status 403",
+      http_status: 403,
+    },
+    "HTTP failure preserves the exact connector error shape and status",
+  )
+  assert_eq(len(http_mock_calls()), 1, "HTTP failure performs one request")
+}

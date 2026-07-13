@@ -65,6 +65,7 @@ const GITHUB_OUTBOUND_METHODS = [
   "actions.workflow_dispatch",
   "actions.workflow_runs.list",
   "actions.workflow_run.get",
+  "actions.workflow_run.jobs",
   "actions.runners.registration_token",
   "actions.runners.remove_token",
   "actions.runners.generate_jitconfig",
@@ -600,6 +601,9 @@ pub fn call(method, args = {}) {
   if method == "actions.workflow_run.get" {
     return __actions_workflow_run_get(args, cfg)
   }
+  if method == "actions.workflow_run.jobs" {
+    return __actions_workflow_run_jobs(args, cfg)
+  }
   if starts_with(method, "actions.runners.") || starts_with(method, "actions.runner_groups.") {
     return __actions_runners_dispatch(method, args, cfg)
   }
@@ -716,6 +720,12 @@ pub fn actions_workflow_dispatch(
 pub fn actions_workflow_runs(owner, repo, options = nil) {
   const opts = options ?? {}
   return call("actions.workflow_runs.list", opts + {owner: owner, repo: repo})
+}
+
+/** List the jobs and steps for one workflow run. */
+pub fn actions_workflow_run_jobs(owner, repo, run_id, options = nil) {
+  const opts = options ?? {}
+  return call("actions.workflow_run.jobs", opts + {owner: owner, repo: repo, run_id: run_id})
 }
 
 /**
@@ -2359,9 +2369,9 @@ fn __actions_workflow_runs_list(args, cfg) {
 }
 
 fn __actions_workflow_run_get(args, cfg) {
-  const run_id = args?.run_id ?? args?.id
-  if run_id == nil || trim(to_string(run_id)) == "" {
-    return __err("schema_drift", "actions.workflow_run.get requires run_id or id")
+  const run_id = __actions_run_id(args?.run_id ?? args?.id)
+  if run_id == nil {
+    return __err("schema_drift", "actions.workflow_run.get requires a positive decimal run_id or id")
   }
   return __github_json(
     "GET",
@@ -2372,6 +2382,49 @@ fn __actions_workflow_run_get(args, cfg) {
     nil,
     cfg,
   )
+}
+
+fn __actions_workflow_run_jobs(args, cfg) {
+  const run_id = __actions_run_id(args?.run_id)
+  if run_id == nil {
+    return __err("schema_drift", "actions.workflow_run.jobs requires a positive decimal run_id")
+  }
+  const filter = trim(to_string(args?.filter ?? ""))
+  if filter != "" && filter != "latest" && filter != "all" {
+    return __err("schema_drift", "actions.workflow_run.jobs filter must be latest or all")
+  }
+  if args?.per_page != nil && __positive_decimal(args.per_page, 100) == nil {
+    return __err("schema_drift", "actions.workflow_run.jobs per_page must be an integer from 1 to 100")
+  }
+  if args?.page != nil && __positive_decimal(args.page, nil) == nil {
+    return __err("schema_drift", "actions.workflow_run.jobs page must be a positive integer")
+  }
+  return __github_json(
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/actions/runs/" + to_string(run_id) + "/jobs"
+        + __workflow_run_jobs_query(args),
+    ),
+    nil,
+    cfg,
+  )
+}
+
+fn __actions_run_id(value) {
+  const raw = trim(to_string(value ?? ""))
+  if len(regex_captures("^[1-9][0-9]*$", raw)) == 0 {
+    return nil
+  }
+  return to_int(raw)
+}
+
+fn __positive_decimal(value, max_value) {
+  const parsed = __actions_run_id(value)
+  if parsed == nil || (max_value != nil && parsed > max_value) {
+    return nil
+  }
+  return parsed
 }
 
 /**
@@ -5477,6 +5530,21 @@ fn __pagination_query(args) {
 fn __workflow_runs_query(args) {
   let parts = []
   const keys = ["actor", "branch", "event", "status", "created", "check_suite_id", "head_sha", "per_page", "page"]
+  for key in keys {
+    const value = args.get(key)
+    if value != nil {
+      parts = parts + [key + "=" + url_encode(to_string(value))]
+    }
+  }
+  if len(parts) == 0 {
+    return ""
+  }
+  return "?" + join(parts, "&")
+}
+
+fn __workflow_run_jobs_query(args) {
+  let parts = []
+  const keys = ["filter", "per_page", "page"]
   for key in keys {
     const value = args.get(key)
     if value != nil {
