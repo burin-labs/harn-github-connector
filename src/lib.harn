@@ -117,6 +117,8 @@ type GithubCommitFileAddition = {path: string, contents_base64: string}
 
 type GithubCommitFileDeletion = {path: string}
 
+type GithubAuthFallbackPolicy = {allow_gh_auth_fallback?: bool, gh_auth_fallback?: bool}
+
 type GithubSignedCommitRequest = {
   owner: string,
   repo: string,
@@ -5255,10 +5257,25 @@ fn __config_keys() {
   ]
 }
 
+/** Resolve gh-auth fallback with explicit caller policy ahead of ambient configuration. */
+pub fn github_auth_fallback_enabled(
+  args: GithubAuthFallbackPolicy = {},
+  environment_enabled: bool = false,
+) -> bool {
+  if args.keys().contains("allow_gh_auth_fallback") {
+    return args.allow_gh_auth_fallback ?? false
+  }
+  if args.keys().contains("gh_auth_fallback") {
+    return args.gh_auth_fallback ?? false
+  }
+  return environment_enabled
+}
+
 fn __allow_gh_auth_fallback(args) {
-  const direct = args?.allow_gh_auth_fallback ?? false
-  const alias = args?.gh_auth_fallback ?? false
-  return direct || alias || harness.env.get_or("HARN_GITHUB_ALLOW_GH_AUTH_FALLBACK", "") == "1"
+  return github_auth_fallback_enabled(
+    args,
+    harness.env.get_or("HARN_GITHUB_ALLOW_GH_AUTH_FALLBACK", "") == "1",
+  )
 }
 
 fn __gh_auth_token(args) {

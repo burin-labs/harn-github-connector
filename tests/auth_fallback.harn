@@ -1,0 +1,40 @@
+import { github_auth_fallback_enabled } from "../src/lib"
+
+pipeline test_explicit_canonical_policy_dominates_environment(task) {
+  assert_eq(
+    github_auth_fallback_enabled({allow_gh_auth_fallback: false}, true),
+    false,
+    "explicit opt-out dominates an enabled environment default",
+  )
+  assert_eq(
+    github_auth_fallback_enabled({allow_gh_auth_fallback: true}, false),
+    true,
+    "explicit opt-in dominates a disabled environment default",
+  )
+}
+
+pipeline test_canonical_policy_dominates_legacy_alias(task) {
+  assert_eq(
+    github_auth_fallback_enabled({allow_gh_auth_fallback: false, gh_auth_fallback: true}, true),
+    false,
+    "canonical opt-out dominates the legacy alias and environment",
+  )
+}
+
+pipeline test_legacy_alias_precedes_environment_when_canonical_is_absent(task) {
+  assert_eq(
+    github_auth_fallback_enabled({gh_auth_fallback: false}, true),
+    false,
+    "legacy explicit opt-out dominates the environment default",
+  )
+  assert_eq(
+    github_auth_fallback_enabled({gh_auth_fallback: true}, false),
+    true,
+    "legacy explicit opt-in remains supported",
+  )
+}
+
+pipeline test_environment_is_only_the_absent_option_default(task) {
+  assert_eq(github_auth_fallback_enabled({}, true), true, "enabled environment default")
+  assert_eq(github_auth_fallback_enabled({}, false), false, "disabled environment default")
+}
