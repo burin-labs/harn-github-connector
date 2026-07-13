@@ -132,7 +132,7 @@ Call methods through `call(method, args)` unless a named helper fits better.
 
 | Area | Methods |
 |---|---|
-| Pull requests | `github.pr.list`, `github.pr.view`, `github.pr.checks`, `github.pr.merge`, `github.pr.enable_auto_merge`, `github.pr.comment`, `pulls.list`, `pulls.list_with_checks`, `pulls.get`, `pulls.create`, `pulls.merge`, `pulls.merge_safe`, `pulls.create_review_comment`, `pulls.get_diff`, `pulls.list_files`, `pulls.list_reviews`, `pull_requests.resolve_mergeable`, `repos.commit_pulls` |
+| Pull requests | `github.pr.list`, `github.pr.view`, `github.pr.edit`, `github.pr.checks`, `github.pr.merge`, `github.pr.enable_auto_merge`, `github.pr.comment`, `pulls.list`, `pulls.list_with_checks`, `pulls.get`, `pulls.update`, `pulls.create`, `pulls.merge`, `pulls.merge_safe`, `pulls.create_review_comment`, `pulls.get_diff`, `pulls.list_files`, `pulls.list_reviews`, `pull_requests.resolve_mergeable`, `repos.commit_pulls` |
 | Actions and checks | `github.actions.workflow_dispatch`, `github.actions.runs`, `github.actions.run`, `github.actions.logs`, `actions.workflow_dispatch`, `actions.workflow_runs.list`, `actions.workflow_run.get`, `check_runs.create`, `check_runs.update` |
 | Self-hosted runners | `actions.runners.registration_token`, `actions.runners.remove_token`, `actions.runners.generate_jitconfig`, `actions.runners.list`, `actions.runners.get`, `actions.runners.delete`, `actions.runners.downloads`, `actions.runners.labels.list`, `actions.runners.labels.add`, `actions.runners.labels.replace`, `actions.runners.labels.remove`, `actions.runner_groups.list`, `actions.runner_groups.create`, `actions.runner_groups.get`, `actions.runner_groups.update`, `actions.runner_groups.delete` |
 | User OAuth | `oauth.user.device_code`, `oauth.user.device_poll`, `oauth.user.exchange_code`, `oauth.user.refresh` |
@@ -146,6 +146,7 @@ Named helpers:
 | Helper | Purpose |
 |---|---|
 | `pulls_list_with_checks(owner, repo, state, limit, options)` | List PRs with merge state and CI rollup. |
+| `pulls_update(owner, repo, number, edits, options)` | Update a closed set of editable PR fields. |
 | `pulls_merge_safe(owner, repo, number, options)` | Merge after checking branch protection. |
 | `pulls_enable_auto_merge(owner, repo, number, options)` | Enable GitHub auto-merge. |
 | `actions_workflow_dispatch(owner, repo, workflow_id, ref, inputs, options)` | Dispatch a workflow. |

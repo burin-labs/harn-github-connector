@@ -1,0 +1,66 @@
+/** Closed editable field set for GitHub pull requests. */
+pub fn pr_edit_fields() -> list<string> {
+  return ["title", "body", "base", "state", "maintainer_can_modify"]
+}
+
+fn __schema_error(message: string) {
+  return Err({code: "schema_drift", category: "schema_drift", message: message})
+}
+
+fn __pr_edit_user(user) {
+  if user == nil {
+    return nil
+  }
+  return {id: user?.id, login: user?.login ?? "", type: user?.type ?? ""}
+}
+
+/** Validate and project one PR edit body, excluding all transport context. */
+pub fn pr_edit_body(args: dict, context_fields: list<string> = []) -> Result<dict, any> {
+  const editable = pr_edit_fields()
+  const allowed = editable + context_fields
+  for key in args.keys() {
+    if !allowed.contains(key) {
+      return __schema_error("pulls.update does not accept field `" + key + "`")
+    }
+  }
+  let body = {}
+  for key in editable {
+    if args.keys().contains(key) {
+      body[key] = args[key]
+    }
+  }
+  if len(body.keys()) == 0 {
+    return __schema_error("pulls.update requires at least one editable field")
+  }
+  for key in ["title", "base"] {
+    if body.keys().contains(key) && (type_of(body[key]) != "string" || trim(body[key]) == "") {
+      return __schema_error("pulls.update `" + key + "` must be a non-empty string")
+    }
+  }
+  if body.keys().contains("body") && body.body != nil && type_of(body.body) != "string" {
+    return __schema_error("pulls.update `body` must be a string or nil")
+  }
+  if body.keys().contains("state") && !["open", "closed"].contains(body.state) {
+    return __schema_error("pulls.update `state` must be `open` or `closed`")
+  }
+  if body.keys().contains("maintainer_can_modify") && type_of(body.maintainer_can_modify) != "bool" {
+    return __schema_error("pulls.update `maintainer_can_modify` must be a bool")
+  }
+  return Ok(body)
+}
+
+/** Shape a successful edit without post-effect network enrichment. */
+pub fn pr_edit_result(summary: dict, pull: dict) -> dict {
+  return summary
+    + {
+    ok: true,
+    updated: true,
+    body: pull?.body ?? "",
+    user: __pr_edit_user(pull?.user),
+    created_at: pull?.created_at,
+    updated_at: pull?.updated_at,
+    closed_at: pull?.closed_at,
+    merged_at: pull?.merged_at,
+    raw: pull,
+  }
+}

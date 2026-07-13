@@ -4,7 +4,7 @@ fn auth(base: string) -> dict {
   return {api_base_url: base, installation_token: "github-app-installation-token"}
 }
 
-fn request() -> dict {
+fn request() {
   return {
     owner: "burin-labs",
     repo: "burin-code",
