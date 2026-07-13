@@ -3454,8 +3454,15 @@ fn __set_state(state: GithubConnectorState) {
   return state
 }
 
-fn __err(code, message) {
-  return Err({code: code, category: __error_category(code), message: message})
+fn __err(code, message, details = nil) {
+  const error = {code: code, category: __error_category(code), message: message}
+  return Err(
+    if details == nil {
+      error
+    } else {
+      error + details
+    },
+  )
 }
 
 fn __error_category(code) {
@@ -6018,12 +6025,21 @@ fn __github_request_error(response) {
       return __err(
         "restricted_commit_author",
         "GitHub rejected the configured commit author/committer: " + message,
+        {http_status: response.status},
       )
     }
-    return __err("validation_failed", "GitHub API validation failed: " + message)
+    return __err(
+      "validation_failed",
+      "GitHub API validation failed: " + message,
+      {http_status: response.status},
+    )
   }
   const code = __github_error_code(response)
-  return __err(code, "github API request failed with status " + to_string(response.status))
+  return __err(
+    code,
+    "github API request failed with status " + to_string(response.status),
+    {http_status: response.status},
+  )
 }
 
 fn __github_error_code(response) {

@@ -74,4 +74,17 @@ pipeline test_release_view_provider_error(task) {
   assert_eq(missing.ok, false, "provider failure remains typed")
   assert_eq(missing.repo, "octo-org/octo-repo", "error keeps repo identity")
   assert(missing.error != nil, "provider error is retained")
+  assert_eq(missing.error.http_status, 404, "provider error retains structured HTTP status")
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/releases/tags/v9.9.8",
+    {
+      status: 403,
+      body: json_stringify({message: "Resource not accessible by integration"}),
+      headers: {"x-ratelimit-remaining": "10"},
+    },
+  )
+  const forbidden = github_release("octo-org", "octo-repo", "v9.9.8", auth)
+  assert_eq(forbidden.ok, false, "permission failure remains typed")
+  assert_eq(forbidden.error.http_status, 403, "non-404 provider status is retained")
 }
