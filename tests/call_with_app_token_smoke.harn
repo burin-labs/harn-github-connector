@@ -90,7 +90,10 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "42"},
     },
   )
-  const pull = call("pulls.get", config(harness, 1700000000) + {owner: "octo", repo: "demo", pull_number: 5})
+  const pull = call(
+    "pulls.get",
+    config(harness, 1700000000) + {owner: "octo", repo: "demo", pull_number: 5},
+  )
   assert_eq(pull.head.sha, "abc", "pulls.get head sha")
   http_mock(
     "GET",
@@ -101,7 +104,10 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "42"},
     },
   )
-  const diff = call("pulls.get_diff", config(harness, 1700000000) + {owner: "octo", repo: "demo", pull_number: 5})
+  const diff = call(
+    "pulls.get_diff",
+    config(harness, 1700000000) + {owner: "octo", repo: "demo", pull_number: 5},
+  )
   assert(diff.contains("src/lib.harn"), "pulls.get_diff raw diff")
   http_mock(
     "GET",
@@ -121,7 +127,13 @@ pipeline default() {
   const check_run = call(
     "check_runs.create",
     config(harness, 1700000000)
-      + {owner: "octo", repo: "demo", name: "ci", head_sha: "abc", status: "queued"},
+      + {
+      owner: "octo",
+      repo: "demo",
+      name: "ci",
+      head_sha: "abc",
+      status: "queued",
+    },
   )
   assert_eq(check_run.id, 10, "check_runs.create id")
   http_mock(
@@ -148,7 +160,10 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "41"},
     },
   )
-  const graph = call("graphql", config(harness, 1700000000) + {query: "query { viewer { login } }", variables: {}})
+  const graph = call(
+    "graphql",
+    config(harness, 1700000000) + {query: "query { viewer { login } }", variables: {}},
+  )
   assert_eq(graph.data.viewer.login, "octo", "graphql viewer login")
   http_mock(
     "GET",
@@ -156,7 +171,11 @@ pipeline default() {
     {
       responses: [
         {status: 401, body: "{\"message\":\"bad credentials\"}"},
-        {status: 200, body: "[{\"filename\":\"src/lib.harn\"}]", headers: {"x-ratelimit-remaining": "42"}},
+        {
+          status: 200,
+          body: "[{\"filename\":\"src/lib.harn\"}]",
+          headers: {"x-ratelimit-remaining": "42"},
+        },
       ],
     },
   )

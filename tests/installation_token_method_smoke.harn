@@ -43,7 +43,11 @@ pipeline default() {
   http_mock_clear()
   const direct = call(
     "github.app.installation_token",
-    {api_base_url: "https://api.github.test", installation_token: "direct-xyz", installation_id: 77},
+    {
+      api_base_url: "https://api.github.test",
+      installation_token: "direct-xyz",
+      installation_id: 77,
+    },
   )
   assert_eq(direct.token, "direct-xyz", "direct mode passes the supplied token through")
   assert_eq(direct.token_mode, "direct", "direct mode reports direct token_mode")

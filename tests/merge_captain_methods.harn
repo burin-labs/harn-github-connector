@@ -73,7 +73,10 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "9"},
     },
   )
-  const rest_pulls = call("pulls.list", auth + {owner: "octo-org", repo: "octo-repo", state: "open", limit: 3})
+  const rest_pulls = call(
+    "pulls.list",
+    auth + {owner: "octo-org", repo: "octo-repo", state: "open", limit: 3},
+  )
   assert_eq(len(rest_pulls), 2, "pulls.list response")
   http_mock(
     "POST",

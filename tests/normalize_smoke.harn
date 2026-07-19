@@ -28,7 +28,9 @@ pipeline default() {
   assert_eq(pr.event.payload.reaction_topics, [], "clean pull request has no reaction topics")
   assert_eq(pr.event.payload.sender.login, "octocat", "pull request actor")
   assert(pr.event.dedupe_key != "" && pr.event.dedupe_key != nil, "pr dedupe key populated")
-  const dirty_pr = github_normalize(fixture_raw(harness, "pull_request_dirty", secret, "pull_request"))
+  const dirty_pr = github_normalize(
+    fixture_raw(harness, "pull_request_dirty", secret, "pull_request"),
+  )
   assert_eq(
     dirty_pr.event.payload.reaction_topics,
     ["github.reaction.merge_conflict"],
@@ -37,12 +39,18 @@ pipeline default() {
   const push = github_normalize(fixture_raw(harness, "push", secret, "push"))
   assert_eq(push.event.kind, "push", "push event kind")
   assert_eq(push.event.payload.after, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "push after")
-  assert_eq(push.event.payload.head_sha, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "push head sha")
+  assert_eq(
+    push.event.payload.head_sha,
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "push head sha",
+  )
   assert_eq(push.event.payload.head_ref, "main", "push ref name")
   const issues = github_normalize(fixture_raw(harness, "issues_opened", secret, "issues"))
   assert_eq(issues.event.kind, "issues", "issues event kind")
   assert_eq(issues.event.payload.issue.number, 7, "issue number")
-  const comment = github_normalize(fixture_raw(harness, "issue_comment_created", secret, "issue_comment"))
+  const comment = github_normalize(
+    fixture_raw(harness, "issue_comment_created", secret, "issue_comment"),
+  )
   assert_eq(comment.event.kind, "issue_comment", "comment event kind")
   assert_eq(comment.event.payload.comment.body, "Looks good from the fixture.", "comment body")
   const review = github_normalize(
@@ -50,14 +58,18 @@ pipeline default() {
   )
   assert_eq(review.event.kind, "pull_request_review", "review event kind")
   assert_eq(review.event.payload.review.state, "approved", "review state")
-  const workflow = github_normalize(fixture_raw(harness, "workflow_run_completed", secret, "workflow_run"))
+  const workflow = github_normalize(
+    fixture_raw(harness, "workflow_run_completed", secret, "workflow_run"),
+  )
   assert_eq(workflow.event.kind, "workflow_run", "workflow run event kind")
   assert_eq(workflow.event.payload.workflow_run.conclusion, "success", "workflow conclusion")
   assert_eq(workflow.event.payload.reaction_topics, [], "green workflow has no reaction topics")
   assert_eq(workflow.event.payload.run_id, 6001, "workflow run id")
   assert_eq(workflow.event.payload.check_suite_id, 8101, "workflow suite id")
   assert_eq(workflow.event.payload.pull_request_number, 42, "workflow pr number")
-  const deployment = github_normalize(fixture_raw(harness, "deployment_status_created", secret, "deployment_status"))
+  const deployment = github_normalize(
+    fixture_raw(harness, "deployment_status_created", secret, "deployment_status"),
+  )
   assert_eq(deployment.event.kind, "deployment_status", "deployment status event kind")
   assert_eq(deployment.event.payload.deployment.environment, "staging", "deployment environment")
   const check = github_normalize(fixture_raw(harness, "check_run_completed", secret, "check_run"))
@@ -67,13 +79,17 @@ pipeline default() {
   assert_eq(check.event.payload.check_id, 8001, "check run id")
   assert_eq(check.event.payload.check_suite_id, 8101, "check suite id")
   assert_eq(check.event.payload.pull_request_number, 42, "check pr number")
-  const failed_check = github_normalize(fixture_raw(harness, "check_run_failure", secret, "check_run"))
+  const failed_check = github_normalize(
+    fixture_raw(harness, "check_run_failure", secret, "check_run"),
+  )
   assert_eq(
     failed_check.event.payload.reaction_topics,
     ["github.reaction.ci_failure"],
     "failed check emits CI-failure reaction topic",
   )
-  const suite = github_normalize(fixture_raw(harness, "check_suite_requested", secret, "check_suite"))
+  const suite = github_normalize(
+    fixture_raw(harness, "check_suite_requested", secret, "check_suite"),
+  )
   assert_eq(suite.event.kind, "check_suite", "check suite event kind")
   assert_eq(suite.event.payload.check_suite_id, 8101, "check suite normalized id")
   assert_eq(suite.event.payload.head_ref, "feature/connector-fixture", "check suite head ref")
@@ -88,15 +104,25 @@ pipeline default() {
     ["github.reaction.ci_failure"],
     "error status emits CI-failure reaction topic",
   )
-  const group = github_normalize(fixture_raw(harness, "merge_group_checks_requested", secret, "merge_group"))
+  const group = github_normalize(
+    fixture_raw(harness, "merge_group_checks_requested", secret, "merge_group"),
+  )
   assert_eq(group.event.kind, "merge_group", "merge group event kind")
   assert_eq(group.event.payload.merge_group_id, 9201, "merge group id")
   assert_eq(group.event.payload.pull_request_numbers[0], 42, "merge group pull number")
-  const suspended = github_normalize(fixture_raw(harness, "installation_suspend", secret, "installation"))
+  const suspended = github_normalize(
+    fixture_raw(harness, "installation_suspend", secret, "installation"),
+  )
   assert_eq(suspended.event.kind, "installation", "installation event kind")
-  assert_eq(suspended.event.payload.installation_state, "suspended", "installation suspension state")
+  assert_eq(
+    suspended.event.payload.installation_state,
+    "suspended",
+    "installation suspension state",
+  )
   assert(suspended.event.payload.suspended, "installation suspension flag")
-  const deleted = github_normalize(fixture_raw(harness, "installation_deleted", secret, "installation"))
+  const deleted = github_normalize(
+    fixture_raw(harness, "installation_deleted", secret, "installation"),
+  )
   assert_eq(deleted.event.payload.installation_state, "revoked", "installation revocation state")
   assert(deleted.event.payload.revoked, "installation revocation flag")
   const repo_removed = github_normalize(
@@ -122,13 +148,19 @@ pipeline default() {
     "release source url",
   )
   const body = fixture_body(harness, "issues_opened")
-  const tampered = github_normalize({body_text: body + " ", headers: github_headers(secret, body, "issues")})
+  const tampered = github_normalize(
+    {body_text: body + " ", headers: github_headers(secret, body, "issues")},
+  )
   assert_eq(tampered.type, "reject", "tampered body rejects")
   assert_eq(tampered.reject.status, 401, "tampered body status")
-  const missing_signature = github_normalize({body_text: body, headers: {"x-github-event": "issues"}})
+  const missing_signature = github_normalize(
+    {body_text: body, headers: {"x-github-event": "issues"}},
+  )
   assert_eq(missing_signature.type, "reject", "missing signature rejects")
   init({signing_secret: "different-configured-secret"})
-  const wrong_secret = github_normalize({body_text: body, headers: github_headers(secret, body, "issues")})
+  const wrong_secret = github_normalize(
+    {body_text: body, headers: github_headers(secret, body, "issues")},
+  )
   assert_eq(wrong_secret.type, "reject", "wrong secret rejects")
   shutdown()
 }

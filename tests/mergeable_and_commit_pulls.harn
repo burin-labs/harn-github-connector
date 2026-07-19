@@ -25,7 +25,12 @@ pipeline default() {
       ],
     },
   )
-  const resolved = github_resolve_mergeable("octo-org", "octo-repo", 42, auth + {poll_interval_ms: 0, max_attempts: 4})
+  const resolved = github_resolve_mergeable(
+    "octo-org",
+    "octo-repo",
+    42,
+    auth + {poll_interval_ms: 0, max_attempts: 4},
+  )
   assert_eq(resolved.mergeable, true, "mergeable resolved true")
   assert_eq(resolved.mergeable_state, "clean", "mergeable_state clean")
   assert_eq(resolved.is_conflict, false, "clean is not a conflict")
@@ -41,7 +46,12 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "8"},
     },
   )
-  const conflict = github_resolve_mergeable("octo-org", "octo-repo", 99, auth + {poll_interval_ms: 0})
+  const conflict = github_resolve_mergeable(
+    "octo-org",
+    "octo-repo",
+    99,
+    auth + {poll_interval_ms: 0},
+  )
   assert_eq(conflict.is_conflict, true, "dirty is a conflict")
   assert_eq(conflict.mergeable_state, "dirty", "dirty state")
   // resolve_mergeable: stays unknown across all attempts -> ok but unresolved.
@@ -54,7 +64,12 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "7"},
     },
   )
-  const stuck = github_resolve_mergeable("octo-org", "octo-repo", 7, auth + {poll_interval_ms: 0, max_attempts: 2})
+  const stuck = github_resolve_mergeable(
+    "octo-org",
+    "octo-repo",
+    7,
+    auth + {poll_interval_ms: 0, max_attempts: 2},
+  )
   assert_eq(stuck.resolved, false, "unresolved after max attempts")
   assert_eq(stuck.mergeable_state, "unknown", "still unknown")
   assert_eq(stuck.attempts, 2, "exhausted attempts")
@@ -68,7 +83,10 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "6"},
     },
   )
-  const pulls = call("repos.commit_pulls", auth + {owner: "octo-org", repo: "octo-repo", sha: "abcdef1"})
+  const pulls = call(
+    "repos.commit_pulls",
+    auth + {owner: "octo-org", repo: "octo-repo", sha: "abcdef1"},
+  )
   assert_eq(pulls[0].number, 13, "commit_pulls returns PR")
   // github_resolve_pr_for_sha: prefers payload pull_requests[].
   const from_payload = github_resolve_pr_for_sha(
@@ -85,7 +103,12 @@ pipeline default() {
     base + "/repos/octo-org/octo-repo/commits/deadbeef/pulls",
     {status: 200, body: "[{\"number\":21}]", headers: {"x-ratelimit-remaining": "5"}},
   )
-  const fallback = github_resolve_pr_for_sha("octo-org", "octo-repo", "deadbeef", auth + {pull_requests: []})
+  const fallback = github_resolve_pr_for_sha(
+    "octo-org",
+    "octo-repo",
+    "deadbeef",
+    auth + {pull_requests: []},
+  )
   assert_eq(fallback.source, "commit_pulls", "falls back to commit_pulls")
   assert_eq(fallback.pull_number, 21, "fallback PR number")
   // github_resolve_pr_for_sha: status event with no PR anywhere -> not found.

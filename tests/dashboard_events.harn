@@ -46,7 +46,10 @@ pipeline default() {
     "https://github.com/octo-org/octo-repo/pull/42",
     "pr source url",
   )
-  const auto_merge_intent = find_intent(pr.event.payload.triage_event.action_intents, "enable_auto_merge")
+  const auto_merge_intent = find_intent(
+    pr.event.payload.triage_event.action_intents,
+    "enable_auto_merge",
+  )
   assert_eq(auto_merge_intent.method, "github.pr.enable_auto_merge", "pr auto-merge intent")
   assert(auto_merge_intent.requires_approval, "pr auto-merge requires approval")
   const check = github_normalize(fixture_raw(harness, "check_run_completed", secret, "check_run"))
@@ -56,13 +59,21 @@ pipeline default() {
   assert_eq(check.event.payload.job_event.status, "completed", "check job status")
   assert_eq(check.event.payload.job_event.conclusion, "success", "check job conclusion")
   assert_eq(check.event.payload.job_event.check_id, 8001, "check job id")
-  const check_rerun_intent = find_intent(check.event.payload.job_event.action_intents, "rerun_check")
+  const check_rerun_intent = find_intent(
+    check.event.payload.job_event.action_intents,
+    "rerun_check",
+  )
   assert(check_rerun_intent != nil, "check rerun intent")
   assert(check_rerun_intent.requires_approval, "check rerun requires approval")
-  const workflow = github_normalize(fixture_raw(harness, "workflow_run_completed", secret, "workflow_run"))
+  const workflow = github_normalize(
+    fixture_raw(harness, "workflow_run_completed", secret, "workflow_run"),
+  )
   assert_eq(workflow.event.payload.job_event.run_id, 6001, "workflow run id")
   assert_eq(workflow.event.payload.job_event.workflow_id, 6101, "workflow id")
-  const workflow_dispatch_intent = find_intent(workflow.event.payload.job_event.action_intents, "dispatch_workflow")
+  const workflow_dispatch_intent = find_intent(
+    workflow.event.payload.job_event.action_intents,
+    "dispatch_workflow",
+  )
   assert_eq(
     workflow_dispatch_intent.method,
     "github.actions.workflow_dispatch",
@@ -73,7 +84,10 @@ pipeline default() {
   assert_eq(release.event.payload.source.kind, "github.release", "release source kind")
   assert_eq(release.event.payload.job_event.release_id, 501, "release job id")
   assert_eq(release.event.payload.job_event.status, "published", "release job status")
-  const release_mutation_intent = find_intent(release.event.payload.job_event.action_intents, "mutate_release")
+  const release_mutation_intent = find_intent(
+    release.event.payload.job_event.action_intents,
+    "mutate_release",
+  )
   assert(release_mutation_intent != nil, "release mutation intent")
   assert(release_mutation_intent.requires_approval, "release mutation requires approval")
   assert_eq(release.event.payload.job_event.raw, nil, "job event keeps raw payload separate")
@@ -124,7 +138,11 @@ pipeline default() {
   http_mock(
     "GET",
     base + "/repos/octo-org/hidden-repo/pulls?state=open",
-    {status: 404, body: json_stringify({message: "Not Found"}), headers: {"x-ratelimit-remaining": "9"}},
+    {
+      status: 404,
+      body: json_stringify({message: "Not Found"}),
+      headers: {"x-ratelimit-remaining": "9"},
+    },
   )
   const inaccessible = call(
     "github.pr.list",

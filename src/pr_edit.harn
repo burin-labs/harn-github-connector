@@ -43,7 +43,8 @@ pub fn pr_edit_body(args: dict, context_fields: list<string> = []) -> Result<dic
   if body.keys().contains("state") && !["open", "closed"].contains(body.state) {
     return __schema_error("pulls.update `state` must be `open` or `closed`")
   }
-  if body.keys().contains("maintainer_can_modify") && type_of(body.maintainer_can_modify) != "bool" {
+  if body.keys().contains("maintainer_can_modify")
+    && type_of(body.maintainer_can_modify) != "bool" {
     return __schema_error("pulls.update `maintainer_can_modify` must be a bool")
   }
   return Ok(body)

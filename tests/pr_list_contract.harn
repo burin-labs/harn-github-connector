@@ -65,7 +65,10 @@ pipeline test_pr_list_preserves_explicit_fork_owner(task) {
   const pulls = call(
     "github.pr.list",
     auth(base)
-      + {repo: "octo-org/octo-repo", filters: {state: "open", head: "fork-user:feature/safe"}},
+      + {
+      repo: "octo-org/octo-repo",
+      filters: {state: "open", head: "fork-user:feature/safe"},
+    },
   )
   assert_eq(pulls.map({ pull -> pull.number }), [10], "explicit fork owner is preserved")
   assert_eq(len(http_mock_calls()), 1, "one exact fork-owner request")
@@ -81,7 +84,10 @@ pipeline test_pr_list_merged_maps_to_closed_and_filters_unmerged_prs(task) {
     {
       status: 200,
       body: json_stringify(
-        [pull_fixture(8, "release/v1.0.0", "2026-07-13T00:00:00Z"), pull_fixture(9, "abandoned", nil)],
+        [
+          pull_fixture(8, "release/v1.0.0", "2026-07-13T00:00:00Z"),
+          pull_fixture(9, "abandoned", nil),
+        ],
       ),
       headers: {"x-ratelimit-remaining": "10"},
     },

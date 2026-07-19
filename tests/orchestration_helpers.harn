@@ -209,7 +209,10 @@ pipeline test_dispatch_identity_selects_only_unseen_exact_run(task) {
         {
           status: 200,
           body: json_stringify(
-            {total_count: 1, workflow_runs: [run_payload(900, "completed", "success", "2035-01-01T00:00:00Z")]},
+            {
+              total_count: 1,
+              workflow_runs: [run_payload(900, "completed", "success", "2035-01-01T00:00:00Z")],
+            },
           ),
           headers: {"x-ratelimit-remaining": "21"},
         },
@@ -280,7 +283,9 @@ pipeline test_dispatch_rejects_multiple_unseen_exact_runs(task) {
       responses: [
         {
           status: 200,
-          body: json_stringify({total_count: 1, workflow_runs: [run_payload(800, "completed", "success")]}),
+          body: json_stringify(
+            {total_count: 1, workflow_runs: [run_payload(800, "completed", "success")]},
+          ),
           headers: {"x-ratelimit-remaining": "12"},
         },
         {
@@ -305,7 +310,14 @@ pipeline test_dispatch_rejects_multiple_unseen_exact_runs(task) {
     BASE + "/repos/octo-org/octo-repo/actions/workflows/ambiguous.yml/dispatches",
     {status: 204, body: dispatch_204(), headers: {"x-ratelimit-remaining": "11"}},
   )
-  const result = github_dispatch_workflow_and_wait("octo-org", "octo-repo", "ambiguous.yml", "main", nil, auth())
+  const result = github_dispatch_workflow_and_wait(
+    "octo-org",
+    "octo-repo",
+    "ambiguous.yml",
+    "main",
+    nil,
+    auth(),
+  )
   assert_eq(result.ok, false, "ambiguous dispatch fails closed")
   assert_eq(result.status, "ambiguous_dispatch", "typed ambiguous status")
   assert_eq(result.run_id, nil, "no ambiguous run is pinned")
@@ -377,7 +389,14 @@ pipeline test_dispatch_returns_dispatch_failed(task) {
       headers: {"x-ratelimit-remaining": "5"},
     },
   )
-  const result = github_dispatch_workflow_and_resolve_run("octo-org", "octo-repo", "broken.yml", "main", nil, auth())
+  const result = github_dispatch_workflow_and_resolve_run(
+    "octo-org",
+    "octo-repo",
+    "broken.yml",
+    "main",
+    nil,
+    auth(),
+  )
   assert_eq(result.ok, false, "ok=false")
   assert_eq(result.status, "dispatch_failed", "status=dispatch_failed")
   assert(result.error != nil, "error captured")
@@ -439,7 +458,12 @@ pipeline test_wait_for_workflow_run_times_out_with_known_run(task) {
       ],
     },
   )
-  const result = github_wait_for_workflow_run("octo-org", "octo-repo", 777, auth() + {max_attempts: 2})
+  const result = github_wait_for_workflow_run(
+    "octo-org",
+    "octo-repo",
+    777,
+    auth() + {max_attempts: 2},
+  )
   assert_eq(result.status, "timed_out", "status=timed_out")
   assert_eq(result.timed_out, true, "timed_out flag set")
   assert_eq(result.run_id, 777, "still surfaces last known run")
@@ -529,7 +553,12 @@ pipeline test_ensure_auto_merge_enables_via_graphql(task) {
       headers: {"x-ratelimit-remaining": "18"},
     },
   )
-  const result = github_ensure_auto_merge("octo-org", "octo-repo", 12, auth() + {expected_head_oid: "fff"})
+  const result = github_ensure_auto_merge(
+    "octo-org",
+    "octo-repo",
+    12,
+    auth() + {expected_head_oid: "fff"},
+  )
   assert_eq(result.state, "enabled", "state=enabled")
   assert_eq(result.already_enabled, false, "not already enabled")
   assert_eq(result.merge_method, "MERGE", "default method MERGE")
@@ -545,7 +574,12 @@ pipeline test_ensure_auto_merge_failed(task) {
     BASE + "/repos/octo-org/octo-repo/pulls/77",
     {status: 404, body: "{\"message\":\"Not Found\"}", headers: {"x-ratelimit-remaining": "10"}},
   )
-  const result = github_ensure_auto_merge("octo-org", "octo-repo", 77, auth() + {expected_head_oid: "missing"})
+  const result = github_ensure_auto_merge(
+    "octo-org",
+    "octo-repo",
+    77,
+    auth() + {expected_head_oid: "missing"},
+  )
   assert(is_err(result), "provider error remains a Result failure")
   assert_eq(unwrap_err(result).http_status, 404, "HTTP status remains structured")
   http_mock_clear()
@@ -598,7 +632,10 @@ pipeline test_wait_for_pr_checks_pending_then_failing_with_logs(task) {
         {
           status: 200,
           body: json_stringify(
-            {total_count: 1, check_runs: [{id: 51, name: "ci", status: "in_progress", conclusion: nil}]},
+            {
+              total_count: 1,
+              check_runs: [{id: 51, name: "ci", status: "in_progress", conclusion: nil}],
+            },
           ),
           headers: {"x-ratelimit-remaining": "16"},
         },
@@ -653,11 +690,18 @@ pipeline test_wait_for_pr_checks_times_out(task) {
     BASE + "/repos/octo-org/octo-repo/commits/pending-forever/check-runs",
     {
       status: 200,
-      body: json_stringify({check_runs: [{id: 1, name: "slow", status: "in_progress", conclusion: nil}]}),
+      body: json_stringify(
+        {check_runs: [{id: 1, name: "slow", status: "in_progress", conclusion: nil}]},
+      ),
       headers: {"x-ratelimit-remaining": "10"},
     },
   )
-  const result = github_wait_for_pr_checks("octo-org", "octo-repo", "pending-forever", auth() + {max_attempts: 2})
+  const result = github_wait_for_pr_checks(
+    "octo-org",
+    "octo-repo",
+    "pending-forever",
+    auth() + {max_attempts: 2},
+  )
   assert_eq(result.state, "timed_out", "state=timed_out")
   assert_eq(result.ok, false, "ok=false on timeout")
   assert_eq(result.timed_out, true, "timed_out flag")
@@ -689,7 +733,12 @@ pipeline test_wait_for_pr_checks_log_summary_handles_non_actions_url(task) {
       headers: {"x-ratelimit-remaining": "9"},
     },
   )
-  const result = github_wait_for_pr_checks("octo-org", "octo-repo", "sha-2", auth() + {include_logs: true})
+  const result = github_wait_for_pr_checks(
+    "octo-org",
+    "octo-repo",
+    "sha-2",
+    auth() + {include_logs: true},
+  )
   assert_eq(result.state, "failing", "state=failing")
   assert_eq(result.logs[0].run_id, nil, "no actions run id from non-actions URL")
   assert_eq(result.logs[0].error, "no_actions_run_url", "error tag for non-actions URL")

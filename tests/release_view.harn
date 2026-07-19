@@ -22,7 +22,11 @@ pipeline test_release_view_by_tag(task) {
   http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/releases/tags/v1.2.3%2Bbuild%2F7",
-    {status: 200, body: json_stringify(release_fixture(tag)), headers: {"x-ratelimit-remaining": "10"}},
+    {
+      status: 200,
+      body: json_stringify(release_fixture(tag)),
+      headers: {"x-ratelimit-remaining": "10"},
+    },
   )
   const lookup = github_release("octo-org", "octo-repo", tag, auth)
   assert(lookup.found, "release view succeeds")

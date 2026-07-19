@@ -35,10 +35,14 @@ pipeline test_create_signed_commit_uses_atomic_github_signed_mutation(task) {
             createCommitOnBranch: {
               commit: {
                 oid: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-                url: "https://github.com/burin-labs/burin-code/commit/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                url:
+                  "https://github.com/burin-labs/burin-code/commit/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                 signature: {isValid: true, state: "VALID", wasSignedByGitHub: true},
               },
-              ref: {name: "release/harn-v0.10.8", target: {oid: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}},
+              ref: {
+                name: "release/harn-v0.10.8",
+                target: {oid: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+              },
             },
           },
         },
@@ -56,7 +60,11 @@ pipeline test_create_signed_commit_uses_atomic_github_signed_mutation(task) {
   const input = payload.variables.input
   assert_eq(input.branch.repositoryNameWithOwner, "burin-labs/burin-code", "repository")
   assert_eq(input.branch.branchName, "release/harn-v0.10.8", "branch")
-  assert_eq(input.expectedHeadOid, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "expected head lease")
+  assert_eq(
+    input.expectedHeadOid,
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "expected head lease",
+  )
   assert_eq(input.fileChanges.additions[0].path, ".harn-version", "addition path")
   assert_eq(input.fileChanges.deletions[0].path, "changelog.d/old.changed.md", "deletion path")
   assert_eq(input.author, nil, "no custom author")
@@ -81,7 +89,8 @@ pipeline test_create_signed_commit_fails_closed_on_unverified_signature(task) {
             createCommitOnBranch: {
               commit: {
                 oid: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-                url: "https://github.com/burin-labs/burin-code/commit/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                url:
+                  "https://github.com/burin-labs/burin-code/commit/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                 signature: {isValid: false, state: "UNSIGNED", wasSignedByGitHub: false},
               },
               ref: {name: "release/harn-v0.10.8"},
