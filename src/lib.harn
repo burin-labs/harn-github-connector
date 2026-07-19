@@ -6982,14 +6982,17 @@ fn __outbound_config(args) {
   if is_err(base_check) {
     return base_check
   }
-  const installation_token = args?.installation_token ?? args?.bindings?.installation_token
-    ?? args
-    ?.secrets?.installation_token
+  const configured_installation_token = args?.installation_token
+    ?? args?.bindings?.installation_token
+    ?? args?.secrets?.installation_token
     ?? harness.env.get("GITHUB_INSTALLATION_TOKEN")
-  const direct_token = installation_token ?? args?.token
+  const direct_token = configured_installation_token ?? args?.token
   if direct_token != nil && trim(to_string(direct_token)) != "" {
-    const auth_identity = if installation_token != nil
-      && trim(to_string(installation_token)) != "" {
+    const auth_identity = if configured_installation_token != nil
+      && trim(
+      to_string(configured_installation_token),
+    )
+      != "" {
       "github_app"
     } else {
       "unknown"
