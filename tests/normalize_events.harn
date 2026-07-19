@@ -39,14 +39,22 @@ pipeline default() {
       name + " raw preserved",
     )
     if contains(event_type, ".") {
-      assert_eq(event + "." + normalized.event.payload.action, event_type, name + " payload event type")
+      assert_eq(
+        event + "." + normalized.event.payload.action,
+        event_type,
+        name + " payload event type",
+      )
       assert_eq(normalized.event.topic, "github." + event_type, name + " topic")
     } else {
       assert_eq(normalized.event.topic, "github." + event_type, name + " topic")
     }
     if normalized.event.payload.repository != nil {
       assert_eq(normalized.event.payload.repository.full_name, "octo-org/octo-repo", name + " repo")
-      assert_eq(normalized.event.payload.repo.full_name, "octo-org/octo-repo", name + " normalized repo")
+      assert_eq(
+        normalized.event.payload.repo.full_name,
+        "octo-org/octo-repo",
+        name + " normalized repo",
+      )
     }
   }
   const unsupported = github_normalize(fixture_raw(harness, "issues_opened", secret, "member"))

@@ -3,7 +3,9 @@ import { fixture_raw, github_normalize } from "./helpers"
 
 pipeline default() {
   // 1. Pure helper: multiple mentions, command + args parsing.
-  const mentions = github_extract_mentions("Hey @harn-bot deploy staging now, and thanks @reviewer!")
+  const mentions = github_extract_mentions(
+    "Hey @harn-bot deploy staging now, and thanks @reviewer!",
+  )
   assert_eq(len(mentions), 2, "two mention candidates")
   assert_eq(mentions[0].handle, "harn-bot", "first handle")
   assert_eq(mentions[0].command, "deploy", "first command")
@@ -30,7 +32,9 @@ pipeline default() {
   const secret = "test-signing-secret"
   shutdown()
   init({signing_secret: secret})
-  const normalized = github_normalize(fixture_raw(harness, "issue_comment_mention", secret, "issue_comment"))
+  const normalized = github_normalize(
+    fixture_raw(harness, "issue_comment_mention", secret, "issue_comment"),
+  )
   assert_eq(normalized.type, "event", "mention event normalizes")
   const mention = normalized.event.payload.mention
   assert(mention != nil, "mention block present")
@@ -41,7 +45,9 @@ pipeline default() {
   assert_eq(mention.issue_number, 7, "issue number surfaced")
   assert_eq(mention.comment_id, 9001, "comment id surfaced")
   // 7. A comment with no mentions has no mention block.
-  const plain = github_normalize(fixture_raw(harness, "issue_comment_created", secret, "issue_comment"))
+  const plain = github_normalize(
+    fixture_raw(harness, "issue_comment_created", secret, "issue_comment"),
+  )
   assert_eq(plain.event.payload.mention, nil, "plain comment has no mention block")
   shutdown()
 }

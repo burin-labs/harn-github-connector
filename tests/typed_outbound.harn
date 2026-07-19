@@ -21,7 +21,11 @@ pipeline default() {
             mergeable: true,
             mergeable_state: "clean",
             html_url: "https://github.com/octo-org/octo-repo/pull/101",
-            base: {ref: "main", sha: "base-sha", repo: {full_name: "octo-org/octo-repo", owner: {login: "octo-org"}}},
+            base: {
+              ref: "main",
+              sha: "base-sha",
+              repo: {full_name: "octo-org/octo-repo", owner: {login: "octo-org"}},
+            },
             head: {
               ref: "feature/green",
               sha: "green-sha",
@@ -46,7 +50,11 @@ pipeline default() {
             mergeable_state: "clean",
             auto_merge: {enabled_by: {login: "octocat"}},
             base: {ref: "main", repo: {full_name: "octo-org/octo-repo"}},
-            head: {ref: "feature/queued", sha: "queued-sha", repo: {full_name: "octo-org/octo-repo"}},
+            head: {
+              ref: "feature/queued",
+              sha: "queued-sha",
+              repo: {full_name: "octo-org/octo-repo"},
+            },
           },
           {
             number: 104,
@@ -56,14 +64,21 @@ pipeline default() {
             merged_at: "2026-05-02T12:00:00Z",
             merge_commit_sha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             base: {ref: "main", repo: {full_name: "octo-org/octo-repo"}},
-            head: {ref: "feature/merged", sha: "merged-sha", repo: {full_name: "octo-org/octo-repo"}},
+            head: {
+              ref: "feature/merged",
+              sha: "merged-sha",
+              repo: {full_name: "octo-org/octo-repo"},
+            },
           },
         ],
       ),
       headers: {"x-ratelimit-remaining": "20"},
     },
   )
-  const prs = call("github.pr.list", auth + {repo: "octo-org/octo-repo", filters: {state: "open", per_page: 4}})
+  const prs = call(
+    "github.pr.list",
+    auth + {repo: "octo-org/octo-repo", filters: {state: "open", per_page: 4}},
+  )
   assert_eq(prs[0].state, "green", "clean PR classified green")
   assert_eq(prs[1].state, "dirty", "dirty PR classified dirty")
   assert_eq(prs[2].state, "green", "auto-merge arming is not queue evidence")
@@ -85,7 +100,11 @@ pipeline default() {
               state: "open",
               mergeable: true,
               mergeable_state: "clean",
-              base: {ref: "main", sha: "base-sha", repo: {full_name: "octo-org/octo-repo", owner: {login: "octo-org"}}},
+              base: {
+                ref: "main",
+                sha: "base-sha",
+                repo: {full_name: "octo-org/octo-repo", owner: {login: "octo-org"}},
+              },
               head: {
                 ref: "feature/green",
                 sha: "green-sha",
@@ -114,7 +133,10 @@ pipeline default() {
           body: json_stringify(
             {
               required_status_checks: {strict: true, contexts: ["Harn CI"]},
-              required_pull_request_reviews: {required_approving_review_count: 2, require_code_owner_reviews: true},
+              required_pull_request_reviews: {
+                required_approving_review_count: 2,
+                require_code_owner_reviews: true,
+              },
               required_conversation_resolution: {enabled: true},
             },
           ),
@@ -136,7 +158,13 @@ pipeline default() {
         {
           status: 200,
           body: json_stringify(
-            {data: {repository: {pullRequest: {number: 101, autoMergeRequest: nil, mergeQueueEntry: nil}}}},
+            {
+              data: {
+                repository: {
+                  pullRequest: {number: 101, autoMergeRequest: nil, mergeQueueEntry: nil},
+                },
+              },
+            },
           ),
           headers: {"x-ratelimit-remaining": "18"},
         },
@@ -236,7 +264,10 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "17"},
     },
   )
-  const green_checks = call("github.pr.checks", auth + {repo: "octo-org/octo-repo", head_sha: "green-sha"})
+  const green_checks = call(
+    "github.pr.checks",
+    auth + {repo: "octo-org/octo-repo", head_sha: "green-sha"},
+  )
   assert_eq(green_checks.state, "green", "green checks classify green")
   assert_eq(green_checks.rollup.conclusion, "success", "green rollup conclusion")
   assert_eq(green_checks.checks[0].duration_seconds, 180, "check duration")
@@ -245,7 +276,9 @@ pipeline default() {
     base + "/repos/octo-org/octo-repo/commits/pending-sha/check-runs",
     {
       status: 200,
-      body: json_stringify({check_runs: [{id: 8002, name: "Harn CI", status: "in_progress", conclusion: nil}]}),
+      body: json_stringify(
+        {check_runs: [{id: 8002, name: "Harn CI", status: "in_progress", conclusion: nil}]},
+      ),
       headers: {"x-ratelimit-remaining": "16"},
     },
   )
@@ -289,7 +322,10 @@ pipeline default() {
   const logs = call("github.actions.logs", auth + {repo: "octo-org/octo-repo", check_id: 8001})
   assert_eq(logs.run_id, 6001, "check id resolves action run id")
   assert(logs.content.contains("succeeded"), "logs content returned")
-  const queue = call("github.merge_queue.entries", auth + {repo: "octo-org/octo-repo", branch: "main"})
+  const queue = call(
+    "github.merge_queue.entries",
+    auth + {repo: "octo-org/octo-repo", branch: "main"},
+  )
   assert_eq(queue.entries[0].pull_number, 103, "merge queue entry PR number")
   http_mock(
     "GET",
@@ -355,9 +391,13 @@ pipeline default() {
     },
   )
   assert(
-    call("github.branch.protection", auth + {repo: "octo-org/octo-repo", branch: "develop"}).protected,
+    call("github.branch.protection", auth + {repo: "octo-org/octo-repo", branch: "develop"})
+      .protected,
   )
-  const blocked = call("github.pr.merge", auth + {repo: "octo-org/octo-repo", number: 101, method: "squash"})
+  const blocked = call(
+    "github.pr.merge",
+    auth + {repo: "octo-org/octo-repo", number: 101, method: "squash"},
+  )
   assert(is_err(blocked), "protected branch blocks github.pr.merge without override")
   assert_eq(unwrap_err(blocked).category, "branch_protection", "branch protection error category")
   http_mock(

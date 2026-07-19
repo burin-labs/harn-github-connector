@@ -61,7 +61,11 @@ pipeline test_repo_automation_methods(task) {
     {version: "v0.7.59"},
     auth,
   )
-  assert_eq(dispatch.workflow_run_id, 123, "workflow dispatch returns run id when GitHub provides it")
+  assert_eq(
+    dispatch.workflow_run_id,
+    123,
+    "workflow dispatch returns run id when GitHub provides it",
+  )
   http_mock(
     "GET",
     base
@@ -178,7 +182,11 @@ pipeline test_repo_automation_methods(task) {
   http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/releases/latest",
-    {status: 200, body: json_stringify({tag_name: "v0.8.4"}), headers: {"x-ratelimit-remaining": "7"}},
+    {
+      status: 200,
+      body: json_stringify({tag_name: "v0.8.4"}),
+      headers: {"x-ratelimit-remaining": "7"},
+    },
   )
   const raw = api_call("/repos/octo-org/octo-repo/releases/latest", "GET", nil, auth)
   assert_eq(raw.tag_name, "v0.8.4", "raw api_call works as compatibility escape hatch")

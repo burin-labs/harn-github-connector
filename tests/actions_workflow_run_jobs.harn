@@ -40,7 +40,10 @@ pipeline test_actions_workflow_run_jobs_requires_run_id(task) {
   egress_policy({allow: ["github-api.test"], default: "deny"})
   http_mock_clear()
   const base = "https://github-api.test"
-  const missing = call("actions.workflow_run.jobs", auth(base) + {owner: "octo-org", repo: "octo-repo"})
+  const missing = call(
+    "actions.workflow_run.jobs",
+    auth(base) + {owner: "octo-org", repo: "octo-repo"},
+  )
   assert(is_err(missing), "missing run_id fails closed")
   assert_eq(
     unwrap_err(missing),
@@ -56,7 +59,11 @@ pipeline test_actions_workflow_run_jobs_requires_run_id(task) {
   assert_eq(unwrap_err(blank).code, "schema_drift", "blank run_id uses the validation code")
   const path_escape = actions_workflow_run_jobs("octo-org", "octo-repo", "1/jobs/../2", auth(base))
   assert(is_err(path_escape), "path-bearing run id fails closed")
-  assert_eq(unwrap_err(path_escape).code, "schema_drift", "path-bearing run id uses validation code")
+  assert_eq(
+    unwrap_err(path_escape).code,
+    "schema_drift",
+    "path-bearing run id uses validation code",
+  )
   assert_eq(len(http_mock_calls()), 0, "invalid run ids perform no network requests")
 }
 
@@ -64,16 +71,31 @@ pipeline test_actions_workflow_run_jobs_validates_query_options(task) {
   egress_policy({allow: ["github-api.test"], default: "deny"})
   http_mock_clear()
   const base = "https://github-api.test"
-  const bad_filter = actions_workflow_run_jobs("octo-org", "octo-repo", 29679449, auth(base) + {filter: "recent"})
+  const bad_filter = actions_workflow_run_jobs(
+    "octo-org",
+    "octo-repo",
+    29679449,
+    auth(base) + {filter: "recent"},
+  )
   assert(is_err(bad_filter), "unknown job filter fails closed")
   assert_eq(
     unwrap_err(bad_filter).message,
     "actions.workflow_run.jobs filter must be latest or all",
     "filter error names the closed option set",
   )
-  const oversized_page = actions_workflow_run_jobs("octo-org", "octo-repo", 29679449, auth(base) + {per_page: 101})
+  const oversized_page = actions_workflow_run_jobs(
+    "octo-org",
+    "octo-repo",
+    29679449,
+    auth(base) + {per_page: 101},
+  )
   assert(is_err(oversized_page), "oversized page fails closed")
-  const zero_page = actions_workflow_run_jobs("octo-org", "octo-repo", 29679449, auth(base) + {page: 0})
+  const zero_page = actions_workflow_run_jobs(
+    "octo-org",
+    "octo-repo",
+    29679449,
+    auth(base) + {page: 0},
+  )
   assert(is_err(zero_page), "zero page fails closed")
   assert_eq(len(http_mock_calls()), 0, "invalid query options perform no network requests")
 }

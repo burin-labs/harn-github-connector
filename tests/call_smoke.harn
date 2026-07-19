@@ -8,7 +8,11 @@ pipeline default() {
   http_mock(
     "POST",
     base + "/repos/octo-org/octo-repo/issues/7/comments",
-    {status: 201, body: "{\"id\":101,\"body\":\"hello\"}", headers: {"x-ratelimit-remaining": "10"}},
+    {
+      status: 201,
+      body: "{\"id\":101,\"body\":\"hello\"}",
+      headers: {"x-ratelimit-remaining": "10"},
+    },
   )
   const comment = call(
     "issues.create_comment",
@@ -33,13 +37,22 @@ pipeline default() {
   )
   const graph = call(
     "graphql",
-    {api_base_url: base, installation_token: token, query: "query { viewer { login } }", variables: {}},
+    {
+      api_base_url: base,
+      installation_token: token,
+      query: "query { viewer { login } }",
+      variables: {},
+    },
   )
   assert_eq(graph.data.viewer.login, "octocat", "graphql viewer")
   http_mock(
     "PATCH",
     base + "/repos/octo-org/octo-repo/issues/7",
-    {status: 200, body: "{\"number\":7,\"state\":\"closed\"}", headers: {"x-ratelimit-remaining": "8"}},
+    {
+      status: 200,
+      body: "{\"number\":7,\"state\":\"closed\"}",
+      headers: {"x-ratelimit-remaining": "8"},
+    },
   )
   call(
     "issues.update",
@@ -160,7 +173,11 @@ pipeline default() {
           body: "{\"message\":\"rate limited\"}",
           headers: {"x-ratelimit-remaining": "0", "x-ratelimit-reset": "1"},
         },
-        {status: 200, body: "[{\"filename\":\"src/lib.rs\"}]", headers: {"x-ratelimit-remaining": "8"}},
+        {
+          status: 200,
+          body: "[{\"filename\":\"src/lib.rs\"}]",
+          headers: {"x-ratelimit-remaining": "8"},
+        },
       ],
     },
   )
@@ -208,15 +225,27 @@ pipeline default() {
   assert_eq(json_parse(calls[1].body).query, "query { viewer { login } }", "graphql query body")
   assert_eq(calls[2].method, "PATCH", "issues.update method")
   assert_eq(json_parse(calls[2].body).state, "closed", "issues.update body")
-  assert_eq(calls[3].url, base + "/repos/octo-org/octo-repo/pulls/42/comments", "review comment URL")
+  assert_eq(
+    calls[3].url,
+    base + "/repos/octo-org/octo-repo/pulls/42/comments",
+    "review comment URL",
+  )
   assert_eq(json_parse(calls[3].body).path, "src/lib.rs", "review comment body")
   assert_eq(calls[4].url, base + "/repos/octo-org/octo-repo/pulls/42", "pulls.get URL")
   assert_eq(calls[4].headers.accept, "application/vnd.github+json", "pulls.get accept header")
   assert_eq(calls[5].url, base + "/repos/octo-org/octo-repo/pulls/42", "pulls.get_diff URL")
-  assert_eq(calls[5].headers.accept, "application/vnd.github.v3.diff", "pulls.get_diff accept header")
+  assert_eq(
+    calls[5].headers.accept,
+    "application/vnd.github.v3.diff",
+    "pulls.get_diff accept header",
+  )
   assert_eq(calls[6].url, base + "/repos/octo-org/octo-repo/check-runs", "check run create URL")
   assert_eq(json_parse(calls[6].body).name, "Harn CI", "check run create body")
-  assert_eq(calls[7].url, base + "/repos/octo-org/octo-repo/check-runs/8001", "check run update URL")
+  assert_eq(
+    calls[7].url,
+    base + "/repos/octo-org/octo-repo/check-runs/8001",
+    "check run update URL",
+  )
   assert_eq(json_parse(calls[7].body).conclusion, "success", "check run update body")
   assert_eq(
     calls[8].url,

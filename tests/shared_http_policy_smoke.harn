@@ -26,7 +26,10 @@ pipeline default() {
       ],
     },
   )
-  const retried_get = call("pulls.get", auth + {owner: "octo-org", repo: "octo-repo", pull_number: 2, retry: retry_opts})
+  const retried_get = call(
+    "pulls.get",
+    auth + {owner: "octo-org", repo: "octo-repo", pull_number: 2, retry: retry_opts},
+  )
   assert_eq(retried_get.number, 2, "safe GET retries use shared HTTP policy")
   assert_eq(len(http_mock_calls()), 2, "safe GET retry call count")
   http_mock_clear()
@@ -42,7 +45,8 @@ pipeline default() {
   )
   const unsafe_write = call(
     "issues.create_comment",
-    auth + {owner: "octo-org", repo: "octo-repo", issue_number: 8, body: "hello", retry: retry_opts},
+    auth
+      + {owner: "octo-org", repo: "octo-repo", issue_number: 8, body: "hello", retry: retry_opts},
   )
   assert(is_err(unsafe_write), "unsafe writes without idempotency should not retry")
   assert_eq(len(http_mock_calls()), 1, "unsafe write without idempotency call count")

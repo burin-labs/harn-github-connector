@@ -28,7 +28,11 @@ fn pull(number, head_sha, merged = false, commit_count = 1) {
     },
     html_url: "https://github.com/octo-org/octo-repo/pull/" + to_string(number),
     base: {ref: "main", sha: "base-sha", repo: {full_name: "octo-org/octo-repo"}},
-    head: {ref: "feature/" + to_string(number), sha: head_sha, repo: {full_name: "octo-org/octo-repo"}},
+    head: {
+      ref: "feature/" + to_string(number),
+      sha: head_sha,
+      repo: {full_name: "octo-org/octo-repo"},
+    },
     labels: [],
     commits: commit_count,
   }
@@ -126,7 +130,12 @@ pipeline test_pr_commits_reads_every_page_on_one_stable_head(task) {
       headers: {"x-ratelimit-remaining": "18"},
     },
   )
-  const result = github_pr_commits("octo-org", "octo-repo", 42, auth() + {per_page: 2, expected_head_oid: head_sha})
+  const result = github_pr_commits(
+    "octo-org",
+    "octo-repo",
+    42,
+    auth() + {per_page: 2, expected_head_oid: head_sha},
+  )
   assert_eq(result.pull_number, 42, "receipt is bound to the exact pull request")
   assert_eq(result.head_sha, head_sha, "receipt is bound to the stable head")
   assert_eq(result.total_count, 3, "all pages are combined")
@@ -145,14 +154,20 @@ pipeline test_pr_commits_rejects_malformed_signature_and_head_races(task) {
   http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/pulls/43",
-    {status: 200, body: json_stringify(pull(43, head_sha)), headers: {"x-ratelimit-remaining": "20"}},
+    {
+      status: 200,
+      body: json_stringify(pull(43, head_sha)),
+      headers: {"x-ratelimit-remaining": "20"},
+    },
   )
   http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/pulls/43/commits?per_page=100&page=1",
     {
       status: 200,
-      body: json_stringify([{sha: head_sha, commit: {message: "malformed", verification: {verified: false}}}]),
+      body: json_stringify(
+        [{sha: head_sha, commit: {message: "malformed", verification: {verified: false}}}],
+      ),
       headers: {"x-ratelimit-remaining": "19"},
     },
   )
@@ -181,8 +196,16 @@ pipeline test_pr_commits_rejects_malformed_signature_and_head_races(task) {
     BASE + "/repos/octo-org/octo-repo/pulls/44",
     {
       responses: [
-        {status: 200, body: json_stringify(pull(44, old_head)), headers: {"x-ratelimit-remaining": "20"}},
-        {status: 200, body: json_stringify(pull(44, new_head)), headers: {"x-ratelimit-remaining": "18"}},
+        {
+          status: 200,
+          body: json_stringify(pull(44, old_head)),
+          headers: {"x-ratelimit-remaining": "20"},
+        },
+        {
+          status: 200,
+          body: json_stringify(pull(44, new_head)),
+          headers: {"x-ratelimit-remaining": "18"},
+        },
       ],
     },
   )
@@ -211,7 +234,10 @@ pipeline test_merged_pr_evidence_is_normalized_and_required(task) {
     BASE + "/repos/octo-org/octo-repo/pulls?state=closed",
     {status: 200, body: json_stringify([merged]), headers: {"x-ratelimit-remaining": "20"}},
   )
-  const listed = call("github.pr.list", auth() + {repo: "octo-org/octo-repo", filters: {state: "merged"}})
+  const listed = call(
+    "github.pr.list",
+    auth() + {repo: "octo-org/octo-repo", filters: {state: "merged"}},
+  )
   assert_eq(listed[0].merged_at, "2026-07-13T12:00:00Z", "list exposes merge time")
   assert_eq(
     listed[0].merge_commit_oid,
@@ -238,13 +264,21 @@ pipeline test_merged_pr_evidence_is_normalized_and_required(task) {
     {
       status: 200,
       body: json_stringify(
-        {data: {repository: {pullRequest: {number: 45, autoMergeRequest: nil, mergeQueueEntry: nil}}}},
+        {
+          data: {
+            repository: {pullRequest: {number: 45, autoMergeRequest: nil, mergeQueueEntry: nil}},
+          },
+        },
       ),
       headers: {"x-ratelimit-remaining": "17"},
     },
   )
   const viewed = call("github.pr.view", auth() + {repo: "octo-org/octo-repo", number: 45})
-  assert_eq(viewed.merge_commit_oid, listed[0].merge_commit_oid, "view and list share one normalizer")
+  assert_eq(
+    viewed.merge_commit_oid,
+    listed[0].merge_commit_oid,
+    "view and list share one normalizer",
+  )
   http_mock_clear()
   const missing_oid = pull(46, "head-46", true) + {merge_commit_sha: nil}
   http_mock(
@@ -252,7 +286,10 @@ pipeline test_merged_pr_evidence_is_normalized_and_required(task) {
     BASE + "/repos/octo-org/octo-repo/pulls?state=closed",
     {status: 200, body: json_stringify([missing_oid]), headers: {"x-ratelimit-remaining": "20"}},
   )
-  const malformed = call("github.pr.list", auth() + {repo: "octo-org/octo-repo", filters: {state: "merged"}})
+  const malformed = call(
+    "github.pr.list",
+    auth() + {repo: "octo-org/octo-repo", filters: {state: "merged"}},
+  )
   assert(is_err(malformed), "merged PR without an OID fails closed")
   assert_eq(
     unwrap_err(malformed).code,
@@ -266,7 +303,10 @@ pipeline test_merged_pr_evidence_is_normalized_and_required(task) {
     BASE + "/repos/octo-org/octo-repo/pulls?state=open",
     {status: 200, body: json_stringify([open]), headers: {"x-ratelimit-remaining": "20"}},
   )
-  const open_list = call("github.pr.list", auth() + {repo: "octo-org/octo-repo", filters: {state: "open"}})
+  const open_list = call(
+    "github.pr.list",
+    auth() + {repo: "octo-org/octo-repo", filters: {state: "open"}},
+  )
   assert_eq(
     open_list[0].merge_commit_oid,
     nil,
@@ -287,7 +327,10 @@ pipeline test_actions_runs_returns_closed_typed_envelope(task) {
         {
           status: 200,
           body: json_stringify(
-            {total_count: 1, workflow_runs: [workflow_run(701, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]},
+            {
+              total_count: 1,
+              workflow_runs: [workflow_run(701, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")],
+            },
           ),
           headers: {"x-ratelimit-remaining": "20"},
         },
@@ -316,7 +359,11 @@ pipeline test_actions_runs_returns_closed_typed_envelope(task) {
   assert_eq(result.page, 2, "page evidence is explicit")
   assert_eq(result.runs[0].id, 701, "raw workflow_runs is projected to typed runs")
   assert_eq(result.runs[0].event, "merge_group", "run event is required and normalized")
-  assert_eq(result.runs[0].head_sha, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "run head is exact")
+  assert_eq(
+    result.runs[0].head_sha,
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "run head is exact",
+  )
   assert(result.get("workflow_runs") == nil, "raw GitHub envelope is not exposed")
   const malformed = call(
     "github.actions.runs",
