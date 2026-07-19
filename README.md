@@ -137,7 +137,7 @@ Call methods through `call(method, args)` unless a named helper fits better.
 | Self-hosted runners | `actions.runners.registration_token`, `actions.runners.remove_token`, `actions.runners.generate_jitconfig`, `actions.runners.list`, `actions.runners.get`, `actions.runners.delete`, `actions.runners.downloads`, `actions.runners.labels.list`, `actions.runners.labels.add`, `actions.runners.labels.replace`, `actions.runners.labels.remove`, `actions.runner_groups.list`, `actions.runner_groups.create`, `actions.runner_groups.get`, `actions.runner_groups.update`, `actions.runner_groups.delete` |
 | User OAuth | `oauth.user.device_code`, `oauth.user.device_poll`, `oauth.user.exchange_code`, `oauth.user.refresh` |
 | Issues | `github.issue.create`, `github.issue.comment`, `issues.create_comment`, `issues.create`, `issues.create_with_template`, `issues.update`, `issues.add_labels` |
-| Repository and release data | `github.file.view`, `github.release.view`, `github.release.latest`, `github.release.assets`, `github.commit.signature`, `github.branch.protection`, `github.branch.create_signed_commit`, `repos.get_content`, `repos.get_text`, `repos.create_or_update_file`, `repos.put_content`, `repos.delete_file`, `repos.get_latest_release`, `repos.list_release_assets`, `repos.get_branch_protection`, `git.create_commit`, `git.delete_ref` |
+| Repository and release data | `github.file.view`, `github.release.view`, `github.release.edit_body`, `github.release.latest`, `github.release.assets`, `github.commit.signature`, `github.branch.protection`, `github.branch.create_signed_commit`, `repos.get_content`, `repos.get_text`, `repos.create_or_update_file`, `repos.put_content`, `repos.delete_file`, `repos.get_latest_release`, `repos.list_release_assets`, `repos.get_branch_protection`, `git.create_commit`, `git.delete_ref` |
 | Merge queue | `github.merge_queue.entries`, `github.merge_queue.membership`, `github.merge_queue.enqueue` |
 | Raw access | `api_call`, `graphql` |
 
@@ -169,7 +169,11 @@ raw REST responses for the same operation.
 - `github.file.view` requires an exact `ref`, and `github.release.view` requires
   an exact `tag`. They return `state: "found" | "absent"`; a `404` is absence
   only after the same credential proves repository access. Masked private
-  resources and transport failures remain `Err`.
+  resources and transport failures remain `Err`. Exact release views include
+  the release id, tag-ref object, and peeled tag target as a mutation lease.
+- `github.release.edit_body` accepts that complete lease and re-observes it
+  before issuing one body-only metadata update. Stale release ids or tag
+  identities fail closed; tags and assets cannot be included in the request.
 - `github.commit.signature` returns GitHub's normalized `verified`, `reason`,
   material-presence, and `verified_at` evidence. Unsigned and invalid
   signatures are successful reads with `verified: false`, not transport errors.
@@ -209,6 +213,7 @@ Named helpers:
 | `github_resolve_pr_for_sha(owner, repo, sha, options)` | Resolve the PR for a commit SHA, preferring payload `pull_requests[]` and falling back to `repos.commit_pulls`. |
 | `github_create_signed_commit(request, options)` | Atomically append file additions/deletions at an expected head OID through GitHub's verified App-signing path. |
 | `github_release(owner, repo, tag, options)` | Look up one exact release tag with proven-absence semantics. |
+| `github_release_edit_body(owner, repo, tag, body, lease, options)` | Replace an exact release body under its observed release and tag lease. |
 | `github_extract_mentions(body)` | Pure string parse of `@handle command args...` mentions in a body. |
 | `actions_runner_registration_token(scope, options)` | Create a self-hosted runner registration token (`scope` is `{org}` or `{owner, repo}`). |
 | `actions_runner_generate_jitconfig(scope, name, runner_group_id, labels, options)` | Generate a stateless single-use JIT runner config. |

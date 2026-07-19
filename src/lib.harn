@@ -30,6 +30,7 @@ const GITHUB_OUTBOUND_METHODS = [
   "github.actions.run_jobs",
   "github.actions.logs",
   "github.release.view",
+  "github.release.edit_body",
   "github.release.latest",
   "github.release.assets",
   "github.merge_queue.entries",
@@ -493,6 +494,9 @@ pub fn call(method, args = {}) {
   }
   if method == "github.release.view" {
     return __github_release_view(args, cfg)
+  }
+  if method == "github.release.edit_body" {
+    return __github_release_edit_body(args, cfg)
   }
   if method == "github.release.latest" {
     return __github_release_latest(args, cfg)
@@ -1016,6 +1020,24 @@ pub fn github_latest_release(owner, repo, options = nil) {
 pub fn github_release(owner, repo, tag, options = nil) {
   const opts = options ?? {}
   return call("github.release.view", opts + {owner: owner, repo: repo, tag: tag})
+}
+
+/** Replace an exact release body under its observed release and tag leases. */
+pub fn github_release_edit_body(owner, repo, tag, body, lease, options = nil) {
+  const opts = options ?? {}
+  return call(
+    "github.release.edit_body",
+    opts
+      + {
+      owner: owner,
+      repo: repo,
+      tag: tag,
+      body: body,
+      expected_release_id: lease?.release_id,
+      expected_tag_ref_oid: lease?.tag_ref_oid,
+      expected_tag_target_oid: lease?.tag_target_oid,
+    },
+  )
 }
 
 /**
@@ -2689,7 +2711,144 @@ fn __github_release_view(args, cfg) {
   if is_err(typed) {
     return typed
   }
-  return {repo: r.full_name, tag: tag, state: "found", found: true, release: unwrap(typed)}
+  const tag_lease = __github_tag_lease(r, tag, cfg)
+  if is_err(tag_lease) {
+    return tag_lease
+  }
+  return {
+    repo: r.full_name,
+    tag: tag,
+    state: "found",
+    found: true,
+    release: unwrap(typed),
+    lease: unwrap(tag_lease) + {release_id: unwrap(typed).id},
+  }
+}
+
+fn __github_release_edit_body(args, cfg) {
+  const repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  const r = unwrap(repo)
+  const tag = trim(to_string(args?.tag ?? ""))
+  const expected_release_id = args?.expected_release_id
+  const expected_tag_ref_oid = trim(to_string(args?.expected_tag_ref_oid ?? ""))
+  const expected_tag_target_oid = trim(to_string(args?.expected_tag_target_oid ?? ""))
+  if tag == "" || args?.body == nil || expected_release_id == nil
+    || expected_tag_ref_oid == ""
+    || expected_tag_target_oid == "" {
+    return __err(
+      "schema_drift",
+      "github.release.edit_body requires tag, body, and the complete observed release/tag lease",
+    )
+  }
+  const observed = __github_release_view(args + {owner: r.owner, repo: r.name, tag: tag}, cfg)
+  if is_err(observed) {
+    return observed
+  }
+  if !observed.found {
+    return __err("not_found", "release does not exist for the exact tag", {tag: tag})
+  }
+  const lease = observed.lease
+  if lease.release_id != expected_release_id {
+    return __err(
+      "stale_release",
+      "release identity changed before metadata edit",
+      {expected_release_id: expected_release_id, observed_release_id: lease.release_id},
+    )
+  }
+  if lease.tag_ref_oid != expected_tag_ref_oid
+    || lease.tag_target_oid != expected_tag_target_oid {
+    return __err(
+      "stale_tag",
+      "tag identity changed before release metadata edit",
+      {
+        expected_tag_ref_oid: expected_tag_ref_oid,
+        observed_tag_ref_oid: lease.tag_ref_oid,
+        expected_tag_target_oid: expected_tag_target_oid,
+        observed_tag_target_oid: lease.tag_target_oid,
+      },
+    )
+  }
+  const body = to_string(args.body)
+  const edited = __github_json(
+    "PATCH",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + r.owner + "/" + r.name + "/releases/" + to_string(lease.release_id),
+    ),
+    {body: body},
+    cfg,
+  )
+  if is_err(edited) {
+    return edited
+  }
+  const typed = __typed_release(edited)
+  if is_err(typed) {
+    return typed
+  }
+  const release = unwrap(typed)
+  if release.id != lease.release_id || release.tag_name != tag || release.body != body {
+    return __err("invalid_response", "release metadata edit response did not confirm the mutation")
+  }
+  return {
+    repo: r.full_name,
+    tag: tag,
+    state: "edited",
+    release_id: release.id,
+    tag_ref_oid: lease.tag_ref_oid,
+    tag_target_oid: lease.tag_target_oid,
+    body: release.body,
+    url: release.url,
+  }
+}
+
+fn __github_tag_lease(repo, tag, cfg) {
+  const ref = __github_json(
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + repo.owner + "/" + repo.name + "/git/ref/tags/" + url_encode(tag),
+    ),
+    nil,
+    cfg,
+  )
+  if is_err(ref) {
+    return ref
+  }
+  const ref_oid = trim(to_string(ref?.object?.sha ?? ""))
+  let target_oid = ref_oid
+  let target_type = lowercase(trim(to_string(ref?.object?.type ?? "")))
+  if trim(to_string(ref?.ref ?? "")) != "refs/tags/" + tag || ref_oid == ""
+    || target_type == "" {
+    return __err("invalid_response", "GitHub tag reference omitted exact identity")
+  }
+  let depth = 0
+  while target_type == "tag" && depth < 16 {
+    const object = __github_json(
+      "GET",
+      __github_api_url(
+        cfg.api_base_url,
+        "/repos/" + repo.owner + "/" + repo.name + "/git/tags/" + target_oid,
+      ),
+      nil,
+      cfg,
+    )
+    if is_err(object) {
+      return object
+    }
+    target_oid = trim(to_string(object?.object?.sha ?? ""))
+    target_type = lowercase(trim(to_string(object?.object?.type ?? "")))
+    if target_oid == "" || target_type == "" {
+      return __err("invalid_response", "GitHub annotated tag omitted its target identity")
+    }
+    depth = depth + 1
+  }
+  if target_type == "tag" {
+    return __err("invalid_response", "GitHub annotated tag chain exceeded the safety limit")
+  }
+  return Ok({tag_ref_oid: ref_oid, tag_target_oid: target_oid, tag_target_type: target_type})
 }
 
 fn __github_file_view(args, cfg) {
@@ -4648,6 +4807,7 @@ fn __typed_release(release) {
       prerelease: release?.prerelease ?? false,
       url: to_string(release?.html_url ?? release?.url ?? ""),
       target_commitish: to_string(release?.target_commitish ?? ""),
+      body: to_string(release?.body ?? ""),
       published_at: release?.published_at,
       assets: assets,
     },

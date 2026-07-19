@@ -1,0 +1,200 @@
+import { github_release_edit_body } from "../src/lib"
+
+const REF_OID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+const TARGET_OID = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+fn release_fixture(id, body) {
+  return {
+    id: id,
+    tag_name: "v1.2.3",
+    name: "v1.2.3",
+    body: body,
+    draft: false,
+    prerelease: false,
+    html_url: "https://github.com/octo-org/octo-repo/releases/tag/v1.2.3",
+    assets: [{id: 91, name: "artifact.tar.gz"}],
+  }
+}
+
+fn mock_release(base, id, body) {
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/releases/tags/v1.2.3",
+    {
+      status: 200,
+      body: json_stringify(release_fixture(id, body)),
+      headers: {"x-ratelimit-remaining": "10"},
+    },
+  )
+}
+
+fn mock_annotated_tag(base, ref_oid, target_oid) {
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/git/ref/tags/v1.2.3",
+    {
+      status: 200,
+      body: json_stringify({ref: "refs/tags/v1.2.3", object: {type: "tag", sha: ref_oid}}),
+      headers: {"x-ratelimit-remaining": "9"},
+    },
+  )
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/git/tags/" + ref_oid,
+    {
+      status: 200,
+      body: json_stringify({sha: ref_oid, object: {type: "commit", sha: target_oid}}),
+      headers: {"x-ratelimit-remaining": "8"},
+    },
+  )
+}
+
+fn lease(overrides = nil) {
+  return {release_id: 701, tag_ref_oid: REF_OID, tag_target_oid: TARGET_OID}
+    + (overrides ?? {})
+}
+
+fn auth(base) {
+  return {api_base_url: base, installation_token: "token"}
+}
+
+pipeline test_release_body_edit_is_leased_and_metadata_only(task) {
+  egress_policy({allow: ["github-api.test"], default: "deny"})
+  http_mock_clear()
+  const base = "https://github-api.test"
+  const replacement = "Exact notes\n\nCorrection footer.\n"
+  mock_release(base, 701, "Old notes\n")
+  mock_annotated_tag(base, REF_OID, TARGET_OID)
+  http_mock(
+    "PATCH",
+    base + "/repos/octo-org/octo-repo/releases/701",
+    {
+      status: 200,
+      body: json_stringify(release_fixture(701, replacement)),
+      headers: {"x-ratelimit-remaining": "7"},
+    },
+  )
+  const receipt = github_release_edit_body(
+    "octo-org",
+    "octo-repo",
+    "v1.2.3",
+    replacement,
+    lease(),
+    auth(base),
+  )
+  assert_eq(receipt.state, "edited", "typed edit receipt")
+  assert_eq(receipt.release_id, 701, "release lease is retained")
+  assert_eq(receipt.tag_ref_oid, REF_OID, "tag object lease is retained")
+  assert_eq(receipt.tag_target_oid, TARGET_OID, "tag target lease is retained")
+  assert_eq(receipt.body, replacement, "resulting body is exact")
+  const calls = http_mock_calls()
+  assert_eq(len(calls), 4, "lease observations precede one mutation")
+  assert_eq(calls[3].method, "PATCH", "only final request mutates")
+  const patch_body = json_parse(calls[3].body)
+  assert_eq(len(patch_body), 1, "metadata edit sends one field")
+  assert_eq(patch_body.get("body"), replacement, "metadata edit sends exact body")
+  assert_eq(patch_body.get("tag_name"), nil, "metadata edit cannot retag")
+  assert_eq(patch_body.get("assets"), nil, "metadata edit cannot modify assets")
+}
+
+pipeline test_release_body_edit_rejects_stale_release(task) {
+  egress_policy({allow: ["github-api.test"], default: "deny"})
+  http_mock_clear()
+  const base = "https://github-api.test"
+  mock_release(base, 702, "Old notes\n")
+  mock_annotated_tag(base, REF_OID, TARGET_OID)
+  const edited = github_release_edit_body(
+    "octo-org",
+    "octo-repo",
+    "v1.2.3",
+    "New notes\n",
+    lease(),
+    auth(base),
+  )
+  assert(is_err(edited), "stale release fails closed")
+  assert_eq(unwrap_err(edited).code, "stale_release", "stale release category")
+  assert_eq(len(http_mock_calls()), 3, "stale release performs no mutation")
+}
+
+pipeline test_release_body_edit_rejects_stale_tag(task) {
+  egress_policy({allow: ["github-api.test"], default: "deny"})
+  http_mock_clear()
+  const base = "https://github-api.test"
+  mock_release(base, 701, "Old notes\n")
+  mock_annotated_tag(base, REF_OID, "cccccccccccccccccccccccccccccccccccccccc")
+  const edited = github_release_edit_body(
+    "octo-org",
+    "octo-repo",
+    "v1.2.3",
+    "New notes\n",
+    lease(),
+    auth(base),
+  )
+  assert(is_err(edited), "stale tag fails closed")
+  assert_eq(unwrap_err(edited).code, "stale_tag", "stale tag category")
+  assert_eq(len(http_mock_calls()), 3, "stale tag performs no mutation")
+}
+
+pipeline test_release_body_edit_rejects_missing_release(task) {
+  egress_policy({allow: ["github-api.test"], default: "deny"})
+  http_mock_clear()
+  const base = "https://github-api.test"
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/releases/tags/v1.2.3",
+    {
+      status: 404,
+      body: json_stringify({message: "Not Found"}),
+      headers: {"x-ratelimit-remaining": "10"},
+    },
+  )
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo",
+    {
+      status: 200,
+      body: json_stringify({full_name: "octo-org/octo-repo"}),
+      headers: {"x-ratelimit-remaining": "9"},
+    },
+  )
+  const edited = github_release_edit_body(
+    "octo-org",
+    "octo-repo",
+    "v1.2.3",
+    "New notes\n",
+    lease(),
+    auth(base),
+  )
+  assert(is_err(edited), "missing release fails closed")
+  assert_eq(unwrap_err(edited).code, "not_found", "missing release category")
+  assert_eq(len(http_mock_calls()), 2, "missing release performs no mutation")
+}
+
+pipeline test_release_body_edit_normalizes_provider_failure(task) {
+  egress_policy({allow: ["github-api.test"], default: "deny"})
+  http_mock_clear()
+  const base = "https://github-api.test"
+  mock_release(base, 701, "Old notes\n")
+  mock_annotated_tag(base, REF_OID, TARGET_OID)
+  http_mock(
+    "PATCH",
+    base + "/repos/octo-org/octo-repo/releases/701",
+    {
+      status: 403,
+      body: json_stringify({message: "Resource not accessible by integration"}),
+      headers: {"x-ratelimit-remaining": "7"},
+    },
+  )
+  const edited = github_release_edit_body(
+    "octo-org",
+    "octo-repo",
+    "v1.2.3",
+    "New notes\n",
+    lease(),
+    auth(base),
+  )
+  assert(is_err(edited), "provider failure remains typed")
+  assert_eq(unwrap_err(edited).code, "missing_scopes", "provider failure category")
+  assert_eq(unwrap_err(edited).http_status, 403, "provider status is retained")
+}
