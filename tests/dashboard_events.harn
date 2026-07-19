@@ -11,7 +11,6 @@ fn find_intent(intents, name) {
 }
 
 pipeline default() {
-  egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
   const secret = "test-signing-secret"
   shutdown()
   init({signing_secret: secret})

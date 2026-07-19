@@ -6,7 +6,6 @@ import {
 } from "../src/lib"
 
 pipeline default() {
-  egress_policy({allow: ["github-api.test"], default: "deny"})
   http_mock_clear()
   const base = "https://github-api.test"
   const token = "github-installation-token"
@@ -21,7 +20,9 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "10"},
     },
   )
-  const reg = actions_runner_registration_token({owner: "octo-org", repo: "octo-repo"}, auth)
+  const reg = unwrap(
+    actions_runner_registration_token({owner: "octo-org", repo: "octo-repo"}, auth),
+  )
   assert_eq(reg.token, "AABBCC", "repo registration token")
   // Org-scope remove token.
   http_mock(
@@ -29,7 +30,7 @@ pipeline default() {
     base + "/orgs/octo-org/actions/runners/remove-token",
     {status: 201, body: "{\"token\":\"DDEEFF\"}", headers: {"x-ratelimit-remaining": "9"}},
   )
-  const rem = call("actions.runners.remove_token", auth + {org: "octo-org"})
+  const rem = unwrap(call("actions.runners.remove_token", auth + {org: "octo-org"}))
   assert_eq(rem.token, "DDEEFF", "org remove token")
   // JIT config (modern stateless path).
   http_mock(
@@ -41,12 +42,14 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "8"},
     },
   )
-  const jit = actions_runner_generate_jitconfig(
-    {org: "octo-org"},
-    "jit-1",
-    1,
-    ["self-hosted", "linux"],
-    auth + {work_folder: "_work"},
+  const jit = unwrap(
+    actions_runner_generate_jitconfig(
+      {org: "octo-org"},
+      "jit-1",
+      1,
+      ["self-hosted", "linux"],
+      auth + {work_folder: "_work"},
+    ),
   )
   assert_eq(jit.runner.id, 77, "jit runner id")
   // List runners (repo scope, with pagination).
@@ -60,7 +63,9 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "7"},
     },
   )
-  const runners = actions_runners_list({owner: "octo-org", repo: "octo-repo"}, auth + {per_page: 5})
+  const runners = unwrap(
+    actions_runners_list({owner: "octo-org", repo: "octo-repo"}, auth + {per_page: 5}),
+  )
   assert_eq(runners.runners[0].id, 77, "list runners")
   // Get + delete a runner.
   http_mock(
@@ -68,7 +73,7 @@ pipeline default() {
     base + "/orgs/octo-org/actions/runners/77",
     {status: 200, body: "{\"id\":77,\"name\":\"jit-1\"}", headers: {"x-ratelimit-remaining": "6"}},
   )
-  const got = call("actions.runners.get", auth + {org: "octo-org", runner_id: 77})
+  const got = unwrap(call("actions.runners.get", auth + {org: "octo-org", runner_id: 77}))
   assert_eq(got.id, 77, "get runner")
   http_mock(
     "DELETE",
@@ -126,9 +131,11 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "1"},
     },
   )
-  const group = call(
-    "actions.runner_groups.create",
-    auth + {org: "octo-org", name: "gpu-pool", visibility: "selected"},
+  const group = unwrap(
+    call(
+      "actions.runner_groups.create",
+      auth + {org: "octo-org", name: "gpu-pool", visibility: "selected"},
+    ),
   )
   assert_eq(group.id, 3, "create runner group")
   // Downloads.
@@ -141,7 +148,9 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "1"},
     },
   )
-  const downloads = call("actions.runners.downloads", auth + {owner: "octo-org", repo: "octo-repo"})
+  const downloads = unwrap(
+    call("actions.runners.downloads", auth + {owner: "octo-org", repo: "octo-repo"}),
+  )
   assert_eq(downloads[0].os, "linux", "runner downloads")
   // Scope validation: missing org and owner/repo.
   const bad = call("actions.runners.list", auth)

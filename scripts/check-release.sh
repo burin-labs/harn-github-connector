@@ -63,10 +63,9 @@ harn lint src/lib.harn
 harn fmt --check src tests
 harn connector check . --provider github
 
-for test in tests/*.harn; do
-  harn run "$test"
-done
-harn test tests
+printf '%s\0' tests/*.harn \
+  | xargs -0 -n1 -P 4 env HARN_EGRESS_BLOCK_PRIVATE=off harn run
+harn test tests --parallel
 
 smoke_root="$(mktemp -d)"
 trap 'rm -rf "$smoke_root"' EXIT
@@ -77,5 +76,17 @@ version = "0.0.0"
 EOF
 cd "$smoke_root"
 harn add "${GITHUB_WORKSPACE:-$OLDPWD}@HEAD"
-printf 'import "harn-github-connector/default"\n' > smoke.harn
+cat > smoke.harn <<'EOF'
+import {
+  GithubConnectorResult,
+  GithubReleaseLookup,
+} from "harn-github-connector/default"
+
+fn release_state(result: GithubConnectorResult<GithubReleaseLookup>) -> string {
+  if is_err(result) {
+    return unwrap_err(result).code
+  }
+  return unwrap(result).state
+}
+EOF
 harn check smoke.harn

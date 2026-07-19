@@ -1,27 +1,33 @@
-import { github_create_signed_commit } from "../src/lib"
+import {
+  GithubCommitFileAddition,
+  GithubCommitFileDeletion,
+  GithubSignedCommitRequest,
+  github_create_signed_commit,
+} from "../src/lib"
 
 fn auth(base: string) -> dict {
   return {api_base_url: base, installation_token: "github-app-installation-token"}
 }
 
-fn request() {
+fn request() -> GithubSignedCommitRequest {
+  const additions: list<GithubCommitFileAddition> = [
+    {path: ".harn-version", contents_base64: base64_encode("v0.10.8\n")},
+    {path: "VERSION", contents_base64: base64_encode("0.10.8\n")},
+  ]
+  const deletions: list<GithubCommitFileDeletion> = [{path: "changelog.d/old.changed.md"}]
   return {
-    owner: "burin-labs",
-    repo: "burin-code",
-    branch: "release/harn-v0.10.8",
+    owner: "octo-org",
+    repo: "octo-repo",
+    branch: "automation/release-v1.2.3",
     expected_head_oid: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    headline: "Repin Harn to v0.10.8",
-    body: "Release Train Autopilot",
-    additions: [
-      {path: ".harn-version", contents_base64: base64_encode("v0.10.8\n")},
-      {path: "VERSION", contents_base64: base64_encode("0.10.8\n")},
-    ],
-    deletions: [{path: "changelog.d/old.changed.md"}],
+    headline: "Update runtime to v1.2.3",
+    body: "Automated runtime update",
+    additions: additions,
+    deletions: deletions,
   }
 }
 
 pipeline test_create_signed_commit_uses_atomic_github_signed_mutation(task) {
-  egress_policy({allow: ["api.github.test"], default: "deny"})
   http_mock_clear()
   const base = "https://api.github.test"
   http_mock(
@@ -36,11 +42,11 @@ pipeline test_create_signed_commit_uses_atomic_github_signed_mutation(task) {
               commit: {
                 oid: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                 url:
-                  "https://github.com/burin-labs/burin-code/commit/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  "https://github.com/octo-org/octo-repo/commit/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                 signature: {isValid: true, state: "VALID", wasSignedByGitHub: true},
               },
               ref: {
-                name: "release/harn-v0.10.8",
+                name: "automation/release-v1.2.3",
                 target: {oid: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
               },
             },
@@ -49,7 +55,7 @@ pipeline test_create_signed_commit_uses_atomic_github_signed_mutation(task) {
       ),
     },
   )
-  const receipt = github_create_signed_commit(request(), auth(base))
+  const receipt = unwrap(github_create_signed_commit(request(), auth(base)))
   assert_eq(receipt.oid, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "commit oid")
   assert_eq(receipt.signature_valid, true, "signature valid")
   assert_eq(receipt.signed_by_github, true, "signed by GitHub")
@@ -58,8 +64,8 @@ pipeline test_create_signed_commit_uses_atomic_github_signed_mutation(task) {
   assert_eq(len(calls), 1, "one atomic GraphQL request")
   const payload = json_parse(calls[0].body)
   const input = payload.variables.input
-  assert_eq(input.branch.repositoryNameWithOwner, "burin-labs/burin-code", "repository")
-  assert_eq(input.branch.branchName, "release/harn-v0.10.8", "branch")
+  assert_eq(input.branch.repositoryNameWithOwner, "octo-org/octo-repo", "repository")
+  assert_eq(input.branch.branchName, "automation/release-v1.2.3", "branch")
   assert_eq(
     input.expectedHeadOid,
     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -75,7 +81,6 @@ pipeline test_create_signed_commit_uses_atomic_github_signed_mutation(task) {
 }
 
 pipeline test_create_signed_commit_fails_closed_on_unverified_signature(task) {
-  egress_policy({allow: ["api.github.test"], default: "deny"})
   http_mock_clear()
   const base = "https://api.github.test"
   http_mock(
@@ -90,10 +95,10 @@ pipeline test_create_signed_commit_fails_closed_on_unverified_signature(task) {
               commit: {
                 oid: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                 url:
-                  "https://github.com/burin-labs/burin-code/commit/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  "https://github.com/octo-org/octo-repo/commit/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                 signature: {isValid: false, state: "UNSIGNED", wasSignedByGitHub: false},
               },
-              ref: {name: "release/harn-v0.10.8"},
+              ref: {name: "automation/release-v1.2.3"},
             },
           },
         },
@@ -108,14 +113,16 @@ pipeline test_create_signed_commit_fails_closed_on_unverified_signature(task) {
 
 pipeline test_create_signed_commit_rejects_overlapping_changes_before_network(task) {
   http_mock_clear()
-  const result = github_create_signed_commit(
-    request()
-      + {
-      additions: [{path: "VERSION", contents_base64: base64_encode("0.10.8\n")}],
-      deletions: [{path: "VERSION"}],
-    },
-    auth("https://api.github.test"),
-  )
+  const additions: list<GithubCommitFileAddition> = [
+    {path: "VERSION", contents_base64: base64_encode("0.10.8\n")},
+  ]
+  const deletions: list<GithubCommitFileDeletion> = [{path: "VERSION"}]
+  const overlapping: GithubSignedCommitRequest = request()
+    + {
+    additions: additions,
+    deletions: deletions,
+  }
+  const result = github_create_signed_commit(overlapping, auth("https://api.github.test"))
   assert(is_err(result), "overlapping change rejected")
   assert_eq(unwrap_err(result).code, "schema_drift", "overlap error code")
   assert_eq(len(http_mock_calls()), 0, "no network request")

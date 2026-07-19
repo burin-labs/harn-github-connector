@@ -1,0 +1,360 @@
+/** One normalized connector failure. Provider-specific evidence stays typed. */
+pub type GithubConnectorError = {
+  code: string,
+  category: string,
+  message: string,
+  http_status?: int,
+  expected_head_oid?: string,
+  observed_head_oid?: string,
+  expected_commit_count?: int,
+  observed_commit_count?: int,
+  expected_release_id?: int,
+  observed_release_id?: int,
+  expected_tag_ref_oid?: string,
+  observed_tag_ref_oid?: string,
+  expected_tag_target_oid?: string,
+  observed_tag_target_oid?: string,
+  tag?: string,
+  candidate_run_ids?: list<int>,
+}
+
+/** Canonical fallible boundary for every normalized GitHub operation. */
+pub type GithubConnectorResult<T> = Result<T, GithubConnectorError>
+
+pub type GithubPullRequestRef = {ref: string, sha: string, repo: string, owner: string}
+
+pub type GithubPullRequestUser = {id: int?, login: string, type: string}
+
+pub type GithubPullRequestSummary = {
+  repo: string,
+  number: int,
+  title: string,
+  url: string,
+  state: string,
+  github_state: string,
+  draft: bool,
+  merged: bool,
+  merged_at: string?,
+  merge_commit_oid: string?,
+  mergeable: bool?,
+  mergeable_state: string,
+  base: GithubPullRequestRef,
+  head: GithubPullRequestRef,
+  labels: list<string>,
+  auto_merge_armed: bool,
+  in_merge_queue: bool?,
+}
+
+pub type GithubPullRequestDetails = GithubPullRequestSummary \
+  & {
+  body: string,
+  user: GithubPullRequestUser?,
+  created_at: string?,
+  updated_at: string?,
+  closed_at: string?,
+}
+
+pub type GithubPullRequestCreateReceipt = GithubPullRequestDetails & {created: bool}
+
+pub type GithubPullRequestEditReceipt = GithubPullRequestDetails & {ok: bool, updated: bool}
+
+pub type GithubBranchProtection = {
+  available: bool,
+  branch: string,
+  protected: bool?,
+  required_checks: list<string>,
+  strict: bool?,
+  required_review_count: int?,
+  require_code_owner_reviews: bool?,
+  require_conversation_resolution: bool?,
+  allow_force_pushes: bool?,
+  allow_deletions: bool?,
+  error: GithubConnectorError?,
+}
+
+pub type GithubMergeQueueEntry = {
+  id: string,
+  pull_number: int,
+  url: string,
+  state: string,
+  position: int,
+  enqueued_at: string?,
+  head_sha: string,
+  base_branch: string,
+  jump: bool,
+  solo: bool,
+  estimated_time_to_merge_seconds: int?,
+}
+
+pub type GithubMergeQueueMembership = {
+  repo: string,
+  pull_number: int,
+  available: bool,
+  queued: bool,
+  auto_merge_armed: bool,
+  entry: GithubMergeQueueEntry?,
+  error: GithubConnectorError?,
+}
+
+pub type GithubMergeQueueEntries = {
+  repo: string,
+  branch: string,
+  configured: bool,
+  url: string?,
+  entries: list<GithubMergeQueueEntry>,
+}
+
+pub type GithubMergeQueueEnqueueReceipt = {
+  repo: string,
+  pull_number: int,
+  expected_head_oid: string,
+  entry: GithubMergeQueueEntry,
+}
+
+pub type GithubPullRequestView = GithubPullRequestDetails \
+  & {branch_protection: GithubBranchProtection, queue_membership: GithubMergeQueueMembership}
+
+pub type GithubPullRequestFile = {
+  sha: string,
+  filename: string,
+  status: string,
+  additions: int,
+  deletions: int,
+  changes: int,
+  previous_filename: string?,
+  blob_url: string?,
+  raw_url: string?,
+  contents_url: string?,
+}
+
+pub type GithubPullRequestFiles = {
+  repo: string,
+  pull_number: int,
+  files: list<GithubPullRequestFile>,
+  page: int,
+  per_page: int,
+}
+
+pub type GithubCommitSignature = {
+  repo: string,
+  sha: string,
+  verified: bool,
+  reason: string,
+  signature_present: bool,
+  payload_present: bool,
+  verified_at: string?,
+}
+
+pub type GithubPullRequestCommit = {sha: string, message: string, signature: GithubCommitSignature}
+
+pub type GithubPullRequestCommits = {
+  repo: string,
+  pull_number: int,
+  head_ref: string,
+  head_sha: string,
+  total_count: int,
+  commits: list<GithubPullRequestCommit>,
+  pages_fetched: int,
+  per_page: int,
+}
+
+pub type GithubCheckRun = {
+  id: int?,
+  name: string,
+  status: string,
+  conclusion: string,
+  head_sha: string,
+  started_at: string?,
+  completed_at: string?,
+  duration_seconds: int?,
+  details_url: string?,
+  html_url: string?,
+  external_id: string?,
+}
+
+pub type GithubCheckRollup = {
+  state: string,
+  total: int,
+  pending: int,
+  failed: int,
+  successful: int,
+  skipped: int,
+  conclusion: string?,
+}
+
+pub type GithubPullRequestChecks = {
+  repo: string,
+  pull_number: int?,
+  head_sha: string,
+  state: string,
+  rollup: GithubCheckRollup,
+  checks: list<GithubCheckRun>,
+}
+
+pub type GithubWorkflowDispatchReceipt = {
+  repo: string,
+  accepted: bool,
+  run_id: int,
+  workflow_id: string?,
+  ref: string,
+  head_sha: string,
+  head_branch: string,
+  event: string,
+  url: string,
+  created_at: string?,
+}
+
+pub type GithubWorkflowRun = {
+  repo: string,
+  id: int,
+  workflow_id: int?,
+  run_number: int?,
+  run_attempt: int?,
+  name: string,
+  event: string,
+  status: string,
+  conclusion: string?,
+  head_branch: string,
+  head_sha: string,
+  url: string,
+  created_at: string?,
+  run_started_at: string?,
+  updated_at: string?,
+}
+
+pub type GithubWorkflowRuns = {
+  repo: string,
+  workflow_id: string?,
+  total_count: int,
+  runs: list<GithubWorkflowRun>,
+  page: int,
+  per_page: int,
+}
+
+pub type GithubWorkflowStep = {
+  number: int,
+  name: string,
+  status: string,
+  conclusion: string?,
+  started_at: string?,
+  completed_at: string?,
+}
+
+pub type GithubWorkflowJob = {
+  id: int,
+  run_id: int,
+  name: string,
+  status: string,
+  conclusion: string?,
+  head_sha: string,
+  url: string,
+  runner_name: string,
+  started_at: string?,
+  completed_at: string?,
+  steps: list<GithubWorkflowStep>,
+}
+
+pub type GithubWorkflowJobs = {
+  repo: string,
+  run_id: int,
+  total_count: int,
+  jobs: list<GithubWorkflowJob>,
+  page: int,
+  per_page: int,
+}
+
+pub type GithubReleaseAsset = {
+  id: int,
+  name: string,
+  size: int,
+  state: string,
+  content_type: string,
+  download_count: int,
+  url: string,
+  created_at: string?,
+  updated_at: string?,
+}
+
+pub type GithubRelease = {
+  id: int,
+  tag_name: string,
+  name: string,
+  draft: bool,
+  prerelease: bool,
+  url: string,
+  target_commitish: string,
+  body: string,
+  published_at: string?,
+  assets: list<GithubReleaseAsset>,
+}
+
+pub type GithubReleaseLease = {
+  tag_ref_oid: string,
+  tag_target_oid: string,
+  tag_target_type: string,
+  release_id: int,
+}
+
+pub type GithubReleaseLookup = {
+  repo: string,
+  tag: string,
+  state: string,
+  found: bool,
+  release: GithubRelease?,
+  lease?: GithubReleaseLease,
+}
+
+pub type GithubReleaseEditReceipt = {
+  repo: string,
+  tag: string,
+  state: string,
+  release_id: int,
+  tag_ref_oid: string,
+  tag_target_oid: string,
+  body: string,
+  url: string,
+}
+
+pub type GithubMergeability = {
+  mergeable: bool?,
+  mergeable_state: string,
+  is_conflict: bool,
+  attempts: int,
+  resolved: bool,
+  raw: unknown,
+}
+
+pub type GithubAutoMergeReceipt = {
+  repo: string,
+  pull_number: int,
+  state: string,
+  already_enabled: bool,
+  expected_head_oid: string,
+  observed_head_oid: string,
+  merge_method: string,
+  url: string,
+}
+
+pub type GithubCommitFileAddition = {path: string, contents_base64: string}
+
+pub type GithubCommitFileDeletion = {path: string}
+
+pub type GithubSignedCommitRequest = {
+  owner: string,
+  repo: string,
+  branch: string,
+  expected_head_oid: string,
+  headline: string,
+  body?: string,
+  additions: list<GithubCommitFileAddition>,
+  deletions: list<GithubCommitFileDeletion>,
+}
+
+pub type GithubSignedCommitReceipt = {
+  oid: string,
+  url: string,
+  branch: string,
+  signature_valid: bool,
+  signed_by_github: bool,
+  signature_state: string,
+}

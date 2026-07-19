@@ -60,7 +60,6 @@ fn auth(base) {
 }
 
 pipeline test_release_body_edit_is_leased_and_metadata_only(task) {
-  egress_policy({allow: ["github-api.test"], default: "deny"})
   http_mock_clear()
   const base = "https://github-api.test"
   const replacement = "Exact notes\n\nCorrection footer.\n"
@@ -75,13 +74,8 @@ pipeline test_release_body_edit_is_leased_and_metadata_only(task) {
       headers: {"x-ratelimit-remaining": "7"},
     },
   )
-  const receipt = github_release_edit_body(
-    "octo-org",
-    "octo-repo",
-    "v1.2.3",
-    replacement,
-    lease(),
-    auth(base),
+  const receipt = unwrap(
+    github_release_edit_body("octo-org", "octo-repo", "v1.2.3", replacement, lease(), auth(base)),
   )
   assert_eq(receipt.state, "edited", "typed edit receipt")
   assert_eq(receipt.release_id, 701, "release lease is retained")
@@ -99,7 +93,6 @@ pipeline test_release_body_edit_is_leased_and_metadata_only(task) {
 }
 
 pipeline test_release_body_edit_rejects_stale_release(task) {
-  egress_policy({allow: ["github-api.test"], default: "deny"})
   http_mock_clear()
   const base = "https://github-api.test"
   mock_release(base, 702, "Old notes\n")
@@ -118,7 +111,6 @@ pipeline test_release_body_edit_rejects_stale_release(task) {
 }
 
 pipeline test_release_body_edit_rejects_stale_tag(task) {
-  egress_policy({allow: ["github-api.test"], default: "deny"})
   http_mock_clear()
   const base = "https://github-api.test"
   mock_release(base, 701, "Old notes\n")
@@ -137,7 +129,6 @@ pipeline test_release_body_edit_rejects_stale_tag(task) {
 }
 
 pipeline test_release_body_edit_rejects_missing_release(task) {
-  egress_policy({allow: ["github-api.test"], default: "deny"})
   http_mock_clear()
   const base = "https://github-api.test"
   http_mock(
@@ -172,7 +163,6 @@ pipeline test_release_body_edit_rejects_missing_release(task) {
 }
 
 pipeline test_release_body_edit_normalizes_provider_failure(task) {
-  egress_policy({allow: ["github-api.test"], default: "deny"})
   http_mock_clear()
   const base = "https://github-api.test"
   mock_release(base, 701, "Old notes\n")

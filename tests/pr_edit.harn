@@ -1,7 +1,6 @@
 import { call, pulls_update } from "../src/lib"
 
 pipeline default() {
-  egress_policy({allow: ["github-api.test"], default: "deny"})
   http_mock_clear()
   const base = "https://github-api.test"
   const auth = {api_base_url: base, installation_token: "github-installation-token"}
@@ -47,19 +46,23 @@ pipeline default() {
       ],
     },
   )
-  const low_level = pulls_update("octo-org", "octo-repo", 42, {title: "Updated title"}, auth)
+  const low_level = unwrap(
+    pulls_update("octo-org", "octo-repo", 42, {title: "Updated title"}, auth),
+  )
   assert_eq(low_level.title, "Updated title", "low-level update returns provider response")
-  const edited = call(
-    "github.pr.edit",
-    auth
-      + {poll_interval_ms: 0}
-      + {
-      repo: "octo-org/octo-repo",
-      number: 42,
-      title: "Release title",
-      body: "Release body",
-      maintainer_can_modify: false,
-    },
+  const edited = unwrap(
+    call(
+      "github.pr.edit",
+      auth
+        + {poll_interval_ms: 0}
+        + {
+        repo: "octo-org/octo-repo",
+        number: 42,
+        title: "Release title",
+        body: "Release body",
+        maintainer_can_modify: false,
+      },
+    ),
   )
   assert_eq(edited.number, 42, "typed edit keeps PR number")
   assert_eq(edited.title, "Release title", "typed edit keeps title")

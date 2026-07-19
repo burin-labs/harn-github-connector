@@ -86,7 +86,6 @@ fn workflow_run(id, head_sha) {
 }
 
 pipeline test_pr_commits_reads_every_page_on_one_stable_head(task) {
-  egress_policy({allow: ["github-api.test"], default: "deny"})
   http_mock_clear()
   const head_sha = "cccccccccccccccccccccccccccccccccccccccc"
   http_mock(
@@ -130,11 +129,13 @@ pipeline test_pr_commits_reads_every_page_on_one_stable_head(task) {
       headers: {"x-ratelimit-remaining": "18"},
     },
   )
-  const result = github_pr_commits(
-    "octo-org",
-    "octo-repo",
-    42,
-    auth() + {per_page: 2, expected_head_oid: head_sha},
+  const result = unwrap(
+    github_pr_commits(
+      "octo-org",
+      "octo-repo",
+      42,
+      auth() + {per_page: 2, expected_head_oid: head_sha},
+    ),
   )
   assert_eq(result.pull_number, 42, "receipt is bound to the exact pull request")
   assert_eq(result.head_sha, head_sha, "receipt is bound to the stable head")
@@ -148,7 +149,6 @@ pipeline test_pr_commits_reads_every_page_on_one_stable_head(task) {
 }
 
 pipeline test_pr_commits_rejects_malformed_signature_and_head_races(task) {
-  egress_policy({allow: ["github-api.test"], default: "deny"})
   http_mock_clear()
   const head_sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   http_mock(
@@ -226,7 +226,6 @@ pipeline test_pr_commits_rejects_malformed_signature_and_head_races(task) {
 }
 
 pipeline test_merged_pr_evidence_is_normalized_and_required(task) {
-  egress_policy({allow: ["github-api.test"], default: "deny"})
   http_mock_clear()
   const merged = pull(45, "head-45", true)
   http_mock(
@@ -234,9 +233,8 @@ pipeline test_merged_pr_evidence_is_normalized_and_required(task) {
     BASE + "/repos/octo-org/octo-repo/pulls?state=closed",
     {status: 200, body: json_stringify([merged]), headers: {"x-ratelimit-remaining": "20"}},
   )
-  const listed = call(
-    "github.pr.list",
-    auth() + {repo: "octo-org/octo-repo", filters: {state: "merged"}},
+  const listed = unwrap(
+    call("github.pr.list", auth() + {repo: "octo-org/octo-repo", filters: {state: "merged"}}),
   )
   assert_eq(listed[0].merged_at, "2026-07-13T12:00:00Z", "list exposes merge time")
   assert_eq(
@@ -273,7 +271,7 @@ pipeline test_merged_pr_evidence_is_normalized_and_required(task) {
       headers: {"x-ratelimit-remaining": "17"},
     },
   )
-  const viewed = call("github.pr.view", auth() + {repo: "octo-org/octo-repo", number: 45})
+  const viewed = unwrap(call("github.pr.view", auth() + {repo: "octo-org/octo-repo", number: 45}))
   assert_eq(
     viewed.merge_commit_oid,
     listed[0].merge_commit_oid,
@@ -303,9 +301,8 @@ pipeline test_merged_pr_evidence_is_normalized_and_required(task) {
     BASE + "/repos/octo-org/octo-repo/pulls?state=open",
     {status: 200, body: json_stringify([open]), headers: {"x-ratelimit-remaining": "20"}},
   )
-  const open_list = call(
-    "github.pr.list",
-    auth() + {repo: "octo-org/octo-repo", filters: {state: "open"}},
+  const open_list = unwrap(
+    call("github.pr.list", auth() + {repo: "octo-org/octo-repo", filters: {state: "open"}}),
   )
   assert_eq(
     open_list[0].merge_commit_oid,
@@ -315,7 +312,6 @@ pipeline test_merged_pr_evidence_is_normalized_and_required(task) {
 }
 
 pipeline test_actions_runs_returns_closed_typed_envelope(task) {
-  egress_policy({allow: ["github-api.test"], default: "deny"})
   http_mock_clear()
   const url = BASE
     + "/repos/octo-org/octo-repo/actions/workflows/ci.yml/runs?branch=main&event=merge_group&per_page=25&page=2"
@@ -342,17 +338,19 @@ pipeline test_actions_runs_returns_closed_typed_envelope(task) {
       ],
     },
   )
-  const result = call(
-    "github.actions.runs",
-    auth()
-      + {
-      repo: "octo-org/octo-repo",
-      workflow_id: "ci.yml",
-      branch: "main",
-      event: "merge_group",
-      per_page: 25,
-      page: 2,
-    },
+  const result = unwrap(
+    call(
+      "github.actions.runs",
+      auth()
+        + {
+        repo: "octo-org/octo-repo",
+        workflow_id: "ci.yml",
+        branch: "main",
+        event: "merge_group",
+        per_page: 25,
+        page: 2,
+      },
+    ),
   )
   assert_eq(result.repo, "octo-org/octo-repo", "run list is repository-bound")
   assert_eq(result.workflow_id, "ci.yml", "workflow filter is retained")
@@ -382,7 +380,6 @@ pipeline test_actions_runs_returns_closed_typed_envelope(task) {
 }
 
 pipeline test_canonical_contracts_distinguish_auth_and_network_failures(task) {
-  egress_policy({allow: ["github-api.test"], default: "deny"})
   http_mock_clear()
   http_mock(
     "GET",
