@@ -23,7 +23,6 @@ fn pull_fixture(number, head, merged_at = nil) {
 }
 
 pipeline test_pr_list_qualifies_bare_head_to_repository_owner(task) {
-  egress_policy({allow: ["github-api.test"], default: "deny"})
   http_mock_clear()
   const base = "https://github-api.test"
   http_mock(
@@ -36,13 +35,15 @@ pipeline test_pr_list_qualifies_bare_head_to_repository_owner(task) {
       headers: {"x-ratelimit-remaining": "10"},
     },
   )
-  const pulls = call(
-    "github.pr.list",
-    auth(base)
-      + {
-      repo: "octo-org/octo-repo",
-      filters: {state: "open", head: "automation/bump", base: "main", per_page: 10},
-    },
+  const pulls = unwrap(
+    call(
+      "github.pr.list",
+      auth(base)
+        + {
+        repo: "octo-org/octo-repo",
+        filters: {state: "open", head: "automation/bump", base: "main", per_page: 10},
+      },
+    ),
   )
   assert_eq(len(pulls), 1, "qualified head returns the intended PR")
   assert_eq(pulls[0].head.ref, "automation/bump", "typed head remains branch-only")
@@ -50,7 +51,6 @@ pipeline test_pr_list_qualifies_bare_head_to_repository_owner(task) {
 }
 
 pipeline test_pr_list_preserves_explicit_fork_owner(task) {
-  egress_policy({allow: ["github-api.test"], default: "deny"})
   http_mock_clear()
   const base = "https://github-api.test"
   http_mock(
@@ -62,20 +62,21 @@ pipeline test_pr_list_preserves_explicit_fork_owner(task) {
       headers: {"x-ratelimit-remaining": "10"},
     },
   )
-  const pulls = call(
-    "github.pr.list",
-    auth(base)
-      + {
-      repo: "octo-org/octo-repo",
-      filters: {state: "open", head: "fork-user:feature/safe"},
-    },
+  const pulls = unwrap(
+    call(
+      "github.pr.list",
+      auth(base)
+        + {
+        repo: "octo-org/octo-repo",
+        filters: {state: "open", head: "fork-user:feature/safe"},
+      },
+    ),
   )
   assert_eq(pulls.map({ pull -> pull.number }), [10], "explicit fork owner is preserved")
   assert_eq(len(http_mock_calls()), 1, "one exact fork-owner request")
 }
 
 pipeline test_pr_list_merged_maps_to_closed_and_filters_unmerged_prs(task) {
-  egress_policy({allow: ["github-api.test"], default: "deny"})
   http_mock_clear()
   const base = "https://github-api.test"
   http_mock(
@@ -92,10 +93,15 @@ pipeline test_pr_list_merged_maps_to_closed_and_filters_unmerged_prs(task) {
       headers: {"x-ratelimit-remaining": "10"},
     },
   )
-  const pulls = call(
-    "github.pr.list",
-    auth(base)
-      + {repo: "octo-org/octo-repo", filters: {state: "merged", base: "main", per_page: 30}},
+  const pulls = unwrap(
+    call(
+      "github.pr.list",
+      auth(base)
+        + {
+        repo: "octo-org/octo-repo",
+        filters: {state: "merged", base: "main", per_page: 30},
+      },
+    ),
   )
   assert_eq(pulls.map({ pull -> pull.number }), [8], "only actually merged PRs survive")
   assert_eq(pulls[0].merged_at, "2026-07-13T00:00:00Z", "merge timestamp is canonical evidence")
@@ -108,7 +114,6 @@ pipeline test_pr_list_merged_maps_to_closed_and_filters_unmerged_prs(task) {
 }
 
 pipeline test_pr_list_rejects_unsupported_state_before_network(task) {
-  egress_policy({allow: ["github-api.test"], default: "deny"})
   http_mock_clear()
   const result = call(
     "github.pr.list",
@@ -120,7 +125,6 @@ pipeline test_pr_list_rejects_unsupported_state_before_network(task) {
 }
 
 pipeline test_graphql_promotes_protocol_errors(task) {
-  egress_policy({allow: ["github-api.test"], default: "deny"})
   http_mock_clear()
   const base = "https://github-api.test"
   http_mock(

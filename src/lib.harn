@@ -3,6 +3,47 @@ import {
   connector_http_rate_limit,
   connector_http_request,
 } from "std/connectors/shared"
+pub import {
+  GithubAutoMergeReceipt,
+  GithubBranchProtection,
+  GithubCheckRollup,
+  GithubCheckRun,
+  GithubCommitFileAddition,
+  GithubCommitFileDeletion,
+  GithubCommitSignature,
+  GithubConnectorError,
+  GithubConnectorResult,
+  GithubMergeQueueEnqueueReceipt,
+  GithubMergeQueueEntries,
+  GithubMergeQueueEntry,
+  GithubMergeQueueMembership,
+  GithubMergeability,
+  GithubPullRequestChecks,
+  GithubPullRequestCommit,
+  GithubPullRequestCommits,
+  GithubPullRequestCreateReceipt,
+  GithubPullRequestDetails,
+  GithubPullRequestEditReceipt,
+  GithubPullRequestFile,
+  GithubPullRequestFiles,
+  GithubPullRequestRef,
+  GithubPullRequestSummary,
+  GithubPullRequestUser,
+  GithubPullRequestView,
+  GithubRelease,
+  GithubReleaseAsset,
+  GithubReleaseEditReceipt,
+  GithubReleaseLease,
+  GithubReleaseLookup,
+  GithubSignedCommitReceipt,
+  GithubSignedCommitRequest,
+  GithubWorkflowDispatchReceipt,
+  GithubWorkflowJob,
+  GithubWorkflowJobs,
+  GithubWorkflowRun,
+  GithubWorkflowRuns,
+  GithubWorkflowStep,
+} from "./contracts"
 import { pr_edit_body, pr_edit_result } from "./pr_edit"
 
 const GITHUB_PROVIDER_ID = "github"
@@ -124,132 +165,7 @@ const GITHUB_CI_FAILURE_STATES = ["failure", "error"]
 
 const MAX_PULL_REQUEST_COMMIT_PAGES = 250
 
-type GithubCommitFileAddition = {path: string, contents_base64: string}
-
-type GithubCommitFileDeletion = {path: string}
-
 type GithubAuthFallbackPolicy = {allow_gh_auth_fallback?: bool, gh_auth_fallback?: bool}
-
-type GithubSignedCommitRequest = {
-  owner: string,
-  repo: string,
-  branch: string,
-  expected_head_oid: string,
-  headline: string,
-  body?: string,
-  additions: list<GithubCommitFileAddition>,
-  deletions: list<GithubCommitFileDeletion>,
-}
-
-type GithubSignedCommitReceipt = {
-  oid: string,
-  url: string,
-  branch: string,
-  signature_valid: bool,
-  signed_by_github: bool,
-  signature_state: string,
-}
-
-type GithubPullRequestRef = {ref: string, sha: string, repo: string, owner: string}
-
-type GithubPullRequestUser = {id: int?, login: string, type: string}
-
-type GithubPullRequestSummary = {
-  repo: string,
-  number: int,
-  title: string,
-  url: string,
-  state: string,
-  github_state: string,
-  draft: bool,
-  merged: bool,
-  merged_at: string?,
-  merge_commit_oid: string?,
-  mergeable: bool?,
-  mergeable_state: string,
-  base: GithubPullRequestRef,
-  head: GithubPullRequestRef,
-  labels: list<string>,
-  auto_merge_armed: bool,
-  in_merge_queue: bool?,
-}
-
-type GithubPullRequestFile = {
-  sha: string,
-  filename: string,
-  status: string,
-  additions: int,
-  deletions: int,
-  changes: int,
-  previous_filename: string?,
-  blob_url: string?,
-  raw_url: string?,
-  contents_url: string?,
-}
-
-type GithubMergeQueueEntry = {
-  id: string,
-  pull_number: int,
-  url: string,
-  state: string,
-  position: int,
-  enqueued_at: string?,
-  head_sha: string,
-  base_branch: string,
-  jump: bool,
-  solo: bool,
-  estimated_time_to_merge_seconds: int?,
-}
-
-type GithubCommitSignature = {
-  repo: string,
-  sha: string,
-  verified: bool,
-  reason: string,
-  signature_present: bool,
-  payload_present: bool,
-  verified_at: string?,
-}
-
-type GithubPullRequestCommit = {sha: string, message: string, signature: GithubCommitSignature}
-
-type GithubPullRequestCommits = {
-  repo: string,
-  pull_number: int,
-  head_ref: string,
-  head_sha: string,
-  total_count: int,
-  commits: list<GithubPullRequestCommit>,
-  pages_fetched: int,
-  per_page: int,
-}
-
-type GithubWorkflowRun = {
-  repo: string,
-  id: int,
-  workflow_id: int?,
-  run_number: int?,
-  run_attempt: int?,
-  name: string,
-  event: string,
-  status: string,
-  conclusion: string?,
-  head_branch: string,
-  head_sha: string,
-  url: string,
-  created_at: string?,
-  run_started_at: string?,
-  updated_at: string?,
-}
-
-type GithubWorkflowRuns = {
-  repo: string,
-  workflow_id: string?,
-  total_count: int,
-  runs: list<GithubWorkflowRun>,
-  page: int,
-  per_page: int,
-}
 
 type GithubConnectorState = {initialized: bool, active: bool, bindings: dict, ctx: dict}
 
@@ -417,8 +333,34 @@ pub fn normalize_inbound(raw) {
 }
 
 @complexity(allow)
-/** Dispatch a supported GitHub REST or GraphQL API call. */
-pub fn call(method, args = {}) {
+/** Dispatch a supported GitHub method through one explicit Result boundary. */
+pub fn call(method: string, args: dict = {}) -> GithubConnectorResult<unknown> {
+  const value = __call_raw(method, args)
+  if is_err(value) {
+    const error: GithubConnectorError = unwrap_err(value)
+    return Err(error)
+  }
+  return Ok(value)
+}
+
+/** Dispatch and validate one method against an exported success contract. */
+pub fn call_typed<T>(method: string, args: dict, schema: Schema<T>) -> GithubConnectorResult<T> {
+  const result = call(method, args)
+  if is_err(result) {
+    return Err(unwrap_err(result))
+  }
+  const value = unwrap(result)
+  if schema_is(value, schema) {
+    return Ok(value)
+  }
+  return __err(
+    "invalid_response",
+    "github connector method `" + method + "` did not match its declared success contract",
+  )
+}
+
+@complexity(allow)
+fn __call_raw(method, args = {}) {
   if !contains(GITHUB_OUTBOUND_METHODS, method) {
     return __err(
       "method_not_found",
@@ -437,7 +379,7 @@ pub fn call(method, args = {}) {
     // Resolving `cfg` above already self-minted the installation token in
     // app-credential mode (app_id + installation_id + private_key_pem/secret),
     // or carried through a direct/gh-auth token. Expose it so an orchestrator
-    // (e.g. harn-cloud) can obtain a bearer token for its own git operations
+    // can obtain a bearer token for its own git operations
     // without re-implementing RS256 JWT minting. The caller must already hold
     // the credentials, so this grants no privilege it did not already have.
     return {
@@ -821,18 +763,41 @@ pub fn pulls_merge_safe(owner, repo, number, options = nil) {
 }
 
 /** Enable GitHub auto-merge for a PR through the GraphQL auto-merge mutation. */
-pub fn pulls_enable_auto_merge(owner, repo, number, options = nil) {
+pub fn pulls_enable_auto_merge(
+  owner,
+  repo,
+  number,
+  options = nil,
+) -> GithubConnectorResult<GithubAutoMergeReceipt> {
   const opts = options ?? {}
-  return call("github.pr.enable_auto_merge", opts + {owner: owner, repo: repo, pull_number: number})
+  const result = call(
+    "github.pr.enable_auto_merge",
+    opts + {owner: owner, repo: repo, pull_number: number},
+  )
+  if is_err(result) {
+    return Err(unwrap_err(result))
+  }
+  const receipt: GithubAutoMergeReceipt = unwrap(result)
+  return Ok(receipt)
 }
 
 /**
  * Read every commit on one stable pull-request head, including normalized
  * GitHub signature verification evidence for each commit.
  */
-pub fn github_pr_commits(owner, repo, number, options = nil) {
+pub fn github_pr_commits(
+  owner,
+  repo,
+  number,
+  options = nil,
+) -> GithubConnectorResult<GithubPullRequestCommits> {
   const opts = options ?? {}
-  return call("github.pr.commits", opts + {owner: owner, repo: repo, pull_number: number})
+  const result = call("github.pr.commits", opts + {owner: owner, repo: repo, pull_number: number})
+  if is_err(result) {
+    return Err(unwrap_err(result))
+  }
+  const commits: GithubPullRequestCommits = unwrap(result)
+  return Ok(commits)
 }
 
 /**
@@ -841,9 +806,12 @@ pub fn github_pr_commits(owner, repo, number, options = nil) {
  * signs the commit itself and marks it verified. `expected_head_oid` is the
  * publication lease and makes stale-head races fail closed.
  */
-pub fn github_create_signed_commit(request: GithubSignedCommitRequest, options = nil) {
+pub fn github_create_signed_commit(
+  request: GithubSignedCommitRequest,
+  options = nil,
+) -> GithubConnectorResult<GithubSignedCommitReceipt> {
   const opts = options ?? {}
-  return call(
+  const result = call(
     "github.branch.create_signed_commit",
     opts
       + {
@@ -857,6 +825,11 @@ pub fn github_create_signed_commit(request: GithubSignedCommitRequest, options =
       deletions: request.deletions,
     },
   )
+  if is_err(result) {
+    return Err(unwrap_err(result))
+  }
+  const receipt: GithubSignedCommitReceipt = unwrap(result)
+  return Ok(receipt)
 }
 
 /** Dispatch a workflow_dispatch workflow and request run details when GitHub supports them. */
@@ -1017,15 +990,32 @@ pub fn github_latest_release(owner, repo, options = nil) {
 }
 
 /** Look up release metadata by one exact tag. */
-pub fn github_release(owner, repo, tag, options = nil) {
+pub fn github_release(
+  owner,
+  repo,
+  tag,
+  options = nil,
+) -> GithubConnectorResult<GithubReleaseLookup> {
   const opts = options ?? {}
-  return call("github.release.view", opts + {owner: owner, repo: repo, tag: tag})
+  const result = call("github.release.view", opts + {owner: owner, repo: repo, tag: tag})
+  if is_err(result) {
+    return Err(unwrap_err(result))
+  }
+  const lookup: GithubReleaseLookup = unwrap(result)
+  return Ok(lookup)
 }
 
 /** Replace an exact release body under its observed release and tag leases. */
-pub fn github_release_edit_body(owner, repo, tag, body, lease, options = nil) {
+pub fn github_release_edit_body(
+  owner,
+  repo,
+  tag,
+  body,
+  lease,
+  options = nil,
+) -> GithubConnectorResult<GithubReleaseEditReceipt> {
   const opts = options ?? {}
-  return call(
+  const result = call(
     "github.release.edit_body",
     opts
       + {
@@ -1038,6 +1028,11 @@ pub fn github_release_edit_body(owner, repo, tag, body, lease, options = nil) {
       expected_tag_target_oid: lease?.tag_target_oid,
     },
   )
+  if is_err(result) {
+    return Err(unwrap_err(result))
+  }
+  const receipt: GithubReleaseEditReceipt = unwrap(result)
+  return Ok(receipt)
 }
 
 /**
@@ -1118,7 +1113,7 @@ pub fn github_dispatch_workflow_and_resolve_run(
       unwrap_err(dispatch),
     )
   }
-  const dispatch_run_id = __extract_dispatch_run_id(dispatch)
+  const dispatch_run_id = __extract_dispatch_run_id(unwrap(dispatch))
   if dispatch_run_id != nil {
     const direct_cfg = __workflow_wait_config(opts + {workflow_id: workflow_id}, dispatch_run_id)
       + {
@@ -1225,7 +1220,7 @@ pub fn github_find_open_pr(owner, repo, options) {
   const opts = options ?? {}
   const auth = __auth_options(opts)
   const query = __pr_finder_query(opts)
-  const prs = call("github.pr.list", auth + {owner: owner, repo: repo, filters: query})
+  const prs = __call_raw("github.pr.list", auth + {owner: owner, repo: repo, filters: query})
   if is_err(prs) {
     return __find_open_pr_error_envelope(unwrap_err(prs))
   }
@@ -1246,7 +1241,7 @@ pub fn github_close_pr(owner, repo, pull_number, comment = nil, options = nil) {
     return __close_pr_envelope(false, pull_number, false, nil, unwrap_err(comment_result))
   }
   const comment_posted = unwrap(comment_result)
-  const updated = call(
+  const updated = __call_raw(
     "issues.update",
     auth + {owner: owner, repo: repo, issue_number: pull_number, state: "closed"},
   )
@@ -1431,7 +1426,10 @@ fn __workflow_wait_locate_dispatch_step(owner, repo, filter, auth, attempt) {
 }
 
 fn __workflow_wait_probe_step(owner, repo, run_id, auth, attempt) {
-  const run = call("actions.workflow_run.get", auth + {owner: owner, repo: repo, run_id: run_id})
+  const run = __call_raw(
+    "actions.workflow_run.get",
+    auth + {owner: owner, repo: repo, run_id: run_id},
+  )
   if is_err(run) {
     return {
       attempts: [{attempt: attempt, kind: "get_failed", run_id: run_id, error: unwrap_err(run)}],
@@ -1462,7 +1460,10 @@ fn __resolve_head_sha(owner, repo, resolved, auth) {
   if resolved?.pull_number == nil {
     return Ok(nil)
   }
-  const pr = call("pulls.get", auth + {owner: owner, repo: repo, pull_number: resolved.pull_number})
+  const pr = __call_raw(
+    "pulls.get",
+    auth + {owner: owner, repo: repo, pull_number: resolved.pull_number},
+  )
   if is_err(pr) {
     return Err(
       __checks_envelope(
@@ -1516,7 +1517,10 @@ fn __checks_wait_loop(owner, repo, head_sha, opts, auth) {
 }
 
 fn __checks_probe_step(owner, repo, head_sha, auth, attempt) {
-  const probe = call("github.pr.checks", auth + {owner: owner, repo: repo, head_sha: head_sha})
+  const probe = __call_raw(
+    "github.pr.checks",
+    auth + {owner: owner, repo: repo, head_sha: head_sha},
+  )
   if is_err(probe) {
     return {
       attempts: [{attempt: attempt, kind: "checks_failed", error: unwrap_err(probe)}],
@@ -1608,7 +1612,7 @@ fn __post_close_comment_if_set(owner, repo, pull_number, comment, auth) {
   if comment == nil || trim(to_string(comment)) == "" {
     return Ok(false)
   }
-  const posted = call(
+  const posted = __call_raw(
     "issues.create_comment",
     auth + {owner: owner, repo: repo, issue_number: pull_number, body: to_string(comment)},
   )
@@ -1677,7 +1681,7 @@ fn __locate_workflow_run(owner, repo, filter, auth) {
   if is_err(resp) {
     return resp
   }
-  return __pick_newest_run(resp?.workflow_runs ?? [], filter)
+  return __pick_newest_run(unwrap(resp)?.workflow_runs ?? [], filter)
 }
 
 fn __exact_workflow_runs(owner, repo, filter, auth) {
@@ -1686,7 +1690,7 @@ fn __exact_workflow_runs(owner, repo, filter, auth) {
     return resp
   }
   let matches = []
-  for run in resp?.workflow_runs ?? [] {
+  for run in unwrap(resp)?.workflow_runs ?? [] {
     if __run_matches_exact_dispatch_filter(run, filter) {
       matches = matches + [run]
     }
@@ -1919,7 +1923,7 @@ fn __summarize_failing_check(owner, repo, check, tail_lines, auth) {
   if run_id == nil {
     return __log_summary(check, nil, nil, 0, false, "no_actions_run_url")
   }
-  const logs = call("github.actions.logs", auth + {owner: owner, repo: repo, run_id: run_id})
+  const logs = __call_raw("github.actions.logs", auth + {owner: owner, repo: repo, run_id: run_id})
   if is_err(logs) {
     return __log_summary(check, run_id, nil, 0, false, unwrap_err(logs))
   }
@@ -2068,7 +2072,8 @@ fn __github_pr_create(args, cfg) {
   if is_err(valid) {
     return valid
   }
-  return __typed_pr_details(created) + {created: true}
+  const receipt: GithubPullRequestCreateReceipt = __typed_pr_details(created) + {created: true}
+  return receipt
 }
 
 fn __github_pr_view(args, cfg) {
@@ -2485,7 +2490,11 @@ fn __github_actions_workflow_dispatch(args, cfg) {
       resolved?.error ?? {code: resolved.status, category: "workflow", message: resolved.status},
     )
   }
-  return __typed_workflow_dispatch(r.full_name, ref, resolved)
+  const receipt = __typed_workflow_dispatch(r.full_name, ref, resolved)
+  if is_err(receipt) {
+    return receipt
+  }
+  return unwrap(receipt)
 }
 
 fn __github_actions_runs(args, cfg) {
@@ -3020,13 +3029,20 @@ fn __github_merge_queue_entries(args, cfg) {
   }
   const queue = repository?.mergeQueue
   if queue == nil {
-    return {repo: r.full_name, branch: to_string(branch), configured: false, url: nil, entries: []}
+    const absent: GithubMergeQueueEntries = {
+      repo: r.full_name,
+      branch: to_string(branch),
+      configured: false,
+      url: nil,
+      entries: [],
+    }
+    return absent
   }
   const nodes = queue?.entries?.nodes
   if type_of(nodes) != "list" {
     return __err("invalid_response", "github merge queue response omitted entries.nodes")
   }
-  let entries = []
+  let entries: list<GithubMergeQueueEntry> = []
   for entry in nodes {
     const typed = __typed_merge_queue_entry(entry)
     if is_err(typed) {
@@ -3034,13 +3050,14 @@ fn __github_merge_queue_entries(args, cfg) {
     }
     entries = entries + [unwrap(typed)]
   }
-  return {
+  const result: GithubMergeQueueEntries = {
     repo: r.full_name,
     branch: to_string(branch),
     configured: true,
     url: to_string(queue?.url ?? ""),
     entries: entries,
   }
+  return result
 }
 
 fn __github_merge_queue_membership(args, cfg) {
@@ -3108,7 +3125,7 @@ fn __github_merge_queue_membership(args, cfg) {
     }
     entry = unwrap(typed)
   }
-  return {
+  const membership: GithubMergeQueueMembership = {
     repo: r.full_name,
     pull_number: to_int(number),
     available: true,
@@ -3117,6 +3134,7 @@ fn __github_merge_queue_membership(args, cfg) {
     entry: entry,
     error: nil,
   }
+  return membership
 }
 
 fn __github_merge_queue_enqueue(args, cfg) {
@@ -3199,12 +3217,13 @@ fn __github_merge_queue_enqueue(args, cfg) {
   if is_err(entry) {
     return entry
   }
-  return {
+  const receipt: GithubMergeQueueEnqueueReceipt = {
     repo: r.full_name,
     pull_number: to_int(number),
     expected_head_oid: expected_head_oid,
     entry: unwrap(entry),
   }
+  return receipt
 }
 
 fn __github_issue_create(args, cfg) {
@@ -3923,8 +3942,8 @@ const DEFAULT_MERGEABLE_POLL_INTERVAL_MS = 1500
  * Resolve a PR's async-computed `mergeable`/`mergeable_state` by GETting the
  * single-PR endpoint (which triggers the background computation) and polling
  * with bounded backoff while `mergeable` is null or `mergeable_state` is
- * "unknown". Returns `{ok, mergeable, mergeable_state, is_conflict, attempts,
- * resolved, raw, error}`. The poll bound is `max_attempts` (default 4) with
+ * "unknown". Returns a typed mergeability result. The poll bound is
+ * `max_attempts` (default 4) with
  * `poll_interval_ms` (default 1500ms) between attempts.
  */
 @complexity(allow)
@@ -3986,16 +4005,18 @@ fn __pull_requests_resolve_mergeable(args, cfg) {
 }
 
 fn __mergeable_envelope(ok, mergeable, mergeable_state, attempts, resolved, raw, error) {
-  return {
-    ok: ok,
+  if !ok {
+    return Err(error)
+  }
+  const value: GithubMergeability = {
     mergeable: mergeable,
     mergeable_state: mergeable_state,
     is_conflict: mergeable_state == "dirty",
     attempts: attempts,
     resolved: resolved,
     raw: raw,
-    error: error,
   }
+  return value
 }
 
 /**
@@ -4020,7 +4041,7 @@ pub fn github_resolve_pr_for_sha(owner, repo, sha, options = nil) {
     }
   }
   const auth = __auth_options(opts)
-  const pulls = call("repos.commit_pulls", auth + {owner: owner, repo: repo, sha: sha})
+  const pulls = __call_raw("repos.commit_pulls", auth + {owner: owner, repo: repo, sha: sha})
   if is_err(pulls) {
     return {
       ok: false,
@@ -4057,12 +4078,22 @@ pub fn github_resolve_pr_for_sha(owner, repo, sha, options = nil) {
  * Returns the `{mergeable, mergeable_state, is_conflict, ...}` envelope from
  * `pull_requests.resolve_mergeable`.
  */
-pub fn github_resolve_mergeable(owner, repo, pull_number, options = nil) {
+pub fn github_resolve_mergeable(
+  owner,
+  repo,
+  pull_number,
+  options = nil,
+) -> GithubConnectorResult<GithubMergeability> {
   const opts = options ?? {}
-  return call(
+  const result = call(
     "pull_requests.resolve_mergeable",
     opts + {owner: owner, repo: repo, pull_number: pull_number},
   )
+  if is_err(result) {
+    return Err(unwrap_err(result))
+  }
+  const mergeability: GithubMergeability = unwrap(result)
+  return Ok(mergeability)
 }
 
 const GITHUB_OAUTH_BASE_URL = "https://github.com"
@@ -4587,7 +4618,7 @@ fn __github_branch_protection_raw(repo, branch, cfg) {
   return Ok(protection)
 }
 
-fn __typed_pr_summary(pull) {
+fn __typed_pr_summary(pull) -> GithubPullRequestSummary {
   const state = __classify_pr_state(pull, nil, nil)
   const summary: GithubPullRequestSummary = {
     repo: pull?.base?.repo?.full_name ?? "",
@@ -4615,8 +4646,8 @@ fn __typed_pr_summary(pull) {
   return summary
 }
 
-fn __typed_pr_details(pull) {
-  return __typed_pr_summary(pull)
+fn __typed_pr_details(pull) -> GithubPullRequestDetails {
+  const details: GithubPullRequestDetails = __typed_pr_summary(pull)
     + {
     body: pull?.body ?? "",
     user: __typed_user(pull?.user),
@@ -4624,9 +4655,10 @@ fn __typed_pr_details(pull) {
     updated_at: pull?.updated_at,
     closed_at: pull?.closed_at,
   }
+  return details
 }
 
-fn __typed_pr_view(pull, protection, queue) {
+fn __typed_pr_view(pull, protection, queue) -> GithubPullRequestView {
   let summary = __typed_pr_details(pull)
   summary["auto_merge_armed"] = queue.auto_merge_armed
   summary["in_merge_queue"] = if queue.available {
@@ -4643,20 +4675,27 @@ fn __typed_pr_view(pull, protection, queue) {
       nil
     },
   )
-  return summary + {branch_protection: protection, queue_membership: queue}
+  const view: GithubPullRequestView = summary
+    + {
+    branch_protection: protection,
+    queue_membership: queue,
+  }
+  return view
 }
 
-fn __typed_pr_edit(pull) {
-  return pr_edit_result(__typed_pr_summary(pull), pull)
+fn __typed_pr_edit(pull) -> GithubPullRequestEditReceipt {
+  const receipt: GithubPullRequestEditReceipt = pr_edit_result(__typed_pr_summary(pull), pull)
+  return receipt
 }
 
-fn __typed_ref(ref) {
-  return {
+fn __typed_ref(ref) -> GithubPullRequestRef {
+  const typed: GithubPullRequestRef = {
     ref: ref?.ref ?? "",
     sha: ref?.sha ?? "",
     repo: ref?.repo?.full_name ?? "",
     owner: ref?.repo?.owner?.login ?? ref?.user?.login ?? "",
   }
+  return typed
 }
 
 fn __typed_user(user) -> GithubPullRequestUser? {
@@ -4772,13 +4811,13 @@ fn __typed_pr_file(file) {
   return Ok(typed)
 }
 
-fn __typed_release(release) {
+fn __typed_release(release) -> GithubConnectorResult<GithubRelease> {
   if type_of(release) != "dict" || release?.id == nil
     || trim(to_string(release?.tag_name ?? ""))
     == "" {
     return __err("invalid_response", "github.release.view response omitted release id or tag")
   }
-  let assets = []
+  let assets: list<GithubReleaseAsset> = []
   for asset in release?.assets ?? [] {
     if asset?.id == nil || trim(to_string(asset?.name ?? "")) == "" {
       return __err("invalid_response", "github.release.view response contained a malformed asset")
@@ -4843,7 +4882,11 @@ fn __typed_repository_file(content, ref) {
   )
 }
 
-fn __typed_workflow_dispatch(repo, ref, resolved) {
+fn __typed_workflow_dispatch(
+  repo,
+  ref,
+  resolved,
+) -> GithubConnectorResult<GithubWorkflowDispatchReceipt> {
   if resolved?.run_id == nil || trim(to_string(resolved?.head_sha ?? "")) == ""
     || trim(
     to_string(resolved?.event ?? ""),
@@ -4855,11 +4898,15 @@ fn __typed_workflow_dispatch(repo, ref, resolved) {
       "github.actions.workflow_dispatch could not prove an exact run identity",
     )
   }
-  return {
+  const receipt: GithubWorkflowDispatchReceipt = {
     repo: repo,
     accepted: true,
     run_id: to_int(resolved.run_id),
-    workflow_id: resolved.workflow_id,
+    workflow_id: if resolved?.workflow_id == nil {
+      nil
+    } else {
+      to_string(resolved.workflow_id)
+    },
     ref: to_string(ref),
     head_sha: to_string(resolved.head_sha),
     head_branch: to_string(resolved?.head_branch ?? ""),
@@ -4867,6 +4914,7 @@ fn __typed_workflow_dispatch(repo, ref, resolved) {
     url: to_string(resolved.run_url),
     created_at: resolved?.created_at,
   }
+  return Ok(receipt)
 }
 
 fn __typed_workflow_run(repo, run) {
@@ -4927,7 +4975,7 @@ fn __typed_workflow_run(repo, run) {
   return Ok(typed)
 }
 
-fn __typed_workflow_job(job) {
+fn __typed_workflow_job(job) -> GithubConnectorResult<GithubWorkflowJob> {
   if type_of(job) != "dict" || job?.id == nil || job?.run_id == nil
     || trim(
     to_string(job?.name ?? ""),
@@ -4937,7 +4985,7 @@ fn __typed_workflow_job(job) {
     || type_of(job?.steps ?? []) != "list" {
     return __err("invalid_response", "github.actions.run_jobs response contained a malformed job")
   }
-  let steps = []
+  let steps: list<GithubWorkflowStep> = []
   for step in job?.steps ?? [] {
     if step?.number == nil || trim(to_string(step?.name ?? "")) == ""
       || trim(
@@ -5057,16 +5105,16 @@ fn __queue_membership_unavailable(repo, number, error, auto_merge_armed) {
   }
 }
 
-fn __typed_check_runs(runs) {
-  let checks = []
+fn __typed_check_runs(runs) -> list<GithubCheckRun> {
+  let checks: list<GithubCheckRun> = []
   for run in runs ?? [] {
     checks = checks + [__typed_check_run(run)]
   }
   return checks
 }
 
-fn __typed_check_run(run) {
-  return {
+fn __typed_check_run(run) -> GithubCheckRun {
+  const typed: GithubCheckRun = {
     id: run?.id,
     name: run?.name ?? "",
     status: lowercase(run?.status ?? ""),
@@ -5079,9 +5127,10 @@ fn __typed_check_run(run) {
     html_url: run?.html_url,
     external_id: run?.external_id,
   }
+  return typed
 }
 
-fn __check_rollup(checks) {
+fn __check_rollup(checks) -> GithubCheckRollup {
   let pending = 0
   let failed = 0
   let successful = 0
@@ -5106,7 +5155,7 @@ fn __check_rollup(checks) {
   } else {
     "green"
   }
-  return {
+  const rollup: GithubCheckRollup = {
     state: state,
     total: len(checks ?? []),
     pending: pending,
@@ -5121,6 +5170,7 @@ fn __check_rollup(checks) {
       nil
     },
   }
+  return rollup
 }
 
 fn __classify_pr_state(pull, rollup, queue) {

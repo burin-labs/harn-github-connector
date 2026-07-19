@@ -22,7 +22,7 @@ harn --version
 Add the released connector:
 
 ```sh
-harn add github.com/burin-labs/harn-github-connector@v0.3.0
+harn add github.com/burin-labs/harn-github-connector@v0.4.0
 ```
 
 For local multi-repo development, use a path dependency:
@@ -47,12 +47,12 @@ trigger pr_review on github {
 
   on event {
     if event.kind == "pull_request" && event.payload.action == "opened" {
-      github_connector.call("issues.create_comment", {
+      unwrap(github_connector.call("issues.create_comment", {
         owner: event.payload.repository.owner.login,
         repo: event.payload.repository.name,
         issue_number: event.payload.pull_request.number,
         body: "Thanks for the PR!",
-      })
+      }))
     }
   }
 }
@@ -98,7 +98,7 @@ fields for Harn consumers:
 | `job_event` | `harn.job_event.v1` envelope for checks, runs, releases, pushes, deployments, and merge queue events. |
 | `raw` | Original GitHub payload for fields not promoted by the connector. |
 
-Dashboard envelopes promote the fields Burin Home and Harn Cloud need to render
+Dashboard envelopes promote the fields orchestration hosts need to render
 source-linked task and job cards: URL, timestamp, actors, summary, proposed
 action, priority/status, dedupe key, privacy flags, related refs, and action
 intents. Provider write intents are descriptive and carry
@@ -128,7 +128,35 @@ Semantic reaction topics:
 
 ## Outbound calls
 
-Call methods through `call(method, args)` unless a named helper fits better.
+Every outbound operation has one fallible boundary. `call(method, args)` always
+returns `Result<unknown, GithubConnectorError>`; unwrap or narrow the Result
+before reading the success value. Prefer a named helper when available because
+its return type names the normalized success contract. `call_typed` adds an
+explicit runtime schema check when using a dynamic escape hatch.
+
+```harn
+import {
+  GithubConnectorResult,
+  GithubReleaseLookup,
+  github_release,
+} from "harn-github-connector/default"
+
+const result: GithubConnectorResult<GithubReleaseLookup> = github_release(
+  "octo-org",
+  "octo-repo",
+  "v1.2.3",
+  auth,
+)
+if is_err(result) {
+  throw unwrap_err(result).message
+}
+const release = unwrap(result)
+```
+
+The default module exports closed records for pull requests, checks, workflow
+runs and dispatches, releases, merge queues, mergeability, auto-merge receipts,
+commit signatures, and connector errors. These records are importable in
+downstream annotations and compose through `GithubConnectorResult<T>`.
 
 | Area | Methods |
 |---|---|
@@ -142,8 +170,8 @@ Call methods through `call(method, args)` unless a named helper fits better.
 | Raw access | `api_call`, `graphql` |
 
 The namespaced methods above are the canonical automation boundary. Covered
-operations return one closed normalized record or `Err({code, category,
-message, http_status?})`; callers should not issue their own GraphQL or parse
+operations return `Ok(closed_normalized_record)` or a typed
+`Err({code, category, message, http_status?})`; callers should not issue their own GraphQL or parse
 raw REST responses for the same operation.
 
 - `github.pr.enable_auto_merge` and `github.merge_queue.enqueue` require
@@ -209,7 +237,7 @@ Named helpers:
 | `github_wait_for_pr_checks(owner, repo, pull_number_or_ref, options)` | Wait for visible PR or commit checks; optionally attach failing Actions log tails. |
 | `github_find_open_pr(owner, repo, options)` | Find the first open PR matching `head_ref`, `base_ref`, `title`, or `labels`. |
 | `github_close_pr(owner, repo, pull_number, comment, options)` | Close a PR and optionally post a final comment. |
-| `github_resolve_mergeable(owner, repo, pull_number, options)` | Resolve a PR's async `mergeable`/`mergeable_state` with bounded polling; returns `{mergeable, mergeable_state, is_conflict, ...}`. |
+| `github_resolve_mergeable(owner, repo, pull_number, options)` | Resolve a PR's async `mergeable`/`mergeable_state` with bounded polling; returns `GithubConnectorResult<GithubMergeability>`. |
 | `github_resolve_pr_for_sha(owner, repo, sha, options)` | Resolve the PR for a commit SHA, preferring payload `pull_requests[]` and falling back to `repos.commit_pulls`. |
 | `github_create_signed_commit(request, options)` | Atomically append file additions/deletions at an expected head OID through GitHub's verified App-signing path. |
 | `github_release(owner, repo, tag, options)` | Look up one exact release tag with proven-absence semantics. |
@@ -256,7 +284,7 @@ or by secret-provider alias through `signing_secret_id`,
 Example outbound call configuration:
 
 ```harn
-github_connector.call("issues.create_comment", {
+unwrap(github_connector.call("issues.create_comment", {
   app_id: env("GITHUB_APP_ID"),
   installation_id: env("GITHUB_INSTALLATION_ID"),
   private_key_secret: "github/app-private-key",
@@ -264,7 +292,7 @@ github_connector.call("issues.create_comment", {
   repo: "demo",
   issue_number: 123,
   body: "Thanks for the PR!",
-})
+}))
 ```
 
 For local fixture tests only, `private_key_pem` can be passed inline.
@@ -347,10 +375,9 @@ harn check src
 harn lint src
 harn fmt --check src tests
 harn connector check .
-for test in tests/*.harn; do
-  harn run "$test" || exit 1
-done
-harn test tests
+printf '%s\0' tests/*.harn \
+  | xargs -0 -n1 -P 4 env HARN_EGRESS_BLOCK_PRIVATE=off harn run
+harn test tests --parallel
 ```
 
 `harn connector check .` runs the deterministic webhook fixtures declared in
@@ -369,7 +396,19 @@ version = "0.0.0"
 EOF
 cd "$smoke_root"
 harn add /path/to/harn-github-connector@HEAD
-printf 'import "harn-github-connector/default"\n' > smoke.harn
+cat > smoke.harn <<'EOF'
+import {
+  GithubConnectorResult,
+  GithubReleaseLookup,
+} from "harn-github-connector/default"
+
+fn release_state(result: GithubConnectorResult<GithubReleaseLookup>) -> string {
+  if is_err(result) {
+    return unwrap_err(result).code
+  }
+  return unwrap(result).state
+}
+EOF
 harn check smoke.harn
 ```
 

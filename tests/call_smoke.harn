@@ -1,7 +1,6 @@
 import { call } from "../src/lib"
 
 pipeline default() {
-  egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
   http_mock_clear()
   const base = "https://github-api.test"
   const token = "github-installation-token"
@@ -14,16 +13,18 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "10"},
     },
   )
-  const comment = call(
-    "issues.create_comment",
-    {
-      api_base_url: base,
-      installation_token: token,
-      owner: "octo-org",
-      repo: "octo-repo",
-      issue_number: 7,
-      body: "hello",
-    },
+  const comment = unwrap(
+    call(
+      "issues.create_comment",
+      {
+        api_base_url: base,
+        installation_token: token,
+        owner: "octo-org",
+        repo: "octo-repo",
+        issue_number: 7,
+        body: "hello",
+      },
+    ),
   )
   assert_eq(comment.id, 101, "comment id")
   http_mock(
@@ -35,14 +36,16 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "9"},
     },
   )
-  const graph = call(
-    "graphql",
-    {
-      api_base_url: base,
-      installation_token: token,
-      query: "query { viewer { login } }",
-      variables: {},
-    },
+  const graph = unwrap(
+    call(
+      "graphql",
+      {
+        api_base_url: base,
+        installation_token: token,
+        query: "query { viewer { login } }",
+        variables: {},
+      },
+    ),
   )
   assert_eq(graph.data.viewer.login, "octocat", "graphql viewer")
   http_mock(
@@ -94,15 +97,17 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "7"},
     },
   )
-  const pull = call(
-    "pulls.get",
-    {
-      api_base_url: base,
-      installation_token: token,
-      owner: "octo-org",
-      repo: "octo-repo",
-      pull_number: 42,
-    },
+  const pull = unwrap(
+    call(
+      "pulls.get",
+      {
+        api_base_url: base,
+        installation_token: token,
+        owner: "octo-org",
+        repo: "octo-repo",
+        pull_number: 42,
+      },
+    ),
   )
   assert_eq(pull.number, 42, "pulls.get response")
   http_mock(
@@ -114,15 +119,17 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "7"},
     },
   )
-  const diff = call(
-    "pulls.get_diff",
-    {
-      api_base_url: base,
-      installation_token: token,
-      owner: "octo-org",
-      repo: "octo-repo",
-      pull_number: 42,
-    },
+  const diff = unwrap(
+    call(
+      "pulls.get_diff",
+      {
+        api_base_url: base,
+        installation_token: token,
+        owner: "octo-org",
+        repo: "octo-repo",
+        pull_number: 42,
+      },
+    ),
   )
   assert(diff.contains("diff --git"), "pulls.get_diff should return raw diff text")
   http_mock(
@@ -181,16 +188,18 @@ pipeline default() {
       ],
     },
   )
-  const files = call(
-    "pulls.list_files",
-    {
-      api_base_url: base,
-      installation_token: token,
-      owner: "octo-org",
-      repo: "octo-repo",
-      pull_number: 42,
-      per_page: 2,
-    },
+  const files = unwrap(
+    call(
+      "pulls.list_files",
+      {
+        api_base_url: base,
+        installation_token: token,
+        owner: "octo-org",
+        repo: "octo-repo",
+        pull_number: 42,
+        per_page: 2,
+      },
+    ),
   )
   assert_eq(files[0].filename, "src/lib.rs", "list files response")
   http_mock(

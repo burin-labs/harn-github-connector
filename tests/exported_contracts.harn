@@ -1,0 +1,151 @@
+import {
+  GithubAutoMergeReceipt,
+  GithubBranchProtection,
+  GithubCheckRollup,
+  GithubCheckRun,
+  GithubCommitFileAddition,
+  GithubCommitFileDeletion,
+  GithubCommitSignature,
+  GithubConnectorError,
+  GithubConnectorResult,
+  GithubMergeQueueEnqueueReceipt,
+  GithubMergeQueueEntries,
+  GithubMergeQueueEntry,
+  GithubMergeQueueMembership,
+  GithubMergeability,
+  GithubPullRequestChecks,
+  GithubPullRequestCommit,
+  GithubPullRequestCommits,
+  GithubPullRequestCreateReceipt,
+  GithubPullRequestDetails,
+  GithubPullRequestEditReceipt,
+  GithubPullRequestFile,
+  GithubPullRequestFiles,
+  GithubPullRequestRef,
+  GithubPullRequestSummary,
+  GithubPullRequestUser,
+  GithubPullRequestView,
+  GithubRelease,
+  GithubReleaseAsset,
+  GithubReleaseEditReceipt,
+  GithubReleaseLease,
+  GithubReleaseLookup,
+  GithubSignedCommitReceipt,
+  GithubSignedCommitRequest,
+  GithubWorkflowDispatchReceipt,
+  GithubWorkflowJob,
+  GithubWorkflowJobs,
+  GithubWorkflowRun,
+  GithubWorkflowRuns,
+  GithubWorkflowStep,
+  call,
+  call_typed,
+} from "../src/lib"
+
+type ExportedContractCatalog = {
+  auto_merge: GithubAutoMergeReceipt,
+  branch_protection: GithubBranchProtection,
+  check_rollup: GithubCheckRollup,
+  check_run: GithubCheckRun,
+  commit_addition: GithubCommitFileAddition,
+  commit_deletion: GithubCommitFileDeletion,
+  commit_signature: GithubCommitSignature,
+  error: GithubConnectorError,
+  merge_queue_entry: GithubMergeQueueEntry,
+  merge_queue_enqueue: GithubMergeQueueEnqueueReceipt,
+  merge_queue_entries: GithubMergeQueueEntries,
+  merge_queue_membership: GithubMergeQueueMembership,
+  mergeability: GithubMergeability,
+  pr_checks: GithubPullRequestChecks,
+  pr_commit: GithubPullRequestCommit,
+  pr_commits: GithubPullRequestCommits,
+  pr_create: GithubPullRequestCreateReceipt,
+  pr_details: GithubPullRequestDetails,
+  pr_edit: GithubPullRequestEditReceipt,
+  pr_file: GithubPullRequestFile,
+  pr_files: GithubPullRequestFiles,
+  pr_ref: GithubPullRequestRef,
+  pr_summary: GithubPullRequestSummary,
+  pr_user: GithubPullRequestUser,
+  pr_view: GithubPullRequestView,
+  release: GithubRelease,
+  release_asset: GithubReleaseAsset,
+  release_edit: GithubReleaseEditReceipt,
+  release_lease: GithubReleaseLease,
+  release_lookup: GithubReleaseLookup,
+  signed_commit_receipt: GithubSignedCommitReceipt,
+  signed_commit_request: GithubSignedCommitRequest,
+  workflow_dispatch: GithubWorkflowDispatchReceipt,
+  workflow_job: GithubWorkflowJob,
+  workflow_jobs: GithubWorkflowJobs,
+  workflow_run: GithubWorkflowRun,
+  workflow_runs: GithubWorkflowRuns,
+  workflow_step: GithubWorkflowStep,
+}
+
+fn _catalog_is_typed(value: ExportedContractCatalog) -> bool {
+  return value.pr_summary.number > 0
+}
+
+fn pull_number(pull: GithubPullRequestSummary) -> int {
+  return pull.number
+}
+
+pipeline test_exported_contract_imports_and_result_narrowing(task) {
+  const pull: GithubPullRequestSummary = {
+    repo: "octo-org/octo-repo",
+    number: 42,
+    title: "Typed contracts",
+    url: "https://github.test/octo-org/octo-repo/pull/42",
+    state: "green",
+    github_state: "open",
+    draft: false,
+    merged: false,
+    merged_at: nil,
+    merge_commit_oid: nil,
+    mergeable: true,
+    mergeable_state: "clean",
+    base: {ref: "main", sha: "base", repo: "octo-org/octo-repo", owner: "octo-org"},
+    head: {ref: "typed", sha: "head", repo: "octo-org/octo-repo", owner: "octo-org"},
+    labels: ["contracts"],
+    auto_merge_armed: false,
+    in_merge_queue: false,
+  }
+  assert_eq(pull_number(pull), 42, "re-exported records work in downstream annotations")
+  const failed: GithubConnectorResult<unknown> = call("not.a.github.method", {})
+  assert(is_err(failed), "unsupported methods return one Result failure")
+  const error: GithubConnectorError = unwrap_err(failed)
+  assert_eq(error.code, "method_not_found", "Result narrowing exposes the typed error")
+}
+
+pipeline test_call_typed_validates_dynamic_escape_hatches(task) {
+  http_mock_clear()
+  http_mock(
+    "GET",
+    "https://github-api.test/repos/octo-org/octo-repo",
+    {
+      responses: [
+        {
+          status: 200,
+          body: json_stringify({id: 1, login: "octocat", type: "User"}),
+          headers: {"x-ratelimit-remaining": "2"},
+        },
+        {
+          status: 200,
+          body: json_stringify({id: 1, login: "octocat", type: "User"}),
+          headers: {"x-ratelimit-remaining": "1"},
+        },
+      ],
+    },
+  )
+  const args = {
+    api_base_url: "https://github-api.test",
+    installation_token: "test-token",
+    path: "/repos/octo-org/octo-repo",
+  }
+  const valid = call_typed("api_call", args, GithubPullRequestUser)
+  assert_eq(unwrap(valid).login, "octocat", "explicit schemas narrow dynamic responses")
+  const mismatch = call_typed("api_call", args, GithubPullRequestRef)
+  assert(is_err(mismatch), "schema mismatches fail closed")
+  assert_eq(unwrap_err(mismatch).code, "invalid_response", "schema mismatch is normalized")
+}

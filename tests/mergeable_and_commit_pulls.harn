@@ -1,7 +1,6 @@
 import { call, github_resolve_mergeable, github_resolve_pr_for_sha } from "../src/lib"
 
 pipeline default() {
-  egress_policy({allow: ["github-api.test"], default: "deny"})
   http_mock_clear()
   const base = "https://github-api.test"
   const token = "github-installation-token"
@@ -25,11 +24,13 @@ pipeline default() {
       ],
     },
   )
-  const resolved = github_resolve_mergeable(
-    "octo-org",
-    "octo-repo",
-    42,
-    auth + {poll_interval_ms: 0, max_attempts: 4},
+  const resolved = unwrap(
+    github_resolve_mergeable(
+      "octo-org",
+      "octo-repo",
+      42,
+      auth + {poll_interval_ms: 0, max_attempts: 4},
+    ),
   )
   assert_eq(resolved.mergeable, true, "mergeable resolved true")
   assert_eq(resolved.mergeable_state, "clean", "mergeable_state clean")
@@ -46,11 +47,8 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "8"},
     },
   )
-  const conflict = github_resolve_mergeable(
-    "octo-org",
-    "octo-repo",
-    99,
-    auth + {poll_interval_ms: 0},
+  const conflict = unwrap(
+    github_resolve_mergeable("octo-org", "octo-repo", 99, auth + {poll_interval_ms: 0}),
   )
   assert_eq(conflict.is_conflict, true, "dirty is a conflict")
   assert_eq(conflict.mergeable_state, "dirty", "dirty state")
@@ -64,11 +62,13 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "7"},
     },
   )
-  const stuck = github_resolve_mergeable(
-    "octo-org",
-    "octo-repo",
-    7,
-    auth + {poll_interval_ms: 0, max_attempts: 2},
+  const stuck = unwrap(
+    github_resolve_mergeable(
+      "octo-org",
+      "octo-repo",
+      7,
+      auth + {poll_interval_ms: 0, max_attempts: 2},
+    ),
   )
   assert_eq(stuck.resolved, false, "unresolved after max attempts")
   assert_eq(stuck.mergeable_state, "unknown", "still unknown")
@@ -83,9 +83,8 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "6"},
     },
   )
-  const pulls = call(
-    "repos.commit_pulls",
-    auth + {owner: "octo-org", repo: "octo-repo", sha: "abcdef1"},
+  const pulls = unwrap(
+    call("repos.commit_pulls", auth + {owner: "octo-org", repo: "octo-repo", sha: "abcdef1"}),
   )
   assert_eq(pulls[0].number, 13, "commit_pulls returns PR")
   // github_resolve_pr_for_sha: prefers payload pull_requests[].

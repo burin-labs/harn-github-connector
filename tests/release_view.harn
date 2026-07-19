@@ -15,7 +15,6 @@ fn release_fixture(tag) {
 }
 
 pipeline test_release_view_by_tag(task) {
-  egress_policy({allow: ["github-api.test"], default: "deny"})
   http_mock_clear()
   const base = "https://github-api.test"
   const auth = {api_base_url: base, installation_token: "token"}
@@ -43,7 +42,7 @@ pipeline test_release_view_by_tag(task) {
       headers: {"x-ratelimit-remaining": "9"},
     },
   )
-  const lookup = github_release("octo-org", "octo-repo", tag, auth)
+  const lookup = unwrap(github_release("octo-org", "octo-repo", tag, auth))
   assert(lookup.found, "release view succeeds")
   assert_eq(lookup.repo, "octo-org/octo-repo", "repo is normalized")
   assert_eq(lookup.release.tag_name, tag, "tag is preserved")
@@ -58,7 +57,6 @@ pipeline test_release_view_by_tag(task) {
 }
 
 pipeline test_release_view_requires_exact_tag(task) {
-  egress_policy({allow: ["github-api.test"], default: "deny"})
   http_mock_clear()
   const base = "https://github-api.test"
   const auth = {api_base_url: base, installation_token: "token"}
@@ -71,7 +69,6 @@ pipeline test_release_view_requires_exact_tag(task) {
 }
 
 pipeline test_release_view_provider_error(task) {
-  egress_policy({allow: ["github-api.test"], default: "deny"})
   http_mock_clear()
   const base = "https://github-api.test"
   const auth = {api_base_url: base, installation_token: "token"}
@@ -93,7 +90,7 @@ pipeline test_release_view_provider_error(task) {
       headers: {"x-ratelimit-remaining": "9"},
     },
   )
-  const missing = github_release("octo-org", "octo-repo", "v9.9.9", auth)
+  const missing = unwrap(github_release("octo-org", "octo-repo", "v9.9.9", auth))
   assert_eq(missing.found, false, "accessible repository proves release absence")
   assert_eq(missing.state, "absent", "absence is explicit")
   http_mock(

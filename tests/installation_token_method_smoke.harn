@@ -16,7 +16,6 @@ fn app_config(harness: Harness, now) {
 }
 
 pipeline default() {
-  egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
   reset_token_cache()
   http_mock_clear()
   // App-credential mode: the method self-mints a fresh installation token by
@@ -30,7 +29,7 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "42"},
     },
   )
-  const minted = call("github.app.installation_token", app_config(harness, 1700000000))
+  const minted = unwrap(call("github.app.installation_token", app_config(harness, 1700000000)))
   assert_eq(minted.token, "token-a", "app-credential mode returns the minted token")
   assert_eq(minted.token_mode, "jwt", "app-credential mode reports jwt token_mode")
   assert_eq(minted.installation_id, 77, "app-credential mode echoes the installation id")
@@ -41,13 +40,15 @@ pipeline default() {
   // Direct-token mode: a pre-supplied installation token passes straight
   // through with no network call.
   http_mock_clear()
-  const direct = call(
-    "github.app.installation_token",
-    {
-      api_base_url: "https://api.github.test",
-      installation_token: "direct-xyz",
-      installation_id: 77,
-    },
+  const direct = unwrap(
+    call(
+      "github.app.installation_token",
+      {
+        api_base_url: "https://api.github.test",
+        installation_token: "direct-xyz",
+        installation_id: 77,
+      },
+    ),
   )
   assert_eq(direct.token, "direct-xyz", "direct mode passes the supplied token through")
   assert_eq(direct.token_mode, "direct", "direct mode reports direct token_mode")

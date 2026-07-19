@@ -41,7 +41,6 @@ fn dispatch_204() {
 }
 
 pipeline test_dispatch_identity_hydrates_returned_run_id_after_eventual_consistency(task) {
-  egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
   http_mock_clear()
   const runs_url = BASE
     + "/repos/octo-org/octo-repo/actions/workflows/identity-returned.yml/runs?branch=main&event=workflow_dispatch&per_page=10"
@@ -112,7 +111,6 @@ pipeline test_dispatch_identity_hydrates_returned_run_id_after_eventual_consiste
 }
 
 pipeline test_dispatch_with_run_id_completes_success(task) {
-  egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
   http_mock_clear()
   const runs_url = BASE
     + "/repos/octo-org/octo-repo/actions/workflows/bump-harn.yml/runs?branch=main&event=workflow_dispatch&per_page=10"
@@ -194,7 +192,6 @@ pipeline test_dispatch_with_run_id_completes_success(task) {
 }
 
 pipeline test_dispatch_identity_selects_only_unseen_exact_run(task) {
-  egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
   http_mock_clear()
   const sha = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
   const runs_url = BASE
@@ -272,7 +269,6 @@ pipeline test_dispatch_identity_selects_only_unseen_exact_run(task) {
 }
 
 pipeline test_dispatch_rejects_multiple_unseen_exact_runs(task) {
-  egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
   http_mock_clear()
   const runs_url = BASE
     + "/repos/octo-org/octo-repo/actions/workflows/ambiguous.yml/runs?branch=main&event=workflow_dispatch&per_page=10"
@@ -330,7 +326,6 @@ pipeline test_dispatch_rejects_multiple_unseen_exact_runs(task) {
 }
 
 pipeline test_dispatch_identity_returns_run_not_found_when_run_never_appears(task) {
-  egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
   http_mock_clear()
   const runs_url = BASE
     + "/repos/octo-org/octo-repo/actions/workflows/never.yml/runs?branch=main&event=workflow_dispatch&per_page=10"
@@ -372,7 +367,6 @@ pipeline test_dispatch_identity_returns_run_not_found_when_run_never_appears(tas
 }
 
 pipeline test_dispatch_returns_dispatch_failed(task) {
-  egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
   http_mock_clear()
   http_mock(
     "GET",
@@ -405,7 +399,6 @@ pipeline test_dispatch_returns_dispatch_failed(task) {
 }
 
 pipeline test_dispatch_returns_poll_failed_when_snapshot_fails(task) {
-  egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
   http_mock_clear()
   http_mock(
     "GET",
@@ -438,7 +431,6 @@ pipeline test_dispatch_returns_poll_failed_when_snapshot_fails(task) {
 }
 
 pipeline test_wait_for_workflow_run_times_out_with_known_run(task) {
-  egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
   http_mock_clear()
   http_mock(
     "GET",
@@ -479,7 +471,6 @@ pipeline test_wait_for_workflow_run_times_out_with_known_run(task) {
 }
 
 pipeline test_ensure_auto_merge_already_enabled(task) {
-  egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
   http_mock_clear()
   http_mock(
     "GET",
@@ -498,11 +489,13 @@ pipeline test_ensure_auto_merge_already_enabled(task) {
       headers: {"x-ratelimit-remaining": "20"},
     },
   )
-  const result = github_ensure_auto_merge(
-    "octo-org",
-    "octo-repo",
-    9,
-    auth() + {method: "squash", expected_head_oid: "abc"},
+  const result = unwrap(
+    github_ensure_auto_merge(
+      "octo-org",
+      "octo-repo",
+      9,
+      auth() + {method: "squash", expected_head_oid: "abc"},
+    ),
   )
   assert_eq(result.state, "already_enabled", "already_enabled state")
   assert_eq(result.already_enabled, true, "already_enabled flag")
@@ -511,7 +504,6 @@ pipeline test_ensure_auto_merge_already_enabled(task) {
 }
 
 pipeline test_ensure_auto_merge_enables_via_graphql(task) {
-  egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
   http_mock_clear()
   http_mock(
     "GET",
@@ -553,11 +545,8 @@ pipeline test_ensure_auto_merge_enables_via_graphql(task) {
       headers: {"x-ratelimit-remaining": "18"},
     },
   )
-  const result = github_ensure_auto_merge(
-    "octo-org",
-    "octo-repo",
-    12,
-    auth() + {expected_head_oid: "fff"},
+  const result = unwrap(
+    github_ensure_auto_merge("octo-org", "octo-repo", 12, auth() + {expected_head_oid: "fff"}),
   )
   assert_eq(result.state, "enabled", "state=enabled")
   assert_eq(result.already_enabled, false, "not already enabled")
@@ -567,7 +556,6 @@ pipeline test_ensure_auto_merge_enables_via_graphql(task) {
 }
 
 pipeline test_ensure_auto_merge_failed(task) {
-  egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
   http_mock_clear()
   http_mock(
     "GET",
@@ -586,7 +574,6 @@ pipeline test_ensure_auto_merge_failed(task) {
 }
 
 pipeline test_wait_for_pr_checks_green(task) {
-  egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
   http_mock_clear()
   http_mock(
     "GET",
@@ -622,7 +609,6 @@ pipeline test_wait_for_pr_checks_green(task) {
 }
 
 pipeline test_wait_for_pr_checks_pending_then_failing_with_logs(task) {
-  egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
   http_mock_clear()
   http_mock(
     "GET",
@@ -683,7 +669,6 @@ pipeline test_wait_for_pr_checks_pending_then_failing_with_logs(task) {
 }
 
 pipeline test_wait_for_pr_checks_times_out(task) {
-  egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
   http_mock_clear()
   http_mock(
     "GET",
@@ -710,7 +695,6 @@ pipeline test_wait_for_pr_checks_times_out(task) {
 }
 
 pipeline test_wait_for_pr_checks_log_summary_handles_non_actions_url(task) {
-  egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
   http_mock_clear()
   http_mock(
     "GET",
@@ -746,7 +730,6 @@ pipeline test_wait_for_pr_checks_log_summary_handles_non_actions_url(task) {
 }
 
 pipeline test_find_open_pr_no_match(task) {
-  egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
   http_mock_clear()
   http_mock(
     "GET",
@@ -766,7 +749,6 @@ pipeline test_find_open_pr_no_match(task) {
 }
 
 pipeline test_find_open_pr_matches_by_head_and_filters_labels(task) {
-  egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
   http_mock_clear()
   http_mock(
     "GET",
@@ -808,7 +790,6 @@ pipeline test_find_open_pr_matches_by_head_and_filters_labels(task) {
 }
 
 pipeline test_close_pr_with_comment(task) {
-  egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
   http_mock_clear()
   http_mock(
     "POST",
@@ -841,7 +822,6 @@ pipeline test_close_pr_with_comment(task) {
 }
 
 pipeline test_close_pr_without_comment(task) {
-  egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
   http_mock_clear()
   http_mock(
     "PATCH",

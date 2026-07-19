@@ -56,7 +56,6 @@ fn queue_entry(number, sha) {
 }
 
 pipeline test_pr_create_files_and_comment_are_closed_records(task) {
-  egress_policy({allow: ["github-api.test"], default: "deny"})
   http_mock_clear()
   http_mock(
     "POST",
@@ -67,17 +66,19 @@ pipeline test_pr_create_files_and_comment_are_closed_records(task) {
       headers: {"x-ratelimit-remaining": "20"},
     },
   )
-  const created = call(
-    "github.pr.create",
-    auth()
-      + {
-      repo: "octo-org/octo-repo",
-      title: "PR 41",
-      head: "feature/41",
-      base: "main",
-      body: "body",
-      draft: true,
-    },
+  const created = unwrap(
+    call(
+      "github.pr.create",
+      auth()
+        + {
+        repo: "octo-org/octo-repo",
+        title: "PR 41",
+        head: "feature/41",
+        base: "main",
+        body: "body",
+        draft: true,
+      },
+    ),
   )
   assert_eq(created.number, 41, "created PR is normalized")
   assert_eq(created.created, true, "creation receipt is explicit")
@@ -103,9 +104,11 @@ pipeline test_pr_create_files_and_comment_are_closed_records(task) {
       headers: {"x-ratelimit-remaining": "19"},
     },
   )
-  const files = call(
-    "github.pr.files",
-    auth() + {repo: "octo-org/octo-repo", number: 41, per_page: 50, page: 2},
+  const files = unwrap(
+    call(
+      "github.pr.files",
+      auth() + {repo: "octo-org/octo-repo", number: 41, per_page: 50, page: 2},
+    ),
   )
   assert_eq(files.files[0].filename, "src/lib.harn", "file path is normalized")
   assert_eq(files.files[0].changes, 12, "file counts are retained")
@@ -127,16 +130,14 @@ pipeline test_pr_create_files_and_comment_are_closed_records(task) {
       headers: {"x-ratelimit-remaining": "18"},
     },
   )
-  const comment = call(
-    "github.pr.comment",
-    auth() + {repo: "octo-org/octo-repo", number: 41, body: "ready"},
+  const comment = unwrap(
+    call("github.pr.comment", auth() + {repo: "octo-org/octo-repo", number: 41, body: "ready"}),
   )
   assert_eq(comment.pull_number, 41, "comment retains PR number")
   assert_eq(comment.user.login, "octocat", "comment actor is normalized")
 }
 
 pipeline test_pr_view_survives_missing_branch_admin_permission_and_armed_is_not_queued(task) {
-  egress_policy({allow: ["github-api.test"], default: "deny"})
   http_mock_clear()
   http_mock(
     "GET",
@@ -177,7 +178,7 @@ pipeline test_pr_view_survives_missing_branch_admin_permission_and_armed_is_not_
       headers: {"x-ratelimit-remaining": "18"},
     },
   )
-  const viewed = call("github.pr.view", auth() + {repo: "octo-org/octo-repo", number: 42})
+  const viewed = unwrap(call("github.pr.view", auth() + {repo: "octo-org/octo-repo", number: 42}))
   assert_eq(viewed.number, 42, "base PR read succeeds")
   assert_eq(
     viewed.branch_protection.available,
@@ -195,7 +196,6 @@ pipeline test_pr_view_survives_missing_branch_admin_permission_and_armed_is_not_
 }
 
 pipeline test_merge_queue_membership_uses_queue_entry_evidence(task) {
-  egress_policy({allow: ["github-api.test"], default: "deny"})
   http_mock_clear()
   http_mock(
     "GET",
@@ -227,9 +227,8 @@ pipeline test_merge_queue_membership_uses_queue_entry_evidence(task) {
       headers: {"x-ratelimit-remaining": "19"},
     },
   )
-  const membership = call(
-    "github.merge_queue.membership",
-    auth() + {repo: "octo-org/octo-repo", number: 43},
+  const membership = unwrap(
+    call("github.merge_queue.membership", auth() + {repo: "octo-org/octo-repo", number: 43}),
   )
   assert_eq(membership.queued, true, "queue entry proves membership")
   assert_eq(membership.entry.pull_number, 43, "membership returns the exact entry")
@@ -237,7 +236,6 @@ pipeline test_merge_queue_membership_uses_queue_entry_evidence(task) {
 }
 
 pipeline test_auto_merge_rejects_stale_expected_head_before_mutation(task) {
-  egress_policy({allow: ["github-api.test"], default: "deny"})
   http_mock_clear()
   const missing = call(
     "github.pr.enable_auto_merge",
@@ -267,7 +265,6 @@ pipeline test_auto_merge_rejects_stale_expected_head_before_mutation(task) {
 }
 
 pipeline test_commit_signature_states_are_normalized(task) {
-  egress_policy({allow: ["github-api.test"], default: "deny"})
   http_mock_clear()
   http_mock(
     "GET",
@@ -291,9 +288,8 @@ pipeline test_commit_signature_states_are_normalized(task) {
       headers: {"x-ratelimit-remaining": "20"},
     },
   )
-  const verified = call(
-    "github.commit.signature",
-    auth() + {repo: "octo-org/octo-repo", ref: "verified"},
+  const verified = unwrap(
+    call("github.commit.signature", auth() + {repo: "octo-org/octo-repo", ref: "verified"}),
   )
   assert_eq(verified.verified, true, "valid signature is verified")
   assert_eq(verified.signature_present, true, "signature material is present")
@@ -319,9 +315,8 @@ pipeline test_commit_signature_states_are_normalized(task) {
       headers: {"x-ratelimit-remaining": "19"},
     },
   )
-  const unsigned = call(
-    "github.commit.signature",
-    auth() + {repo: "octo-org/octo-repo", ref: "unsigned"},
+  const unsigned = unwrap(
+    call("github.commit.signature", auth() + {repo: "octo-org/octo-repo", ref: "unsigned"}),
   )
   assert_eq(unsigned.verified, false, "unsigned is evidence, not transport failure")
   assert_eq(unsigned.reason, "unsigned", "unsigned reason is retained")
@@ -347,9 +342,8 @@ pipeline test_commit_signature_states_are_normalized(task) {
       headers: {"x-ratelimit-remaining": "18"},
     },
   )
-  const invalid = call(
-    "github.commit.signature",
-    auth() + {repo: "octo-org/octo-repo", ref: "invalid"},
+  const invalid = unwrap(
+    call("github.commit.signature", auth() + {repo: "octo-org/octo-repo", ref: "invalid"}),
   )
   assert_eq(invalid.reason, "bad_email", "invalid signature reason is retained")
   assert_eq(invalid.signature_present, true, "invalid signature still reports material")
@@ -371,7 +365,6 @@ pipeline test_commit_signature_states_are_normalized(task) {
 }
 
 pipeline test_exact_file_lookup_separates_absence_from_inaccessibility(task) {
-  egress_policy({allow: ["github-api.test"], default: "deny"})
   http_mock_clear()
   http_mock(
     "GET",
@@ -425,14 +418,12 @@ pipeline test_exact_file_lookup_separates_absence_from_inaccessibility(task) {
       ],
     },
   )
-  const found = call(
-    "github.file.view",
-    auth() + {repo: "octo-org/octo-repo", path: "VERSION", ref: "main"},
+  const found = unwrap(
+    call("github.file.view", auth() + {repo: "octo-org/octo-repo", path: "VERSION", ref: "main"}),
   )
   assert_eq(found.file.text, "0.4.0\n", "found file is decoded")
-  const absent = call(
-    "github.file.view",
-    auth() + {repo: "octo-org/octo-repo", path: "VERSION", ref: "main"},
+  const absent = unwrap(
+    call("github.file.view", auth() + {repo: "octo-org/octo-repo", path: "VERSION", ref: "main"}),
   )
   assert_eq(absent.state, "absent", "accessible repository proves absence")
   const inaccessible = call(
@@ -448,7 +439,6 @@ pipeline test_exact_file_lookup_separates_absence_from_inaccessibility(task) {
 }
 
 pipeline test_canonical_http_failures_and_malformed_payloads_fail_closed(task) {
-  egress_policy({allow: ["github-api.test"], default: "deny"})
   http_mock_clear()
   const cases = [
     {path: "unauthorized", status: 401, code: "auth", message: "Bad credentials", headers: {}},
@@ -507,7 +497,6 @@ pipeline test_canonical_http_failures_and_malformed_payloads_fail_closed(task) {
 }
 
 pipeline test_exact_workflow_run_and_jobs_are_normalized(task) {
-  egress_policy({allow: ["github-api.test"], default: "deny"})
   http_mock_clear()
   http_mock(
     "GET",
@@ -535,7 +524,7 @@ pipeline test_exact_workflow_run_and_jobs_are_normalized(task) {
       headers: {"x-ratelimit-remaining": "20"},
     },
   )
-  const run = call("github.actions.run", auth() + {repo: "octo-org/octo-repo", run_id: 321})
+  const run = unwrap(call("github.actions.run", auth() + {repo: "octo-org/octo-repo", run_id: 321}))
   assert_eq(run.id, 321, "exact run id is retained")
   assert_eq(run.conclusion, "success", "run conclusion is normalized")
   http_mock(
@@ -564,16 +553,17 @@ pipeline test_exact_workflow_run_and_jobs_are_normalized(task) {
       headers: {"x-ratelimit-remaining": "19"},
     },
   )
-  const jobs = call(
-    "github.actions.run_jobs",
-    auth() + {repo: "octo-org/octo-repo", run_id: 321, filter: "all"},
+  const jobs = unwrap(
+    call(
+      "github.actions.run_jobs",
+      auth() + {repo: "octo-org/octo-repo", run_id: 321, filter: "all"},
+    ),
   )
   assert_eq(jobs.run_id, 321, "jobs bind to exact run")
   assert_eq(jobs.jobs[0].steps[0].name, "Run tests", "step evidence is normalized")
 }
 
 pipeline test_workflow_dispatch_returns_exact_accepted_run_identity(task) {
-  egress_policy({allow: ["github-api.test"], default: "deny"})
   http_mock_clear()
   http_mock(
     "GET",
@@ -617,15 +607,17 @@ pipeline test_workflow_dispatch_returns_exact_accepted_run_identity(task) {
       headers: {"x-ratelimit-remaining": "18"},
     },
   )
-  const dispatched = call(
-    "github.actions.workflow_dispatch",
-    auth()
-      + {
-      repo: "octo-org/octo-repo",
-      workflow_id: "release.yml",
-      ref: "main",
-      inputs: {version: "v1.2.3"},
-    },
+  const dispatched = unwrap(
+    call(
+      "github.actions.workflow_dispatch",
+      auth()
+        + {
+        repo: "octo-org/octo-repo",
+        workflow_id: "release.yml",
+        ref: "main",
+        inputs: {version: "v1.2.3"},
+      },
+    ),
   )
   assert_eq(dispatched.accepted, true, "dispatch acceptance is explicit")
   assert_eq(dispatched.run_id, 322, "dispatch is pinned to one run id")

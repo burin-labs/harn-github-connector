@@ -1,7 +1,6 @@
 import { call } from "../src/lib"
 
 pipeline default() {
-  egress_policy({allow: ["github-api.test", "api.github.test"], default: "deny"})
   http_mock_clear()
   const base = "https://github-api.test"
   const token = "github-installation-token"
@@ -75,9 +74,11 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "20"},
     },
   )
-  const prs = call(
-    "github.pr.list",
-    auth + {repo: "octo-org/octo-repo", filters: {state: "open", per_page: 4}},
+  const prs = unwrap(
+    call(
+      "github.pr.list",
+      auth + {repo: "octo-org/octo-repo", filters: {state: "open", per_page: 4}},
+    ),
   )
   assert_eq(prs[0].state, "green", "clean PR classified green")
   assert_eq(prs[1].state, "dirty", "dirty PR classified dirty")
@@ -234,7 +235,7 @@ pipeline default() {
       ],
     },
   )
-  const viewed = call("github.pr.view", auth + {repo: "octo-org/octo-repo", number: 101})
+  const viewed = unwrap(call("github.pr.view", auth + {repo: "octo-org/octo-repo", number: 101}))
   assert_eq(viewed.base.sha, "base-sha", "view includes base sha")
   assert_eq(viewed.head.sha, "green-sha", "view includes head sha")
   assert(viewed.branch_protection.protected, "view includes branch protection")
@@ -264,9 +265,8 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "17"},
     },
   )
-  const green_checks = call(
-    "github.pr.checks",
-    auth + {repo: "octo-org/octo-repo", head_sha: "green-sha"},
+  const green_checks = unwrap(
+    call("github.pr.checks", auth + {repo: "octo-org/octo-repo", head_sha: "green-sha"}),
   )
   assert_eq(green_checks.state, "green", "green checks classify green")
   assert_eq(green_checks.rollup.conclusion, "success", "green rollup conclusion")
@@ -283,7 +283,8 @@ pipeline default() {
     },
   )
   assert_eq(
-    call("github.pr.checks", auth + {repo: "octo-org/octo-repo", head_sha: "pending-sha"}).state,
+    unwrap(call("github.pr.checks", auth + {repo: "octo-org/octo-repo", head_sha: "pending-sha"}))
+      .state,
     "pending",
     "pending checks classify pending",
   )
@@ -299,7 +300,8 @@ pipeline default() {
     },
   )
   assert_eq(
-    call("github.pr.checks", auth + {repo: "octo-org/octo-repo", head_sha: "failing-sha"}).state,
+    unwrap(call("github.pr.checks", auth + {repo: "octo-org/octo-repo", head_sha: "failing-sha"}))
+      .state,
     "failing",
     "failing checks classify failing",
   )
@@ -319,12 +321,13 @@ pipeline default() {
     base + "/repos/octo-org/octo-repo/actions/runs/6001/logs",
     {status: 200, body: "step 1 / 1 succeeded\n", headers: {"x-ratelimit-remaining": "13"}},
   )
-  const logs = call("github.actions.logs", auth + {repo: "octo-org/octo-repo", check_id: 8001})
+  const logs = unwrap(
+    call("github.actions.logs", auth + {repo: "octo-org/octo-repo", check_id: 8001}),
+  )
   assert_eq(logs.run_id, 6001, "check id resolves action run id")
   assert(logs.content.contains("succeeded"), "logs content returned")
-  const queue = call(
-    "github.merge_queue.entries",
-    auth + {repo: "octo-org/octo-repo", branch: "main"},
+  const queue = unwrap(
+    call("github.merge_queue.entries", auth + {repo: "octo-org/octo-repo", branch: "main"}),
   )
   assert_eq(queue.entries[0].pull_number, 103, "merge queue entry PR number")
   http_mock(
@@ -336,10 +339,12 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "11"},
     },
   )
-  const enqueued = call(
-    "github.merge_queue.enqueue",
-    auth
-      + {repo: "octo-org/octo-repo", pr_number: 105, expected_head_oid: "enqueue-sha"},
+  const enqueued = unwrap(
+    call(
+      "github.merge_queue.enqueue",
+      auth
+        + {repo: "octo-org/octo-repo", pr_number: 105, expected_head_oid: "enqueue-sha"},
+    ),
   )
   assert_eq(enqueued.entry.state, "queued", "enqueue returns typed entry")
   http_mock(
@@ -352,7 +357,8 @@ pipeline default() {
     },
   )
   assert_eq(
-    call("github.issue.create", auth + {repo: "octo-org/octo-repo", title: "Follow up"}).number,
+    unwrap(call("github.issue.create", auth + {repo: "octo-org/octo-repo", title: "Follow up"}))
+      .number,
     77,
   )
   http_mock(
@@ -365,7 +371,9 @@ pipeline default() {
     },
   )
   assert_eq(
-    call("github.issue.comment", auth + {repo: "octo-org/octo-repo", number: 77, body: "noted"}).id,
+    unwrap(
+      call("github.issue.comment", auth + {repo: "octo-org/octo-repo", number: 77, body: "noted"}),
+    ).id,
     9001,
   )
   http_mock(
@@ -378,7 +386,9 @@ pipeline default() {
     },
   )
   assert_eq(
-    call("github.pr.comment", auth + {repo: "octo-org/octo-repo", number: 101, body: "PR note"}).id,
+    unwrap(
+      call("github.pr.comment", auth + {repo: "octo-org/octo-repo", number: 101, body: "PR note"}),
+    ).id,
     9002,
   )
   http_mock(
@@ -391,8 +401,9 @@ pipeline default() {
     },
   )
   assert(
-    call("github.branch.protection", auth + {repo: "octo-org/octo-repo", branch: "develop"})
-      .protected,
+    unwrap(
+      call("github.branch.protection", auth + {repo: "octo-org/octo-repo", branch: "develop"}),
+    ).protected,
   )
   const blocked = call(
     "github.pr.merge",

@@ -1,3 +1,5 @@
+import { GithubPullRequestEditReceipt, GithubPullRequestSummary } from "./contracts"
+
 /** Closed editable field set for GitHub pull requests. */
 pub fn pr_edit_fields() -> list<string> {
   return ["title", "body", "base", "state", "maintainer_can_modify"]
@@ -51,8 +53,11 @@ pub fn pr_edit_body(args: dict, context_fields: list<string> = []) -> Result<dic
 }
 
 /** Shape a successful edit without post-effect network enrichment. */
-pub fn pr_edit_result(summary: dict, pull: dict) -> dict {
-  return summary
+pub fn pr_edit_result(
+  summary: GithubPullRequestSummary,
+  pull: dict,
+) -> GithubPullRequestEditReceipt {
+  const receipt: GithubPullRequestEditReceipt = summary
     + {
     ok: true,
     updated: true,
@@ -63,4 +68,5 @@ pub fn pr_edit_result(summary: dict, pull: dict) -> dict {
     closed_at: pull?.closed_at,
     merged_at: pull?.merged_at,
   }
+  return receipt
 }
