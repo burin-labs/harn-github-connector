@@ -9,6 +9,7 @@ fn release_fixture(tag) {
     prerelease: true,
     html_url: "https://github.com/octo-org/octo-repo/releases/tag/" + tag,
     published_at: "2026-07-13T00:00:00Z",
+    body: "Notes for " + tag,
     assets: [{id: 11, name: "harn.tar.gz"}],
   }
 }
@@ -28,12 +29,32 @@ pipeline test_release_view_by_tag(task) {
       headers: {"x-ratelimit-remaining": "10"},
     },
   )
+  http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/git/ref/tags/v1.2.3%2Bbuild%2F7",
+    {
+      status: 200,
+      body: json_stringify(
+        {
+          ref: "refs/tags/" + tag,
+          object: {type: "commit", sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+        },
+      ),
+      headers: {"x-ratelimit-remaining": "9"},
+    },
+  )
   const lookup = github_release("octo-org", "octo-repo", tag, auth)
   assert(lookup.found, "release view succeeds")
   assert_eq(lookup.repo, "octo-org/octo-repo", "repo is normalized")
   assert_eq(lookup.release.tag_name, tag, "tag is preserved")
+  assert_eq(lookup.release.body, "Notes for " + tag, "body is preserved byte-for-byte")
+  assert_eq(
+    lookup.lease.tag_target_oid,
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "tag target is leased",
+  )
   assert_eq(lookup.release.assets[0].name, "harn.tar.gz", "assets use the closed record")
-  assert_eq(len(http_mock_calls()), 1, "exactly one request")
+  assert_eq(len(http_mock_calls()), 2, "release and tag identity are observed")
 }
 
 pipeline test_release_view_requires_exact_tag(task) {
