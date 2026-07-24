@@ -22,6 +22,8 @@ fn run_payload(id, status, conclusion = nil, created_at = "2026-05-06T18:00:00Z"
     status: status,
     conclusion: conclusion,
     workflow_id: 4242,
+    path: ".github/workflows/release.yml",
+    run_attempt: 1,
     head_sha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
     head_branch: "main",
     event: "workflow_dispatch",
@@ -99,14 +101,19 @@ pipeline test_dispatch_identity_hydrates_returned_run_id_after_eventual_consiste
   )
   assert_eq(result.head_branch, "main", "direct-id dispatch hydrates the observed source branch")
   assert_eq(result.event, "workflow_dispatch", "direct-id dispatch hydrates the observed event")
+  assert_eq(
+    result.workflow_path,
+    ".github/workflows/release.yml",
+    "direct-id dispatch hydrates the workflow path",
+  )
+  assert_eq(result.run_attempt, 1, "direct-id dispatch hydrates the run attempt")
   assert(result.run_url.contains("/actions/runs/321"), "direct-id dispatch hydrates the run URL")
   assert_eq(result.conclusion, nil, "terminal state is not observed")
   assert_eq(result.timed_out, false, "identity resolution did not time out")
   const calls = http_mock_calls()
-  assert_eq(len(calls), 4, "identity boundary retries the exact run until metadata is observable")
-  assert_eq(calls[0].url, runs_url, "snapshot precedes dispatch")
-  assert_eq(calls[1].method, "POST", "dispatch follows snapshot")
-  assert_eq(calls[2].url, calls[3].url, "eventual-consistency retry keeps the exact run identity")
+  assert_eq(len(calls), 3, "identity boundary retries only the exact returned run")
+  assert_eq(calls[0].method, "POST", "dispatch is the first request")
+  assert_eq(calls[1].url, calls[2].url, "eventual-consistency retry keeps the exact run identity")
   http_mock_clear()
 }
 
@@ -175,23 +182,22 @@ pipeline test_dispatch_with_run_id_completes_success(task) {
   assert(len(result.attempts) >= 2, "polled at least twice")
   assert_eq(result.candidate_run_ids, [123], "returned run id is the only candidate")
   const calls = http_mock_calls()
-  assert_eq(len(calls), 4, "snapshot, dispatch, and two direct run probes")
-  assert_eq(calls[0].url, runs_url, "matching ids are snapshotted before dispatch")
-  assert_eq(calls[1].method, "POST", "dispatch follows the snapshot")
+  assert_eq(len(calls), 3, "dispatch and two direct run probes")
+  assert_eq(calls[0].method, "POST", "dispatch is the first request")
   assert_eq(
-    calls[2].url,
+    calls[1].url,
     BASE + "/repos/octo-org/octo-repo/actions/runs/123",
     "returned id is the fast path",
   )
   assert_eq(
-    calls[3].url,
+    calls[2].url,
     BASE + "/repos/octo-org/octo-repo/actions/runs/123",
     "returned id stays pinned",
   )
   http_mock_clear()
 }
 
-pipeline test_dispatch_identity_selects_only_unseen_exact_run(task) {
+pipeline test_dispatch_identity_rejects_legacy_204_without_correlation(task) {
   http_mock_clear()
   const sha = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
   const runs_url = BASE
@@ -245,30 +251,18 @@ pipeline test_dispatch_identity_selects_only_unseen_exact_run(task) {
     nil,
     auth() + {head_sha: sha},
   )
-  assert_eq(result.status, "dispatch_accepted", "identity returns before completion")
-  assert_eq(result.ok, true, "one unseen exact identity succeeds")
-  assert_eq(result.conclusion, nil, "terminal conclusion is not fetched")
-  assert_eq(result.run_id, 901, "only unseen exact run selected")
-  assert_eq(result.candidate_run_ids, [901], "selected identity is structured")
-  assert_eq(result.head_sha, sha, "identity preserves the actual observed source sha")
-  assert_eq(result.head_branch, "main", "identity preserves the observed source branch")
-  assert_eq(result.event, "workflow_dispatch", "identity preserves the observed event")
-  assert_eq(result.workflow_id, "release.yml", "identity preserves the requested workflow id")
-  assert(result.run_url.contains("/actions/runs/901"), "identity preserves the observed run url")
-  assert_eq(
-    result.created_at,
-    "not-a-timestamp",
-    "identity preserves source timestamps without parsing",
-  )
+  assert_eq(result.status, "dispatch_identity_missing", "legacy response fails closed")
+  assert_eq(result.ok, false, "legacy response cannot authorize correlation")
+  assert_eq(result.run_id, nil, "no listed run is guessed")
+  assert_eq(result.candidate_run_ids, [], "no candidate identity is inferred")
+  assert_eq(result.error.code, "dispatch_identity_missing", "failure is typed")
   const calls = http_mock_calls()
-  assert_eq(len(calls), 3, "identity boundary performs no terminal run GET")
-  assert_eq(calls[0].url, runs_url, "pre-dispatch exact ids snapshotted")
-  assert_eq(calls[1].method, "POST", "dispatch occurs after snapshot")
-  assert_eq(calls[2].url, runs_url, "same exact filter locates unseen runs")
+  assert_eq(len(calls), 1, "legacy response never triggers a workflow-list query")
+  assert_eq(calls[0].method, "POST", "only the dispatch request is sent")
   http_mock_clear()
 }
 
-pipeline test_dispatch_rejects_multiple_unseen_exact_runs(task) {
+pipeline test_dispatch_missing_identity_never_considers_ambiguous_list_rows(task) {
   http_mock_clear()
   const runs_url = BASE
     + "/repos/octo-org/octo-repo/actions/workflows/ambiguous.yml/runs?branch=main&event=workflow_dispatch&per_page=10"
@@ -314,18 +308,17 @@ pipeline test_dispatch_rejects_multiple_unseen_exact_runs(task) {
     nil,
     auth(),
   )
-  assert_eq(result.ok, false, "ambiguous dispatch fails closed")
-  assert_eq(result.status, "ambiguous_dispatch", "typed ambiguous status")
-  assert_eq(result.run_id, nil, "no ambiguous run is pinned")
-  assert_eq(result.candidate_run_ids, [801, 802], "all unseen exact identities surface")
-  assert_eq(result.error.code, "ambiguous_dispatch", "typed ambiguous error")
-  assert_eq(result.error.candidate_run_ids, [801, 802], "error carries candidate identities")
-  assert_eq(result.timed_out, false, "ambiguity terminates immediately")
-  assert_eq(len(http_mock_calls()), 3, "no ambiguous run is probed")
+  assert_eq(result.ok, false, "missing dispatch identity fails closed")
+  assert_eq(result.status, "dispatch_identity_missing", "missing identity is typed")
+  assert_eq(result.run_id, nil, "no listed run is pinned")
+  assert_eq(result.candidate_run_ids, [], "list rows are never considered")
+  assert_eq(result.error.code, "dispatch_identity_missing", "typed error is preserved")
+  assert_eq(result.timed_out, false, "missing identity terminates immediately")
+  assert_eq(len(http_mock_calls()), 1, "workflow runs are never listed")
   http_mock_clear()
 }
 
-pipeline test_dispatch_identity_returns_run_not_found_when_run_never_appears(task) {
+pipeline test_dispatch_identity_missing_does_not_poll_for_a_run(task) {
   http_mock_clear()
   const runs_url = BASE
     + "/repos/octo-org/octo-repo/actions/workflows/never.yml/runs?branch=main&event=workflow_dispatch&per_page=10"
@@ -355,14 +348,10 @@ pipeline test_dispatch_identity_returns_run_not_found_when_run_never_appears(tas
     auth() + {max_attempts: 3},
   )
   assert_eq(result.ok, false, "ok=false when never found")
-  assert_eq(result.status, "run_not_found", "status=run_not_found")
-  assert_eq(result.timed_out, true, "timed_out=true")
+  assert_eq(result.status, "dispatch_identity_missing", "status is fail-closed")
+  assert_eq(result.timed_out, false, "missing identity is not a timeout")
   assert_eq(result.run_id, nil, "run_id=nil")
-  assert_eq(
-    len(http_mock_calls()),
-    5,
-    "one snapshot, one dispatch, and three bounded lookup attempts",
-  )
+  assert_eq(len(http_mock_calls()), 1, "the connector does not poll after a legacy response")
   http_mock_clear()
 }
 
@@ -394,11 +383,11 @@ pipeline test_dispatch_returns_dispatch_failed(task) {
   assert_eq(result.ok, false, "ok=false")
   assert_eq(result.status, "dispatch_failed", "status=dispatch_failed")
   assert(result.error != nil, "error captured")
-  assert_eq(len(http_mock_calls()), 2, "snapshot does not obscure the dispatch error")
+  assert_eq(len(http_mock_calls()), 1, "dispatch failure is returned directly")
   http_mock_clear()
 }
 
-pipeline test_dispatch_returns_poll_failed_when_snapshot_fails(task) {
+pipeline test_dispatch_does_not_query_workflow_runs_before_post(task) {
   http_mock_clear()
   http_mock(
     "GET",
@@ -414,6 +403,16 @@ pipeline test_dispatch_returns_poll_failed_when_snapshot_fails(task) {
       ],
     },
   )
+  http_mock(
+    "POST",
+    BASE + "/repos/octo-org/octo-repo/actions/workflows/private.yml/dispatches",
+    {status: 200, body: dispatch_returning(55)},
+  )
+  http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/actions/runs/55",
+    {status: 200, body: json_stringify(run_payload(55, "queued"))},
+  )
   const result = github_dispatch_workflow_and_resolve_run(
     "octo-org",
     "octo-repo",
@@ -422,11 +421,12 @@ pipeline test_dispatch_returns_poll_failed_when_snapshot_fails(task) {
     nil,
     auth(),
   )
-  assert_eq(result.ok, false, "snapshot error fails closed")
-  assert_eq(result.status, "poll_failed", "snapshot error uses existing poll status")
-  assert_eq(result.error.code, "missing_scopes", "connector error is preserved")
-  assert_eq(result.attempts[0].kind, "snapshot_failed", "snapshot stage is structured")
-  assert_eq(len(http_mock_calls()), 1, "failed snapshot prevents dispatch")
+  assert_eq(result.ok, true, "dispatch does not depend on a list-runs permission probe")
+  assert_eq(result.status, "dispatch_accepted", "returned run id is hydrated directly")
+  const calls = http_mock_calls()
+  assert_eq(len(calls), 2, "only dispatch and exact-run hydration are requested")
+  assert_eq(calls[0].method, "POST", "dispatch is first")
+  assert(calls[1].url.ends_with("/actions/runs/55"), "exact returned run is hydrated")
   http_mock_clear()
 }
 
@@ -816,7 +816,7 @@ pipeline test_close_pr_with_comment(task) {
   const calls = http_mock_calls()
   assert_eq(calls[0].method, "POST", "comment posted before close")
   assert_eq(calls[1].method, "PATCH", "issue update follows")
-  const update_body = json_parse(calls[1].body)
+  const update_body: {state: string} = json_parse(calls[1].body)
   assert_eq(update_body.state, "closed", "update body sets closed state")
   http_mock_clear()
 }

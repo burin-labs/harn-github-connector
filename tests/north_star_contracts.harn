@@ -507,6 +507,7 @@ pipeline test_exact_workflow_run_and_jobs_are_normalized(task) {
         {
           id: 321,
           workflow_id: 11,
+          path: ".github/workflows/ci.yml",
           run_number: 7,
           run_attempt: 1,
           name: "CI",
@@ -593,6 +594,8 @@ pipeline test_workflow_dispatch_returns_exact_accepted_run_identity(task) {
         {
           id: 322,
           workflow_id: 12,
+          path: ".github/workflows/release.yml",
+          run_attempt: 1,
           event: "workflow_dispatch",
           status: "queued",
           conclusion: nil,
@@ -621,6 +624,8 @@ pipeline test_workflow_dispatch_returns_exact_accepted_run_identity(task) {
   )
   assert_eq(dispatched.accepted, true, "dispatch acceptance is explicit")
   assert_eq(dispatched.run_id, 322, "dispatch is pinned to one run id")
+  assert_eq(dispatched.workflow_path, ".github/workflows/release.yml")
+  assert_eq(dispatched.run_attempt, 1)
   assert_eq(dispatched.head_sha, "dispatch-sha", "dispatch returns observed source SHA")
-  assert_eq(len(http_mock_calls()), 3, "snapshot, dispatch, and exact run hydration are required")
+  assert_eq(len(http_mock_calls()), 2, "dispatch and exact run hydration are required")
 }

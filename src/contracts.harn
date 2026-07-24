@@ -196,6 +196,8 @@ pub type GithubWorkflowDispatchReceipt = {
   accepted: bool,
   run_id: int,
   workflow_id: string?,
+  workflow_path: string,
+  run_attempt: int?,
   ref: string,
   head_sha: string,
   head_branch: string,
@@ -208,6 +210,7 @@ pub type GithubWorkflowRun = {
   repo: string,
   id: int,
   workflow_id: int?,
+  workflow_path: string,
   run_number: int?,
   run_attempt: int?,
   name: string,
@@ -261,6 +264,13 @@ pub type GithubWorkflowJobs = {
   jobs: list<GithubWorkflowJob>,
   page: int,
   per_page: int,
+}
+
+pub type GithubWorkflowCancelReceipt = {
+  repo: string,
+  run_id: int,
+  accepted: bool,
+  state: "cancel_requested",
 }
 
 pub type GithubReleaseAsset = {
