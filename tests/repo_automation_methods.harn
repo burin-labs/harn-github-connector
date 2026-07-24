@@ -3,7 +3,6 @@ import {
   actions_workflow_run,
   actions_workflow_runs,
   api_call,
-  call,
   github_latest_release,
   github_release_assets,
   pulls_enable_auto_merge,
@@ -59,7 +58,7 @@ pipeline test_repo_automation_methods(task) {
       "bump-harn.yml",
       "main",
       {version: "v0.7.59"},
-      auth,
+      auth + {return_run_details: false},
     ),
   )
   assert_eq(

@@ -70,6 +70,7 @@ fn workflow_run(id, head_sha) {
   return {
     id: id,
     workflow_id: 17,
+    path: ".github/workflows/ci.yml",
     run_number: 9,
     run_attempt: 1,
     name: "CI",

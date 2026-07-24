@@ -1,0 +1,48 @@
+import { actions_workflow_run_cancel, call } from "../src/lib"
+
+const BASE = "https://github-api.test"
+
+const TOKEN = "github-installation-token"
+
+fn auth() {
+  return {api_base_url: BASE, installation_token: TOKEN}
+}
+
+pipeline test_actions_workflow_run_cancel_requests_exact_run(task) {
+  http_mock_clear()
+  const url = BASE + "/repos/octo-org/octo-repo/actions/runs/29679449/cancel"
+  http_mock("POST", url, {status: 202, body: ""})
+  const result = actions_workflow_run_cancel("octo-org", "octo-repo", 29679449, auth())
+  assert(is_ok(result), "accepted cancellation returns Ok")
+  const calls = http_mock_calls()
+  assert_eq(len(calls), 1)
+  assert_eq(calls[0].url, url)
+  assert_eq(calls[0].method, "POST")
+  http_mock_clear()
+}
+
+pipeline test_github_actions_run_cancel_returns_closed_receipt(task) {
+  http_mock_clear()
+  const url = BASE + "/repos/octo-org/octo-repo/actions/runs/29679449/cancel"
+  http_mock("POST", url, {status: 202, body: ""})
+  const result = call(
+    "github.actions.run_cancel",
+    auth() + {repo: "octo-org/octo-repo", run_id: 29679449},
+  )
+  assert(is_ok(result), "canonical cancellation returns Ok")
+  const receipt = unwrap(result)
+  assert_eq(
+    receipt,
+    {repo: "octo-org/octo-repo", run_id: 29679449, accepted: true, state: "cancel_requested"},
+  )
+  http_mock_clear()
+}
+
+pipeline test_actions_workflow_run_cancel_rejects_invalid_id(task) {
+  http_mock_clear()
+  const result = actions_workflow_run_cancel("octo-org", "octo-repo", "1/force", auth())
+  assert(is_err(result), "invalid run id fails before HTTP")
+  assert_eq(unwrap_err(result).code, "schema_drift")
+  assert_eq(len(http_mock_calls()), 0)
+  http_mock_clear()
+}

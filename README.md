@@ -161,7 +161,7 @@ downstream annotations and compose through `GithubConnectorResult<T>`.
 | Area | Methods |
 |---|---|
 | Pull requests | `github.pr.list`, `github.pr.create`, `github.pr.view`, `github.pr.edit`, `github.pr.files`, `github.pr.commits`, `github.pr.checks`, `github.pr.merge`, `github.pr.enable_auto_merge`, `github.pr.comment`, `pulls.list`, `pulls.list_with_checks`, `pulls.get`, `pulls.update`, `pulls.create`, `pulls.merge`, `pulls.merge_safe`, `pulls.create_review_comment`, `pulls.get_diff`, `pulls.list_files`, `pulls.list_reviews`, `pull_requests.resolve_mergeable`, `repos.commit_pulls` |
-| Actions and checks | `github.actions.workflow_dispatch`, `github.actions.runs`, `github.actions.run`, `github.actions.run_jobs`, `github.actions.logs`, `actions.workflow_dispatch`, `actions.workflow_runs.list`, `actions.workflow_run.get`, `actions.workflow_run.jobs`, `check_runs.create`, `check_runs.update` |
+| Actions and checks | `github.actions.workflow_dispatch`, `github.actions.runs`, `github.actions.run`, `github.actions.run_jobs`, `github.actions.run_cancel`, `github.actions.logs`, `actions.workflow_dispatch`, `actions.workflow_runs.list`, `actions.workflow_run.get`, `actions.workflow_run.jobs`, `actions.workflow_run.cancel`, `check_runs.create`, `check_runs.update` |
 | Self-hosted runners | `actions.runners.registration_token`, `actions.runners.remove_token`, `actions.runners.generate_jitconfig`, `actions.runners.list`, `actions.runners.get`, `actions.runners.delete`, `actions.runners.downloads`, `actions.runners.labels.list`, `actions.runners.labels.add`, `actions.runners.labels.replace`, `actions.runners.labels.remove`, `actions.runner_groups.list`, `actions.runner_groups.create`, `actions.runner_groups.get`, `actions.runner_groups.update`, `actions.runner_groups.delete` |
 | User OAuth | `oauth.user.device_code`, `oauth.user.device_poll`, `oauth.user.exchange_code`, `oauth.user.refresh` |
 | Issues | `github.issue.create`, `github.issue.comment`, `issues.create_comment`, `issues.create`, `issues.create_with_template`, `issues.update`, `issues.add_labels` |
@@ -190,7 +190,11 @@ raw REST responses for the same operation.
   method fails closed rather than claim completeness when GitHub reports more
   than the pull-request endpoint's 250-commit limit. Open-PR test-merge SHAs are
   not exposed as actual merge commit OIDs.
-- `github.actions.workflow_dispatch` resolves one exact accepted run identity;
+- `github.actions.workflow_dispatch` requires GitHub's returned run id and
+  resolves that exact accepted identity; a legacy empty response fails closed
+  without polling workflow lists. Dispatch and run records include workflow
+  path/id, run attempt, branch, SHA, event, and URL.
+  `github.actions.run_cancel` requests cancellation of one exact run;
   `github.actions.runs`, `github.actions.run`, and `github.actions.run_jobs`
   return closed run, job, and step evidence. The run-list envelope uses typed
   `runs`, never GitHub's raw `workflow_runs` payload.
@@ -223,6 +227,7 @@ Named helpers:
 | `actions_workflow_runs(owner, repo, options)` | List workflow runs. |
 | `actions_workflow_run(owner, repo, run_id, options)` | Fetch one workflow run by its exact id. |
 | `actions_workflow_run_jobs(owner, repo, run_id, options)` | List a workflow run's jobs and steps; options support `filter`, `per_page`, and `page`. |
+| `actions_workflow_run_cancel(owner, repo, run_id, options)` | Request cancellation of one exact workflow run. |
 | `api_call(path, method, body, options)` | Call one REST endpoint. Prefer typed helpers when available. |
 | `repos_get_text(owner, repo, path, ref, options)` | Decode repository file content as UTF-8 text. |
 | `repos_get_latest_release(owner, repo, options)` | Fetch latest release metadata. |
@@ -231,7 +236,7 @@ Named helpers:
 | `github_release_assets(owner, repo, release_id, options)` | List release assets in a stable envelope; defaults to the latest release. |
 | `issues_create_with_template(owner, repo, template, vars, options)` | Render a small title/body template, then create an issue. |
 | `github_dispatch_workflow_and_resolve_run(owner, repo, workflow_id, ref, inputs, options)` | Dispatch a workflow and return its exact run identity before terminal monitoring. |
-| `github_dispatch_workflow_and_wait(owner, repo, workflow_id, ref, inputs, options)` | Dispatch a workflow and wait for its exact run, rejecting ambiguous unseen matches. |
+| `github_dispatch_workflow_and_wait(owner, repo, workflow_id, ref, inputs, options)` | Dispatch a workflow, require GitHub's returned run id, and wait on only that exact run. |
 | `github_wait_for_workflow_run(owner, repo, run_id_or_filter, options)` | Poll an existing workflow run or a filtered run lookup. |
 | `github_ensure_auto_merge(owner, repo, pull_number, options)` | Enable auto-merge under required `options.expected_head_oid`; returns the canonical `Result`. |
 | `github_wait_for_pr_checks(owner, repo, pull_number_or_ref, options)` | Wait for visible PR or commit checks; optionally attach failing Actions log tails. |
