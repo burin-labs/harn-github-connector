@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Add a `harn-github-connector/publish` export: a command-line front end for
+  `github_commit_worktree` owning argument parsing, usage text, the changed-path
+  summary a CI step appends to its job log, and exit codes that separate a bad
+  invocation (`2`) from a failed publish (`1`). Consumers keep only a one-line
+  entry file, so a repository adopting the adapter no longer has to write its
+  own argument parser. `--no-reset` opts out of force-moving a branch that is
+  not already at the base commit.
+
 ## 0.4.0 - 2026-07-25
 
 - Add typed `github.pr.edit` and `pulls.update` operations for a closed set of

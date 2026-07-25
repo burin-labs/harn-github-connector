@@ -81,12 +81,26 @@ import {
   GithubConnectorResult,
   GithubReleaseLookup,
 } from "harn-github-connector/default"
+import { GithubWorktreeCommitRequest, github_commit_worktree } from "harn-github-connector/worktree"
+import { publish_main } from "harn-github-connector/publish"
 
 fn release_state(result: GithubConnectorResult<GithubReleaseLookup>) -> string {
   if is_err(result) {
     return unwrap_err(result).code
   }
   return unwrap(result).state
+}
+
+// Every declared export must resolve from a real consumer, not just from
+// inside this package. `worktree` and `publish` were added after the smoke was
+// written, and a missing `[exports]` entry is invisible to `harn check src`.
+fn commit(request: GithubWorktreeCommitRequest) {
+  return github_commit_worktree(request)
+}
+
+// The exact entry file the README tells consumers to write.
+fn main(harness: Harness) {
+  exit(publish_main(harness, argv ?? []))
 }
 EOF
 harn check smoke.harn

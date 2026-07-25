@@ -1,0 +1,167 @@
+// Tests for src/publish_cli.harn.
+//
+// Argument parsing, request construction and summary rendering are pure, so
+// they are exercised directly. Deriving a delta and publishing it belong to
+// `github_commit_worktree` and are covered by tests/worktree_commit.harn.
+import { describe_receipt, parse_publish_args, publish_request } from "../src/publish_cli"
+import {
+  GithubWorktreeChange,
+  GithubWorktreeCommitReceipt,
+  GithubWorktreeSignature,
+} from "../src/worktree_commit"
+
+const MINIMAL = ["--repo", "octo-org/octo-repo", "--branch", "automation/x", "--headline", "Update"]
+
+fn parsed(args: list<string>) -> dict {
+  const result = parse_publish_args(args)
+  if is_err(result) {
+    throw "expected a successful parse, got: " + to_string(unwrap_err(result))
+  }
+  const values: dict = unwrap(result)
+  return values
+}
+
+fn parse_error(args: list<string>) -> string {
+  const result = parse_publish_args(args)
+  if !is_err(result) {
+    throw "expected a rejected parse, got: " + json_stringify(unwrap(result))
+  }
+  return to_string(unwrap_err(result))
+}
+
+pipeline test_publish_args_split_the_repository_slug(task) {
+  const values = parsed(MINIMAL)
+  assert_eq(values.get("owner"), "octo-org")
+  assert_eq(values.get("repo"), "octo-repo")
+  assert_eq(values.get("branch"), "automation/x")
+  assert_eq(values.get("headline"), "Update")
+}
+
+pipeline test_publish_args_reject_unusable_input(task) {
+  // Each case pairs an argument list with a fragment its rejection must name,
+  // so a parser that fails for the wrong reason still fails the test.
+  const cases = [
+    {args: [], want: "--repo is required"},
+    {args: ["--repo", "octo-org/octo-repo"], want: "--branch is required"},
+    {args: ["--repo", "octo-org/octo-repo", "--branch", "b"], want: "--headline is required"},
+    {
+      args: ["--repo", "octo-org/octo-repo", "--branch", " ", "--headline", "h"],
+      want: "--branch is required",
+    },
+    {args: MINIMAL + ["--source"], want: "--source expects a value"},
+    {args: MINIMAL + ["--nope", "x"], want: "unrecognized argument --nope"},
+    {args: MINIMAL + ["--branch", "other"], want: "--branch was given more than once"},
+    {args: MINIMAL + ["extra"], want: "unrecognized argument extra"},
+    {
+      args: ["--repo", "octo-repo", "--branch", "b", "--headline", "h"],
+      want: "expects `owner/repo`",
+    },
+    {args: ["--repo", "a/b/c", "--branch", "b", "--headline", "h"], want: "expects `owner/repo`"},
+    {
+      args: ["--repo", "/octo-repo", "--branch", "b", "--headline", "h"],
+      want: "expects `owner/repo`",
+    },
+  ]
+  for case in cases {
+    const message = parse_error(case.args)
+    assert_eq(contains(message, case.want), true, message)
+  }
+}
+
+pipeline test_publish_request_leaves_adapter_defaults_alone(task) {
+  const request = publish_request(parsed(MINIMAL))
+  assert_eq(request.owner, "octo-org")
+  assert_eq(request.repo, "octo-repo")
+  assert_eq(request.branch, "automation/x")
+  assert_eq(request.headline, "Update")
+  // A nil source means `worktree` and a nil base_oid means local HEAD, both
+  // decided by the adapter. Restating them here would be a second place for
+  // those defaults to live.
+  assert_eq(request.source, nil)
+  assert_eq(request.repo_dir, ".")
+  // An absent body must not become an empty-string body: the mutation only
+  // omits `message.body` when it is blank, and a caller reading the request
+  // should see "no body", not "empty body".
+  assert_eq(request.body, nil)
+  assert_eq(request.create_branch, true)
+  assert_eq(request.reset_branch, true)
+}
+
+pipeline test_publish_request_carries_every_optional_flag(task) {
+  const optional = [
+    "--body",
+    "Published by automation: https://example.test/r/1",
+    "--repo-dir",
+    "upstream",
+    "--source",
+    "index",
+  ]
+  const request = publish_request(parsed(MINIMAL + optional))
+  assert_eq(request.body, "Published by automation: https://example.test/r/1")
+  assert_eq(request.repo_dir, "upstream")
+  assert_eq(request.source, "index")
+  assert_eq(request.reset_branch, true)
+}
+
+pipeline test_no_reset_opts_out_of_force_moving_the_branch(task) {
+  const request = publish_request(parsed(MINIMAL + ["--no-reset"]))
+  assert_eq(request.reset_branch, false)
+  // Creating a missing branch is still allowed: --no-reset is about refusing to
+  // move someone else's commits, not about requiring the branch to pre-exist.
+  assert_eq(request.create_branch, true)
+}
+
+pipeline test_summary_names_the_commit_and_every_changed_path(task) {
+  const change: GithubWorktreeChange = {
+    path: "Formula/burin.rb",
+    status: "modified",
+    blob_oid: "1111111111111111111111111111111111111111",
+    size_bytes: 12,
+    rename_from: nil,
+    rename_to: nil,
+  }
+  const dropped: GithubWorktreeChange = {
+    path: "Casks/old.rb",
+    status: "deleted",
+    blob_oid: "2222222222222222222222222222222222222222",
+    size_bytes: 0,
+    rename_from: nil,
+    rename_to: nil,
+  }
+  const signature: GithubWorktreeSignature = {
+    verified: true,
+    signed_by_github: true,
+    state: "VALID",
+  }
+  const receipt: GithubWorktreeCommitReceipt = {
+    repository: "octo-org/octo-repo",
+    owner: "octo-org",
+    repo: "octo-repo",
+    branch: "automation/x",
+    source: "worktree",
+    base_oid: "3333333333333333333333333333333333333333",
+    committed: true,
+    commit_oid: "4444444444444444444444444444444444444444",
+    commit_url:
+      "https://github.com/octo-org/octo-repo/commit/4444444444444444444444444444444444444444",
+    branch_action: "reset",
+    changes: [change, dropped],
+    signature: signature,
+  }
+  const summary = join(describe_receipt(receipt), "\n")
+  // The hand-rolled builders this replaces printed the oid alone, so a receipt
+  // that lost its paths or its signature evidence still read as clean success.
+  for fragment in [
+    receipt.commit_oid,
+    receipt.base_oid,
+    receipt.branch,
+    receipt.repository,
+    receipt.commit_url,
+    "reset",
+    "VALID",
+    "- modified `Formula/burin.rb`",
+    "- deleted `Casks/old.rb`",
+  ] {
+    assert_eq(contains(summary, fragment), true, summary)
+  }
+}

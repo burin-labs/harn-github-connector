@@ -1,0 +1,208 @@
+/**
+ * Command-line front end for `github_commit_worktree`.
+ *
+ * `src/worktree_commit.harn` owns turning an exact local Git state into one
+ * signed commit. This module owns the other half every consumer was otherwise
+ * writing for itself: flag parsing, usage text, the summary a CI step appends
+ * to its job log, and the exit codes that distinguish a bad invocation from a
+ * failed publish.
+ *
+ * Consumers keep a single entry file:
+ *
+ *     import { publish_main } from "harn-github-connector/publish"
+ *
+ *     fn main(harness: Harness) {
+ *       exit(publish_main(harness, argv ?? []))
+ *     }
+ *
+ * That exists because Harn packages export modules, not commands, so a
+ * consumer still needs a local file for `harn run` to target. Everything
+ * behind it lives here, which is the point: four repositories were about to
+ * grow four copies of the same argument parser.
+ *
+ * Credentials are the connector's contract, not this module's — set
+ * `GITHUB_INSTALLATION_TOKEN`, or `GITHUB_APP_ID` + `GITHUB_INSTALLATION_ID`
+ * with a private key.
+ */
+import {
+  GithubWorktreeCommitReceipt,
+  GithubWorktreeCommitRequest,
+  github_commit_worktree,
+} from "./worktree_commit"
+
+pub const PUBLISH_USAGE =
+  """Publish a local Git state to a GitHub branch as one GitHub-signed commit.
+
+  --repo      Target repository as `owner/repo`. Required.
+  --branch    Automation branch to create or reset onto the base commit. Required.
+  --headline  Commit headline. Required.
+  --body      Optional commit body.
+  --repo-dir  Checkout to read the change from. Defaults to the current directory.
+  --source    `worktree` (default) commits tracked edits plus untracked files;
+              `index` commits exactly what is staged.
+  --no-reset  Fail instead of force-moving a branch that is not already at the
+              base commit."""
+
+/** Flags taking one value, mapped to the request field they populate. */
+const PUBLISH_VALUE_FLAGS = {
+  "--repo": "repo",
+  "--branch": "branch",
+  "--headline": "headline",
+  "--body": "body",
+  "--repo-dir": "repo_dir",
+  "--source": "source",
+}
+
+const PUBLISH_BOOL_FLAGS = {"--no-reset": "no_reset"}
+
+const PUBLISH_REQUIRED_FLAGS = ["--repo", "--branch", "--headline"]
+
+/**
+ * Parse `--flag value` pairs into request fields.
+ *
+ * Rejections come back as values rather than exits so the whole parse stays a
+ * pure function; `publish_main` owns usage output and exit codes.
+ */
+pub fn parse_publish_args(args: list<string>) -> Result<dict, string> {
+  let values = {}
+  let i = 0
+  while i < len(args) {
+    const token = args[i] ?? ""
+    const flag = PUBLISH_BOOL_FLAGS.get(token)
+    if flag != nil {
+      values[flag] = "true"
+      i = i + 1
+      continue
+    }
+    const field = PUBLISH_VALUE_FLAGS.get(token)
+    if field == nil {
+      return Err("unrecognized argument " + token)
+    }
+    if i + 1 >= len(args) {
+      return Err(token + " expects a value")
+    }
+    if values.get(field) != nil {
+      return Err(token + " was given more than once")
+    }
+    values[field] = args[i + 1] ?? ""
+    i = i + 2
+  }
+  for flag in PUBLISH_REQUIRED_FLAGS {
+    const field = PUBLISH_VALUE_FLAGS.get(flag) ?? ""
+    if trim(to_string(values.get(field) ?? "")) == "" {
+      return Err(flag + " is required")
+    }
+  }
+  const slug = to_string(values.get("repo") ?? "")
+  const owner_repo = split(slug, "/")
+  if len(owner_repo) != 2 || owner_repo[0] == "" || owner_repo[1] == "" {
+    return Err("--repo expects `owner/repo`, got " + slug)
+  }
+  values["owner"] = owner_repo[0]
+  values["repo"] = owner_repo[1]
+  return Ok(values)
+}
+
+/**
+ * Build the typed request.
+ *
+ * `reset_branch` defaults on because these branches are disposable automation
+ * refs re-derived from the base commit on every run: a leftover branch from a
+ * previous run is stale by construction, not a conflict worth preserving.
+ * `--no-reset` is for callers that treat a moved branch as someone else's work.
+ */
+pub fn publish_request(values: dict) -> GithubWorktreeCommitRequest {
+  const body = to_string(values.get("body") ?? "")
+  const request: GithubWorktreeCommitRequest = {
+    owner: to_string(values.get("owner") ?? ""),
+    repo: to_string(values.get("repo") ?? ""),
+    branch: to_string(values.get("branch") ?? ""),
+    headline: to_string(values.get("headline") ?? ""),
+    body: if body == "" {
+      nil
+    } else {
+      body
+    },
+    repo_dir: to_string(values.get("repo_dir") ?? "."),
+    source: values.get("source"),
+    create_branch: true,
+    reset_branch: values.get("no_reset") == nil,
+  }
+  return request
+}
+
+/** Markdown summary of a receipt, one line per changed path. */
+pub fn describe_receipt(receipt: GithubWorktreeCommitReceipt) -> list<string> {
+  const headline = join(
+    [
+      "Created signed commit `" + receipt.commit_oid + "`",
+      "on `" + receipt.branch + "` of `" + receipt.repository + "`",
+      "(branch " + receipt.branch_action + ",",
+      "base " + receipt.base_oid + ",",
+      "signature " + receipt.signature.state + ").",
+    ],
+    " ",
+  )
+  let lines = [headline, ""]
+  for change in receipt.changes {
+    lines = lines + ["- " + change.status + " `" + change.path + "`"]
+  }
+  lines = lines + ["", receipt.commit_url]
+  return lines
+}
+
+fn publish_parsed(harness: Harness, values: dict) -> int {
+  const result = github_commit_worktree(publish_request(values))
+  if is_err(result) {
+    const failure = unwrap_err(result)
+    harness.stdio.eprintln(
+      "signed commit failed [" + to_string(failure.code) + "]: " + to_string(failure.message),
+    )
+    return 1
+  }
+  const receipt: GithubWorktreeCommitReceipt = unwrap(result)
+  if !receipt.committed {
+    // Callers stage or verify their change before invoking this, so an empty
+    // delta means it was lost between those two steps. Reporting success would
+    // leave a branch that silently has nothing on it.
+    const repo_dir = to_string(values.get("repo_dir") ?? ".")
+    harness.stdio.eprintln(
+      "no file changes found in `" + receipt.source + "` of " + repo_dir
+        + "; refusing to report success for a commit that was never made",
+    )
+    return 1
+  }
+  for line in describe_receipt(receipt) {
+    harness.stdio.println(line)
+  }
+  return 0
+}
+
+/**
+ * Run the publish command.
+ *
+ * Returns the process exit status: 0 published, 1 the publish failed, 2 the
+ * invocation was wrong. Separating 2 from 1 is what lets a CI step tell a
+ * broken workflow edit apart from a GitHub-side failure.
+ */
+pub fn publish_main(harness: Harness, args: list<string>) -> int {
+  if contains(args, "-h") || contains(args, "--help") {
+    harness.stdio.println(PUBLISH_USAGE)
+    return 0
+  }
+  const parsed = parse_publish_args(args)
+  if is_err(parsed) {
+    harness.stdio.eprintln(PUBLISH_USAGE)
+    harness.stdio.eprintln("error: " + to_string(unwrap_err(parsed)))
+    return 2
+  }
+  const values: dict = unwrap(parsed)
+  const result = try {
+    publish_parsed(harness, values)
+  }
+  if is_err(result) {
+    harness.stdio.eprintln("signed commit failed: " + to_string(unwrap_err(result)))
+    return 1
+  }
+  return to_int(unwrap(result))
+}

@@ -329,6 +329,51 @@ Behavior worth knowing before you use it:
 - A branch head that differs from the lease fails with `stale_head` unless
   `reset_branch` is set.
 
+### Publishing from CI
+
+`harn-github-connector/publish` is a command-line front end for the adapter, so
+a workflow does not have to hand-roll argument parsing, a step summary, and
+exit codes around it. Harn packages export modules rather than commands, so a
+consumer keeps one entry file for `harn run` to target:
+
+```harn,ignore
+import { publish_main } from "harn-github-connector/publish"
+
+fn main(harness: Harness) {
+  exit(publish_main(harness, argv ?? []))
+}
+```
+
+```bash
+harn run --no-sandbox scripts/signed-commit/publish.harn -- \
+  --repo octo-org/octo-repo \
+  --branch automation/bump \
+  --headline "Bump the pinned runtime" \
+  --source index
+```
+
+`--no-sandbox` is required: the adapter shells out to `git` plumbing, writes a
+scratch index outside the checkout, and calls the GitHub API.
+
+| Flag | Meaning |
+|---|---|
+| `--repo` | Target repository as `owner/repo`. Required. |
+| `--branch` | Automation branch to create or reset onto the base commit. Required. |
+| `--headline` | Commit headline. Required. |
+| `--body` | Optional commit body. An absent body stays absent, not empty. |
+| `--repo-dir` | Checkout to read from. Defaults to the current directory. |
+| `--source` | `worktree` (default) or `index`. |
+| `--no-reset` | Fail instead of force-moving a branch that is not at the base commit. |
+
+Exit status is `0` published, `1` the publish failed, `2` the invocation was
+wrong — so a CI step can tell a broken workflow edit apart from a GitHub-side
+failure. An empty delta exits `1` rather than reporting success for a commit
+that was never made; callers that stage their own change have already
+established there is something to publish.
+
+Credentials are the connector's contract: set `GITHUB_INSTALLATION_TOKEN`, or
+`GITHUB_APP_ID` + `GITHUB_INSTALLATION_ID` with a private key.
+
 ## GitHub App setup
 
 Create a GitHub App and install it into the target account or repository set.
