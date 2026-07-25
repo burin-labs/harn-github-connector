@@ -1,9 +1,23 @@
 # AGENTS.md
 
-Keep repo-local agent guidance short. Use `CLAUDE.md` for GitHub-specific
-notes. Shared Harn connector rules live in the canonical guide:
+Pure-Harn GitHub App connector for inbound webhooks and outbound REST/GraphQL
+calls.
 
-- https://github.com/burin-labs/harn/blob/main/docs/src/connectors/authoring.md
+Shared connector authoring rules live in the Harn guide:
 
-Add shared connector guidance to the Harn guide first, then point this repo at
-it.
+- [Connector authoring guide](https://github.com/burin-labs/harn/blob/main/docs/src/connectors/authoring.md)
+
+Put shared connector guidance in the Harn guide and keep only
+provider-specific notes and local hazards here.
+
+`CLAUDE.md` points here. Edit `AGENTS.md` only.
+
+## Provider notes
+
+- Webhook verification uses `X-Hub-Signature-256` over the raw request body with the configured
+  GitHub App webhook secret.
+- Outbound installation-token flow depends on GitHub App credentials: app id,
+  private key, and installation id. Keep token refresh behavior aligned with
+  GitHub App expiry semantics.
+- A typed `github-sdk-harn` would be a separate package; this connector should not grow generated
+  REST endpoint definitions.
