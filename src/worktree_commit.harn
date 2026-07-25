@@ -1,0 +1,874 @@
+/**
+ * Worktree-to-signed-commit adapter.
+ *
+ * `src/lib.harn` owns the HTTP/GraphQL provider surface, including the
+ * `github_create_signed_commit` primitive that atomically publishes typed
+ * additions and deletions under an `expected_head_oid` lease and accepts only a
+ * GitHub-generated signature. This module is the only place in the package that
+ * shells out to local `git`; it turns one exact local Git state into that typed
+ * request and returns one receipt.
+ *
+ * Responsibilities, in order:
+ *
+ * 1. Derive typed additions/deletions from an exact Git state without mutating
+ *    the caller's index or working tree. `source: "worktree"` builds a scratch
+ *    index (`GIT_INDEX_FILE`) so untracked, non-ignored files are included
+ *    without ever touching the real index; `source: "index"` reads the caller's
+ *    real index read-only.
+ * 2. Preserve exact blob bytes. Content never crosses the Harn string boundary
+ *    as text: `git cat-file blob | base64` produces the payload directly, and
+ *    the encoded length is checked against `git cat-file -s`.
+ * 3. Map renames to delete-old plus add-new.
+ * 4. Gate file modes against what the transport can actually carry, before any
+ *    network request. See `__wc_mode_gate` for the exact rule and its evidence.
+ * 5. Create or reset `refs/heads/<branch>` only under the exact base lease.
+ * 6. Call the existing `github_create_signed_commit` owner. This module never
+ *    writes its own `createCommitOnBranch` mutation.
+ * 7. Return one receipt binding repository, branch, base lease, commit oid,
+ *    changed paths with content digests, and GitHub's signature evidence.
+ *
+ * An empty delta is a clean outcome: `committed: false` with no network call.
+ */
+pub import {
+  GithubCommitFileAddition,
+  GithubCommitFileDeletion,
+  GithubConnectorError,
+  GithubConnectorResult,
+  GithubWorktreeChange,
+  GithubWorktreeCommitReceipt,
+  GithubWorktreeCommitRequest,
+  GithubWorktreeDelta,
+  GithubWorktreeSelector,
+  GithubWorktreeSignature,
+} from "./contracts"
+import { api_call, github_create_signed_commit } from "./lib"
+
+/** Git tree entry modes this adapter reasons about. */
+const WORKTREE_ABSENT_MODE = "000000"
+
+const WORKTREE_REGULAR_MODE = "100644"
+
+const WORKTREE_EXECUTABLE_MODE = "100755"
+
+const WORKTREE_SYMLINK_MODE = "120000"
+
+const WORKTREE_SUBMODULE_MODE = "160000"
+
+/** Per-command wall clock for local git plumbing. */
+const WORKTREE_GIT_TIMEOUT_MS = 120000
+
+/** NUL, the `-z` record separator used by every plumbing call below. */
+const WORKTREE_NUL = "\0"
+
+/** Lowercase hex digits accepted in a 40-character Git object id. */
+const WORKTREE_HEX = "0123456789abcdef"
+
+/** Characters accepted in an owner, repository, or branch path segment. */
+const WORKTREE_REF_ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
+
+fn __wc_category(code: string) -> string {
+  if code == "schema_drift" {
+    return "schema_drift"
+  }
+  if code == "stale_head" {
+    return "conflict"
+  }
+  return code
+}
+
+fn __wc_error(code: string, message: string, details = nil) -> GithubConnectorError {
+  const base = {code: code, category: __wc_category(code), message: message}
+  const error: GithubConnectorError = if details == nil {
+    base
+  } else {
+    base + details
+  }
+  return error
+}
+
+fn __wc_err(code: string, message: string, details = nil) {
+  return Err(__wc_error(code, message, details))
+}
+
+/** Re-type an inner failure so annotated boundaries keep one error contract. */
+fn __wc_error_of(result) -> GithubConnectorError {
+  const failure: GithubConnectorError = unwrap_err(result)
+  return failure
+}
+
+fn __wc_delta_result(result) -> GithubConnectorResult<GithubWorktreeDelta> {
+  if is_err(result) {
+    return Err(__wc_error_of(result))
+  }
+  const delta: GithubWorktreeDelta = unwrap(result)
+  return Ok(delta)
+}
+
+/** U+FFFD, the marker left behind when a path is not valid UTF-8. */
+fn __wc_replacement_char() -> string {
+  return base64_decode("77+9")
+}
+
+/**
+ * Owner, repository, and branch are interpolated into REST paths, so they are
+ * restricted to characters that cannot escape a path segment. `/` is allowed
+ * only in a branch name, where GitHub expects it as a literal ref separator.
+ */
+fn __wc_is_safe_ref(value: string, allow_slash: bool) -> bool {
+  if value == "" || starts_with(value, "-") || starts_with(value, "/") || ends_with(value, "/") {
+    return false
+  }
+  if contains(value, "..") || contains(value, "//") {
+    return false
+  }
+  const alphabet = if allow_slash {
+    WORKTREE_REF_ALPHABET + "/"
+  } else {
+    WORKTREE_REF_ALPHABET
+  }
+  for index in range(0, len(value)) {
+    if !contains(alphabet, substring(value, index, index + 1)) {
+      return false
+    }
+  }
+  return true
+}
+
+fn __wc_is_object_id(value: string) -> bool {
+  if len(value) != 40 {
+    return false
+  }
+  for index in range(0, 40) {
+    if !contains(WORKTREE_HEX, substring(value, index, index + 1)) {
+      return false
+    }
+  }
+  return true
+}
+
+fn __wc_run(spec: dict) {
+  const attempt = try {
+    spawn_captured(spec)
+  }
+  if is_err(attempt) {
+    return __wc_err("git", "local command failed: " + to_string(unwrap_err(attempt)))
+  }
+  const run = unwrap(attempt)
+  if !(run?.success ?? false) {
+    return __wc_err(
+      "git",
+      "local command `"
+        + to_string(spec?.cmd ?? "")
+        + "` failed with exit "
+        + to_string(run?.exit_code ?? -1)
+        + ": "
+        + trim(to_string(run?.stderr ?? "")),
+    )
+  }
+  return Ok(to_string(run?.stdout ?? ""))
+}
+
+fn __wc_git(repo_dir: string, args: list<string>, env: dict) {
+  return __wc_run(
+    {
+      cmd: "git",
+      args: args,
+      cwd: repo_dir,
+      env: env,
+      stdin: "",
+      timeout_ms: WORKTREE_GIT_TIMEOUT_MS,
+    },
+  )
+}
+
+fn __wc_git_line(repo_dir: string, args: list<string>, env: dict) {
+  const out = __wc_git(repo_dir, args, env)
+  if is_err(out) {
+    return out
+  }
+  return Ok(trim(unwrap(out)))
+}
+
+fn __wc_source(raw) -> string? {
+  const value = trim(to_string(raw ?? "worktree"))
+  if value == "" || value == "worktree" {
+    return "worktree"
+  }
+  if value == "index" {
+    return "index"
+  }
+  return nil
+}
+
+fn __wc_temp_dir() {
+  return __wc_run(
+    {
+      cmd: "sh",
+      args: [
+        "-c",
+        "root=\"$TMPDIR\"\ntest -n \"$root\" || root=/tmp\n"
+          + "mktemp -d \"$root/harn-github-connector-XXXXXX\"\n",
+      ],
+      stdin: "",
+      timeout_ms: WORKTREE_GIT_TIMEOUT_MS,
+    },
+  )
+}
+
+fn __wc_remove_dir(path: string) {
+  return __wc_run(
+    {
+      cmd: "sh",
+      args: ["-c", "rm -rf \"$HARN_WORKTREE_SCRATCH\""],
+      env: {HARN_WORKTREE_SCRATCH: path},
+      stdin: "",
+      timeout_ms: WORKTREE_GIT_TIMEOUT_MS,
+    },
+  )
+}
+
+/**
+ * Read one blob as `{size_bytes, contents_base64}`. The object id is passed
+ * through the environment, never interpolated into the shell script, and the
+ * encoded length is proven against `git cat-file -s` so a truncated or failed
+ * pipe can never masquerade as file content.
+ */
+fn __wc_blob(repo_dir: string, oid: string) {
+  if !__wc_is_object_id(oid) {
+    return __wc_err("git", "git reported a malformed blob object id `" + oid + "`")
+  }
+  const captured = __wc_run(
+    {
+      cmd: "sh",
+      args: [
+        "-c",
+        "git cat-file -s \"$HARN_WORKTREE_BLOB\" || exit 1\n"
+          + "git cat-file blob \"$HARN_WORKTREE_BLOB\" | base64 | tr -d '\\n'\n",
+      ],
+      cwd: repo_dir,
+      env: {HARN_WORKTREE_BLOB: oid},
+      stdin: "",
+      timeout_ms: WORKTREE_GIT_TIMEOUT_MS,
+    },
+  )
+  if is_err(captured) {
+    return captured
+  }
+  const lines = split(unwrap(captured), "\n")
+  const size = to_int(trim(lines[0]))
+  if size == nil {
+    return __wc_err("git", "git cat-file -s returned no size for blob `" + oid + "`")
+  }
+  const contents = if len(lines) > 1 {
+    trim(lines[1])
+  } else {
+    ""
+  }
+  if __wc_base64_bytes(contents) != size {
+    return __wc_err(
+      "git",
+      "blob `" + oid + "` did not survive base64 capture: expected " + to_string(size)
+        + " bytes",
+    )
+  }
+  return Ok({size_bytes: size, contents_base64: contents})
+}
+
+/** Exact decoded byte length of a canonical, unwrapped base64 payload. */
+fn __wc_base64_bytes(encoded: string) -> int {
+  const width = len(encoded)
+  if width == 0 {
+    return 0
+  }
+  if width % 4 != 0 {
+    return -1
+  }
+  const padding = if ends_with(encoded, "==") {
+    2
+  } else if ends_with(encoded, "=") {
+    1
+  } else {
+    0
+  }
+  return width / 4 * 3 - padding
+}
+
+fn __wc_tokens(raw: string) -> list<string> {
+  let tokens = []
+  for token in split(raw, WORKTREE_NUL) {
+    if token != "" {
+      tokens = tokens + [token]
+    }
+  }
+  return tokens
+}
+
+@complexity(allow)
+fn __wc_parse_raw(raw: string) {
+  const tokens = __wc_tokens(raw)
+  let entries = []
+  let cursor = 0
+  while cursor < len(tokens) {
+    const meta = to_string(tokens[cursor] ?? "")
+    if !starts_with(meta, ":") {
+      return __wc_err("git", "unexpected `git diff-index --raw -z` record `" + meta + "`")
+    }
+    const fields = split(substring(meta, 1, len(meta)), " ")
+    if len(fields) < 5 {
+      return __wc_err("git", "unexpected `git diff-index --raw -z` record `" + meta + "`")
+    }
+    const status = substring(uppercase(to_string(fields[4] ?? "")), 0, 1)
+    const paths = if status == "R" || status == "C" {
+      2
+    } else {
+      1
+    }
+    if cursor + paths >= len(tokens) {
+      return __wc_err("git", "truncated `git diff-index --raw -z` record `" + meta + "`")
+    }
+    entries = entries
+      + [
+      {
+        src_mode: to_string(fields[0] ?? ""),
+        dst_mode: to_string(fields[1] ?? ""),
+        src_oid: lowercase(to_string(fields[2] ?? "")),
+        dst_oid: lowercase(to_string(fields[3] ?? "")),
+        status: status,
+        src_path: to_string(tokens[cursor + 1] ?? ""),
+        dst_path: to_string(tokens[cursor + paths] ?? ""),
+      },
+    ]
+    cursor = cursor + 1 + paths
+  }
+  return Ok(entries)
+}
+
+fn __wc_check_paths(entries) {
+  const replacement = __wc_replacement_char()
+  for entry in entries {
+    for path in [entry.src_path, entry.dst_path] {
+      if contains(path, replacement) {
+        return __wc_err(
+          "unsupported_path",
+          "path `" + path + "` is not valid UTF-8 and cannot be published exactly",
+          {path: path},
+        )
+      }
+    }
+  }
+  return Ok(true)
+}
+
+fn __wc_deletion(path: string, oid: string, rename_to) -> GithubWorktreeChange {
+  return {
+    path: path,
+    status: "deleted",
+    blob_oid: oid,
+    size_bytes: 0,
+    rename_from: nil,
+    rename_to: rename_to,
+  }
+}
+
+fn __wc_addition(repo_dir: string, path: string, oid: string, status: string, rename_from) {
+  const blob = __wc_blob(repo_dir, oid)
+  if is_err(blob) {
+    return blob
+  }
+  const content = unwrap(blob)
+  return Ok(
+    {
+      change: {
+        path: path,
+        status: status,
+        blob_oid: oid,
+        size_bytes: content.size_bytes,
+        rename_from: rename_from,
+        rename_to: nil,
+      },
+      contents_base64: content.contents_base64,
+    },
+  )
+}
+
+/**
+ * Decide whether one written tree entry can be published faithfully.
+ *
+ * `FileAddition` exposes only `path` and `contents`, so the mutation cannot
+ * *specify* a mode. It does not follow that it *clobbers* one: a commit created
+ * by `createCommitOnBranch` over a path already in the base tree keeps that
+ * entry's mode. Evidence — burin-labs/burin-code `9ec6ffb`, committed
+ * server-side by `GitHub <noreply@github.com>` through that mutation, has
+ * `git diff-tree -r` records `:100755 100755 … M scripts/ci-rustc-wrapper.sh`.
+ * A blanket "reject every non-100644 entry" rule would therefore refuse cases
+ * the transport handles correctly, which for an agent editing shell scripts is
+ * a hard failure on an otherwise working path.
+ *
+ * The rule, still fail-closed, keyed on the base-tree mode that
+ * `git diff-index --raw` reports on the source side (`000000` means the path is
+ * absent from the base tree):
+ *
+ * - symlink (`120000`) or submodule (`160000`) on either side: always rejected.
+ *   Sending a symlink as an addition writes a regular file holding the link
+ *   target's bytes; writing over a symlink entry inherits `120000` and turns
+ *   file content into a link target. Both silently destroy the tree.
+ * - executable (`100755`) on a path already in the base tree at `100755`:
+ *   accepted, because the mode is preserved.
+ * - executable on a path new to the base tree (added, copied, or a rename
+ *   destination): rejected. There is no prior entry to inherit from, so it
+ *   would land `100644`. This one is not empirically confirmed — a committed
+ *   tree keeps no record of what the author intended — so it fails closed.
+ * - any mode change between the base tree and the selected state: rejected,
+ *   because the transport cannot carry the chmod and would silently no-op it.
+ *
+ * Deletions carry no mode and are handled before this gate; removing an entry
+ * of any mode is supported.
+ */
+@complexity(allow)
+fn __wc_mode_gate(entry) {
+  const base_mode = entry.src_mode
+  const mode = entry.dst_mode
+  const path = entry.dst_path
+  const evidence = {path: path, file_mode: mode, base_file_mode: base_mode}
+  for unsupported in [WORKTREE_SYMLINK_MODE, WORKTREE_SUBMODULE_MODE] {
+    if mode == unsupported || base_mode == unsupported {
+      return __wc_err(
+        "unsupported_file_mode",
+        "path `" + path + "` involves Git mode " + unsupported
+          + ", which GitHub's createCommitOnBranch transport cannot represent; publishing it "
+          + "would silently commit a different tree entry",
+        evidence,
+      )
+    }
+  }
+  if mode != WORKTREE_REGULAR_MODE && mode != WORKTREE_EXECUTABLE_MODE {
+    return __wc_err(
+      "unsupported_file_mode",
+      "path `" + path + "` has unrecognized Git mode " + mode,
+      evidence,
+    )
+  }
+  const new_path = entry.status == "R" || entry.status == "C"
+    || base_mode == WORKTREE_ABSENT_MODE
+  if new_path {
+    if mode == WORKTREE_EXECUTABLE_MODE {
+      return __wc_err(
+        "unsupported_new_executable",
+        "path `" + path
+          + "` is new to the base tree and executable; createCommitOnBranch cannot set a mode on "
+          + "a path it is creating, so the commit would land it as "
+          + WORKTREE_REGULAR_MODE,
+        evidence,
+      )
+    }
+    return Ok(true)
+  }
+  if base_mode != mode {
+    return __wc_err(
+      "unsupported_mode_change",
+      "path `" + path + "` changes Git mode from " + base_mode + " to " + mode
+        + "; createCommitOnBranch preserves the base tree entry's mode, so the change would be "
+        + "silently dropped",
+      evidence,
+    )
+  }
+  return Ok(true)
+}
+
+@complexity(allow)
+fn __wc_classify(repo_dir: string, entries) {
+  let changes = []
+  let contents = {}
+  for entry in entries {
+    const status = entry.status
+    if status == "U" || status == "X" {
+      return __wc_err(
+        "git",
+        "path `" + entry.dst_path + "` is unmerged or unclassifiable (`" + status
+          + "`); resolve it before publishing a signed commit",
+        {path: entry.dst_path},
+      )
+    }
+    if status == "D" {
+      changes = changes + [__wc_deletion(entry.src_path, entry.src_oid, nil)]
+      continue
+    }
+    const gated = __wc_mode_gate(entry)
+    if is_err(gated) {
+      return gated
+    }
+    const renamed = status == "R"
+    if renamed {
+      changes = changes + [__wc_deletion(entry.src_path, entry.src_oid, entry.dst_path)]
+    }
+    const label = if status == "A" || status == "C" || renamed {
+      "added"
+    } else {
+      "modified"
+    }
+    const added = __wc_addition(
+      repo_dir,
+      entry.dst_path,
+      entry.dst_oid,
+      label,
+      if renamed {
+        entry.src_path
+      } else {
+        nil
+      },
+    )
+    if is_err(added) {
+      return added
+    }
+    const record = unwrap(added)
+    changes = changes + [record.change]
+    contents[entry.dst_path] = record.contents_base64
+  }
+  return Ok({changes: changes, contents: contents})
+}
+
+/**
+ * Drop deletions for paths the same commit also writes. Git reports a swap
+ * (`a -> b` plus `b -> a`) as two renames, and `createCommitOnBranch` rejects a
+ * payload that both adds and deletes one path; the write is the correct outcome.
+ */
+fn __wc_resolve(changes: list<GithubWorktreeChange>) -> list<GithubWorktreeChange> {
+  let written = {}
+  for change in changes {
+    if change.status != "deleted" {
+      written[change.path] = true
+    }
+  }
+  let resolved = []
+  for change in changes {
+    if change.status == "deleted" && (written.get(change.path) ?? false) {
+      continue
+    }
+    resolved = resolved + [change]
+  }
+  return resolved
+}
+
+fn __wc_payload(changes: list<GithubWorktreeChange>, contents: dict) {
+  let additions: list<GithubCommitFileAddition> = []
+  let deletions: list<GithubCommitFileDeletion> = []
+  for change in changes {
+    if change.status == "deleted" {
+      deletions = deletions + [{path: change.path}]
+      continue
+    }
+    additions = additions
+      + [
+      {path: change.path, contents_base64: to_string(contents.get(change.path) ?? "")},
+    ]
+  }
+  return {additions: additions, deletions: deletions}
+}
+
+fn __wc_scratch_index(repo_dir: string, scratch: string) {
+  const env = {GIT_INDEX_FILE: scratch + "/index"}
+  const seeded = __wc_git(repo_dir, ["read-tree", "HEAD"], env)
+  if is_err(seeded) {
+    return seeded
+  }
+  const staged = __wc_git(repo_dir, ["add", "--all"], env)
+  if is_err(staged) {
+    return staged
+  }
+  return Ok(env)
+}
+
+fn __wc_raw_diff(repo_dir: string, base_oid: string, env: dict) {
+  return __wc_git(
+    repo_dir,
+    ["diff-index", "--cached", "--raw", "-z", "-M", "--no-abbrev", base_oid],
+    env,
+  )
+}
+
+fn __wc_base_oid(repo_dir: string, requested) {
+  const head = __wc_git_line(repo_dir, ["rev-parse", "HEAD"], {})
+  if is_err(head) {
+    return head
+  }
+  const observed = lowercase(unwrap(head))
+  if !__wc_is_object_id(observed) {
+    return __wc_err("git", "`git rev-parse HEAD` returned `" + observed + "`")
+  }
+  const pinned = lowercase(trim(to_string(requested ?? "")))
+  if pinned != "" && pinned != observed {
+    return __wc_err(
+      "stale_head",
+      "requested base oid does not match the local repository HEAD, so the derived payload would "
+        + "not describe the leased commit",
+      {expected_head_oid: pinned, observed_head_oid: observed},
+    )
+  }
+  return Ok(observed)
+}
+
+fn __wc_delta_env(repo_dir: string, source: string, scratch) {
+  if source == "index" {
+    return Ok({})
+  }
+  if scratch == nil {
+    return __wc_err("git", "worktree selection requires a scratch index directory")
+  }
+  return __wc_scratch_index(repo_dir, to_string(scratch))
+}
+
+@complexity(allow)
+fn __wc_delta(repo_dir: string, source: string, requested_base, scratch) {
+  const base = __wc_base_oid(repo_dir, requested_base)
+  if is_err(base) {
+    return base
+  }
+  const base_oid = unwrap(base)
+  const env = __wc_delta_env(repo_dir, source, scratch)
+  if is_err(env) {
+    return env
+  }
+  const raw = __wc_raw_diff(repo_dir, base_oid, unwrap(env))
+  if is_err(raw) {
+    return raw
+  }
+  const parsed = __wc_parse_raw(unwrap(raw))
+  if is_err(parsed) {
+    return parsed
+  }
+  const entries = unwrap(parsed)
+  const paths_ok = __wc_check_paths(entries)
+  if is_err(paths_ok) {
+    return paths_ok
+  }
+  const classified = __wc_classify(repo_dir, entries)
+  if is_err(classified) {
+    return classified
+  }
+  const result = unwrap(classified)
+  const changes = __wc_resolve(result.changes)
+  const payload = __wc_payload(changes, result.contents)
+  const delta: GithubWorktreeDelta = {
+    repo_dir: repo_dir,
+    source: source,
+    base_oid: base_oid,
+    empty: len(changes) == 0,
+    changes: changes,
+    additions: payload.additions,
+    deletions: payload.deletions,
+  }
+  return Ok(delta)
+}
+
+/**
+ * Derive one typed additions/deletions payload from an exact local Git state.
+ *
+ * This performs no network I/O and never mutates the caller's index or working
+ * tree. `source: "worktree"` (the default) stages the full working tree into a
+ * scratch index under a temporary directory; `source: "index"` reads the
+ * caller's real index read-only. Non-`100644` destination modes and unmerged
+ * entries fail here, before any caller can reach the network.
+ */
+pub fn github_worktree_delta(
+  selector: GithubWorktreeSelector,
+) -> GithubConnectorResult<GithubWorktreeDelta> {
+  const repo_dir = trim(to_string(selector.repo_dir ?? ""))
+  if repo_dir == "" {
+    return __wc_err("schema_drift", "worktree selector requires `repo_dir`")
+  }
+  const source = __wc_source(selector.source)
+  if source == nil {
+    return __wc_err(
+      "schema_drift",
+      "worktree selector `source` must be `worktree` or `index`, got `"
+        + to_string(selector.source)
+        + "`",
+    )
+  }
+  if source == "index" {
+    return __wc_delta_result(__wc_delta(repo_dir, source, selector.base_oid, nil))
+  }
+  const scratch = __wc_temp_dir()
+  if is_err(scratch) {
+    return Err(__wc_error_of(scratch))
+  }
+  const scratch_dir = trim(unwrap(scratch))
+  const delta = __wc_delta(repo_dir, source, selector.base_oid, scratch_dir)
+  __wc_remove_dir(scratch_dir)
+  return __wc_delta_result(delta)
+}
+
+fn __wc_ref_path(request: GithubWorktreeCommitRequest, prefix: string) -> string {
+  return "/repos/" + request.owner + "/" + request.repo + prefix + request.branch
+}
+
+@complexity(allow)
+fn __wc_branch_lease(request: GithubWorktreeCommitRequest, base_oid: string, options: dict) {
+  const lookup = api_call(__wc_ref_path(request, "/git/ref/heads/"), "GET", nil, options)
+  if is_err(lookup) {
+    const failure: GithubConnectorError = unwrap_err(lookup)
+    if (failure.http_status ?? 0) != 404 {
+      return Err(failure)
+    }
+    if !(request.create_branch ?? true) {
+      return __wc_err(
+        "stale_head",
+        "branch `" + request.branch + "` does not exist and `create_branch` is disabled",
+        {expected_head_oid: base_oid, observed_head_oid: ""},
+      )
+    }
+    const created = api_call(
+      "/repos/" + request.owner + "/" + request.repo + "/git/refs",
+      "POST",
+      {ref: "refs/heads/" + request.branch, sha: base_oid},
+      options,
+    )
+    if is_err(created) {
+      return created
+    }
+    return Ok("created")
+  }
+  const reference: dict = unwrap(lookup)
+  const observed = lowercase(trim(to_string(reference?.object?.sha ?? "")))
+  if observed == base_oid {
+    return Ok("unchanged")
+  }
+  if !(request.reset_branch ?? false) {
+    return __wc_err(
+      "stale_head",
+      "branch `" + request.branch + "` is at " + observed + " but the lease requires " + base_oid
+        + "; enable `reset_branch` to force it back to the base",
+      {expected_head_oid: base_oid, observed_head_oid: observed},
+    )
+  }
+  const reset = api_call(
+    __wc_ref_path(request, "/git/refs/heads/"),
+    "PATCH",
+    {sha: base_oid, force: true},
+    options,
+  )
+  if is_err(reset) {
+    return reset
+  }
+  return Ok("reset")
+}
+
+fn __wc_validate(request: GithubWorktreeCommitRequest) {
+  const required = [request.owner, request.repo, request.branch, request.headline, request.repo_dir]
+  for value in required {
+    if trim(to_string(value ?? "")) == "" {
+      return __wc_err(
+        "schema_drift",
+        "github_commit_worktree requires owner, repo, branch, headline, and repo_dir",
+      )
+    }
+  }
+  if !__wc_is_safe_ref(request.owner, false) || !__wc_is_safe_ref(request.repo, false) {
+    return __wc_err(
+      "schema_drift",
+      "`" + request.owner + "/" + request.repo + "` is not a usable GitHub repository name",
+    )
+  }
+  if !__wc_is_safe_ref(request.branch, true) {
+    return __wc_err(
+      "schema_drift",
+      "branch `" + request.branch + "` is not a usable automation branch name",
+    )
+  }
+  return Ok(true)
+}
+
+fn __wc_empty_receipt(
+  request: GithubWorktreeCommitRequest,
+  delta: GithubWorktreeDelta,
+) -> GithubWorktreeCommitReceipt {
+  return {
+    repository: request.owner + "/" + request.repo,
+    owner: request.owner,
+    repo: request.repo,
+    branch: request.branch,
+    source: delta.source,
+    base_oid: delta.base_oid,
+    committed: false,
+    commit_oid: "",
+    commit_url: "",
+    branch_action: "skipped",
+    changes: [],
+    signature: {verified: false, signed_by_github: false, state: ""},
+  }
+}
+
+/**
+ * Publish one exact local Git state to `branch` as a GitHub-signed commit.
+ *
+ * The payload is derived first and entirely locally, so an unsupported file
+ * mode fails before any network request. The branch is then created or reset
+ * only to `base_oid` (which must equal the local `HEAD`), and the commit is
+ * published through `github_create_signed_commit`, which rejects any response
+ * without a valid GitHub-generated signature.
+ *
+ * An empty delta returns `committed: false` with `branch_action: "skipped"` and
+ * performs no network call at all.
+ */
+@complexity(allow)
+pub fn github_commit_worktree(
+  request: GithubWorktreeCommitRequest,
+  options = nil,
+) -> GithubConnectorResult<GithubWorktreeCommitReceipt> {
+  const opts = options ?? {}
+  const valid = __wc_validate(request)
+  if is_err(valid) {
+    return Err(__wc_error_of(valid))
+  }
+  const derived = github_worktree_delta(
+    {repo_dir: request.repo_dir, source: request.source, base_oid: request.base_oid},
+  )
+  if is_err(derived) {
+    return Err(__wc_error_of(derived))
+  }
+  const delta: GithubWorktreeDelta = unwrap(derived)
+  if delta.empty {
+    return Ok(__wc_empty_receipt(request, delta))
+  }
+  const lease = __wc_branch_lease(request, delta.base_oid, opts)
+  if is_err(lease) {
+    return Err(__wc_error_of(lease))
+  }
+  const branch_action = to_string(unwrap(lease))
+  const published = github_create_signed_commit(
+    {
+      owner: request.owner,
+      repo: request.repo,
+      branch: request.branch,
+      expected_head_oid: delta.base_oid,
+      headline: request.headline,
+      body: request.body,
+      additions: delta.additions,
+      deletions: delta.deletions,
+    },
+    opts,
+  )
+  if is_err(published) {
+    return Err(__wc_error_of(published))
+  }
+  const commit = unwrap(published)
+  const receipt: GithubWorktreeCommitReceipt = {
+    repository: request.owner + "/" + request.repo,
+    owner: request.owner,
+    repo: request.repo,
+    branch: commit.branch,
+    source: delta.source,
+    base_oid: delta.base_oid,
+    committed: true,
+    commit_oid: commit.oid,
+    commit_url: commit.url,
+    branch_action: branch_action,
+    changes: delta.changes,
+    signature: {
+      verified: commit.signature_valid,
+      signed_by_github: commit.signed_by_github,
+      state: commit.signature_state,
+    },
+  }
+  return Ok(receipt)
+}
