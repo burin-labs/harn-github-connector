@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 - 2026-07-25
 
 - Add typed `github.pr.edit` and `pulls.update` operations for a closed set of
   editable pull-request fields, with validation before network dispatch and a
@@ -43,7 +43,44 @@
   its own git operations without re-implementing JWT minting. No new privilege:
   the caller must already hold the App credentials to mint.
 
-## 0.4.0 - 2026-06-02
+- Added typed release lookup by exact tag so automation no longer assembles raw GitHub API paths.
+- Explicit `allow_gh_auth_fallback` policy now overrides ambient environment configuration, so strict in-process callers can guarantee that connector authentication never spawns the GitHub CLI.
+- Typed pull-request listing now owner-qualifies bare head branches, implements merged-state filtering over GitHub's closed-PR REST contract, rejects unsupported states before I/O, and promotes GraphQL protocol errors instead of returning false successes.
+- Workflow dispatch waits now snapshot matching run IDs before dispatch, select
+  only one unseen exact run when GitHub returns no ID, and fail closed with a
+  typed `ambiguous_dispatch` result when multiple unseen runs match.
+- Added a durable workflow dispatch boundary that returns the exact accepted run
+  identity before terminal monitoring, while preserving typed dispatch, lookup,
+  and ambiguity failures.
+- Workflow dispatch identity receipts now preserve the exact run source SHA, branch, event, URL, and timestamps returned by GitHub, and expose a typed helper for fetching one run.
+- Workflow dispatch identity resolution now hydrates exact run metadata before reporting success, including when GitHub returns a run ID before the run is observable.
+- Added canonical closed typed GitHub orchestration methods for pull request
+  create/list/files/comments, expected-head auto-merge, merge queue evidence,
+  exact workflow runs/jobs, commit signatures, and exact file/release lookups.
+  PR reads now preserve unavailable branch-protection enrichment, queue membership
+  no longer treats armed auto-merge as queued, and masked 404s fail closed unless
+  repository access independently proves absence.
+- Added a pure-Harn worktree-to-signed-commit adapter, exported as
+  `harn-github-connector/worktree`, so consumers stop assembling
+  `createCommitOnBranch` payloads themselves. It derives typed additions and
+  deletions from an exact Git state (worktree or index) without touching the
+  caller's index, preserves exact blob bytes including binary, maps renames to
+  delete-old plus add-new, takes the branch lease, and returns one receipt binding
+  repository, branch, base, commit oid, changed paths with content digests, and
+  GitHub's signature evidence. File modes are gated before any network request:
+  editing a path already tracked at `100755` is published (the mutation preserves
+  the base tree entry's mode), while a new executable, a mode change, and any
+  symlink or submodule entry fail closed. Signed-commit additions now also accept
+  genuinely empty file contents instead of failing as if the field were missing.
+- Added stable typed pull-request commit pagination with per-commit signature evidence, canonical merged PR timestamp/OID fields, and a closed typed workflow-run list envelope for release automation. CI and release validation now execute the deterministic in-process named-test suite in addition to executable smoke pipelines.
+- Workflow dispatch now fails closed when GitHub omits the returned run id,
+    preserves exact workflow/source/run-attempt identity, and exposes typed
+    cancellation for an exact workflow run.
+- Export the connector's normalized GitHub records and use one typed `Result`
+  boundary for dynamic calls, named helpers, mergeability, and workflow dispatch.
+- Added a typed workflow-run jobs API that returns GitHub's canonical jobs and
+  steps payload, validates run identifiers, and supports bounded filter and
+  pagination options.
 
 - Add GitHub Actions self-hosted runner management methods supporting both repo
   (`owner`+`repo`) and org (`org`) scope: `actions.runners.registration_token`,
