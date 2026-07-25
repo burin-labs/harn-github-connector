@@ -4395,10 +4395,11 @@ fn __github_signed_commit_additions(raw) {
   let seen = {}
   for item in raw {
     const path = trim(to_string(item?.path ?? ""))
-    const contents = trim(to_string(item?.contents_base64 ?? item?.contents ?? ""))
-    if path == "" || contents == "" {
+    const raw_contents = item?.contents_base64 ?? item?.contents
+    if path == "" || raw_contents == nil {
       return __err("schema_drift", "signed commit additions require path and contents_base64")
     }
+    const contents = trim(to_string(raw_contents))
     if seen.get(path) ?? false {
       return __err("schema_drift", "signed commit additions contain duplicate path `" + path + "`")
     }

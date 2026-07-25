@@ -271,6 +271,64 @@ Common auth options include `installation_token`,
 and `max_attempts`; `max_attempts` wins over wall-clock timeout to keep tests
 deterministic.
 
+## Worktree-to-signed-commit adapter
+
+`harn-github-connector/worktree` is a separate export that turns one exact
+local Git state into a GitHub-signed commit. It is the only part of this
+package that shells out to `git`; the default export stays a pure HTTP surface.
+
+```harn,ignore
+import {
+  GithubWorktreeCommitRequest,
+  github_commit_worktree,
+} from "harn-github-connector/worktree"
+
+const request: GithubWorktreeCommitRequest = {
+  owner: "octo-org",
+  repo: "octo-repo",
+  branch: "automation/bump",
+  headline: "Bump the pinned runtime",
+  repo_dir: "/path/to/checkout",
+  source: "worktree",
+  create_branch: true,
+  reset_branch: true,
+}
+const receipt = unwrap(github_commit_worktree(request, {installation_token: token}))
+```
+
+| Helper | Purpose |
+|---|---|
+| `github_worktree_delta(selector)` | Derive typed additions/deletions from an exact Git state. No network I/O. |
+| `github_commit_worktree(request, options)` | Derive, take the branch lease, publish through `github_create_signed_commit`, return one receipt. |
+
+Behavior worth knowing before you use it:
+
+- `source` is `"worktree"` (HEAD versus the full working tree, including
+  untracked non-ignored files, staged through a scratch `GIT_INDEX_FILE`) or
+  `"index"` (HEAD versus the caller's real index). Neither mutates the caller's
+  index or working tree.
+- `base_oid` must equal the local `HEAD`; it defaults to it. A payload derived
+  against a different tree would not describe the leased commit.
+- Renames become delete-old plus add-new. Blob bytes are preserved exactly,
+  binary included.
+- `createCommitOnBranch` carries only `path` and `contents`, so it cannot
+  *specify* a mode — but it does preserve the base tree entry's mode for a path
+  it already tracks. Modes are gated accordingly, always before any network
+  request:
+
+  | Case | Outcome |
+  |---|---|
+  | Tracked `100755` edited, mode unchanged | Published; GitHub keeps `100755` |
+  | New path with mode `100755` (added, copied, or a rename destination) | `unsupported_new_executable` |
+  | Mode changes between the base tree and the selected state | `unsupported_mode_change` |
+  | Symlink `120000` or submodule `160000` on either side | `unsupported_file_mode` |
+
+  Deletions carry no mode and are always supported.
+- An empty delta returns `committed: false`, `branch_action: "skipped"`, and
+  performs no network call.
+- A branch head that differs from the lease fails with `stale_head` unless
+  `reset_branch` is set.
+
 ## GitHub App setup
 
 Create a GitHub App and install it into the target account or repository set.

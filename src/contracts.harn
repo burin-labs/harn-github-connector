@@ -16,6 +16,9 @@ pub type GithubConnectorError = {
   observed_tag_target_oid?: string,
   tag?: string,
   candidate_run_ids?: list<int>,
+  path?: string,
+  file_mode?: string,
+  base_file_mode?: string,
 }
 
 /** Canonical fallible boundary for every normalized GitHub operation. */
@@ -355,7 +358,7 @@ pub type GithubSignedCommitRequest = {
   branch: string,
   expected_head_oid: string,
   headline: string,
-  body?: string,
+  body?: string?,
   additions: list<GithubCommitFileAddition>,
   deletions: list<GithubCommitFileDeletion>,
 }
@@ -367,4 +370,101 @@ pub type GithubSignedCommitReceipt = {
   signature_valid: bool,
   signed_by_github: bool,
   signature_state: string,
+}
+
+/**
+ * One exact local Git state to derive a signed-commit payload from.
+ *
+ * `source` is `"worktree"` (the default: HEAD against the full working tree,
+ * tracked edits plus untracked non-ignored files, staged through a scratch
+ * index) or `"index"` (HEAD against the caller's real index, so only staged
+ * changes are published). Any other value fails with `schema_drift` before any
+ * work happens.
+ *
+ * `base_oid` is an optional pin that must equal the local `HEAD`: the derived
+ * payload only describes the leased commit when the two agree.
+ *
+ * Closed value sets are carried as `string` rather than string-literal unions
+ * because a literal union in a record field does not survive a cross-package
+ * import, which would make every consumer call site fail `harn check`. Import
+ * the type name itself (and any nested record type you construct) so record
+ * literals coerce to it.
+ */
+pub type GithubWorktreeSelector = {repo_dir: string, source?: string?, base_oid?: string?}
+
+/**
+ * One path-level change with the Git blob object id that carries its bytes.
+ *
+ * `status` is `"added"`, `"modified"`, or `"deleted"`. `blob_oid` is the Git
+ * blob object id — the content digest — of the bytes the change carries: the
+ * new content for `added`/`modified`, the removed content for `deleted`.
+ * `size_bytes` is that blob's exact byte length, and is `0` for a deletion.
+ * A rename appears as two changes: the `deleted` half carries `rename_to` and
+ * the `added` half carries `rename_from`.
+ */
+pub type GithubWorktreeChange = {
+  path: string,
+  status: string,
+  blob_oid: string,
+  size_bytes: int,
+  rename_from: string?,
+  rename_to: string?,
+}
+
+/** The typed additions/deletions request derived from one local Git state. */
+pub type GithubWorktreeDelta = {
+  repo_dir: string,
+  source: string,
+  base_oid: string,
+  empty: bool,
+  changes: list<GithubWorktreeChange>,
+  additions: list<GithubCommitFileAddition>,
+  deletions: list<GithubCommitFileDeletion>,
+}
+
+/**
+ * One worktree-to-signed-commit publication request.
+ *
+ * `create_branch` (default `true`) allows creating `refs/heads/<branch>` at
+ * `base_oid` when it does not exist. `reset_branch` (default `false`) allows
+ * force-resetting an existing branch back to `base_oid`; without it a branch
+ * head that differs from the lease fails closed with `stale_head`.
+ */
+pub type GithubWorktreeCommitRequest = {
+  owner: string,
+  repo: string,
+  branch: string,
+  headline: string,
+  body?: string?,
+  repo_dir: string,
+  source?: string?,
+  base_oid?: string?,
+  create_branch?: bool?,
+  reset_branch?: bool?,
+}
+
+/** GitHub's own signature evidence for the published commit. */
+pub type GithubWorktreeSignature = {verified: bool, signed_by_github: bool, state: string}
+
+/**
+ * One receipt binding repository, branch, lease, commit, and content digests.
+ *
+ * `branch_action` is `"skipped"` (empty delta, nothing published), `"unchanged"`,
+ * `"created"`, or `"reset"`. `committed` is `false` only for the empty-delta
+ * outcome, where `commit_oid` and `commit_url` are `""` and `signature` carries
+ * no evidence.
+ */
+pub type GithubWorktreeCommitReceipt = {
+  repository: string,
+  owner: string,
+  repo: string,
+  branch: string,
+  source: string,
+  base_oid: string,
+  committed: bool,
+  commit_oid: string,
+  commit_url: string,
+  branch_action: string,
+  changes: list<GithubWorktreeChange>,
+  signature: GithubWorktreeSignature,
 }
