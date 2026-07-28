@@ -9,6 +9,7 @@ live in the
 [Harn connector authoring guide](https://github.com/burin-labs/harn/blob/main/docs/src/connectors/authoring.md).
 
 Use `.harn-version` as the source of truth for the tested `harn-cli` release.
+The package manifest supports Harn `>=0.10,<0.11`.
 
 ## Install
 
@@ -377,9 +378,23 @@ Credentials are the connector's contract: set `GITHUB_INSTALLATION_TOKEN`, or
 ## GitHub App setup
 
 Create a GitHub App and install it into the target account or repository set.
-Record the App ID and Installation ID, configure a webhook secret, then store
-the private key PEM in a Harn SecretProvider. Do not commit real GitHub App
-private keys or webhook secrets.
+Set its webhook URL to `https://<public-host>/webhooks/github`, record the App
+ID and Installation ID, configure a webhook secret, then store the private key
+PEM in a Harn SecretProvider. Do not commit real GitHub App private keys or
+webhook secrets.
+
+```sh
+harn connect github --app-slug harn-example --app-id 12345 \
+  --private-key-file ./harn-example.private-key.pem \
+  --webhook-secret-file ./github-webhook-secret --json
+harn connect status --connector github --json
+```
+
+After status is healthy, remove the temporary files. Rotate an App key by
+adding and validating the replacement before deleting the old key in GitHub.
+Rotate the webhook secret by updating GitHub and the Harn secret provider in
+the same maintenance window, then prove the old signature is rejected and the
+new signature is accepted.
 
 Inbound webhooks must include GitHub's `X-GitHub-Event`,
 `X-GitHub-Delivery`, and `X-Hub-Signature-256` headers. The connector verifies
@@ -482,14 +497,15 @@ harn install
 harn check src
 harn lint src
 harn fmt --check src tests
-harn connector check .
+harn package verify . --provider github
 printf '%s\0' tests/*.harn \
   | xargs -0 -n1 -P 4 env HARN_EGRESS_BLOCK_PRIVATE=off harn run
 harn test tests --parallel
 ```
 
-`harn connector check .` runs the deterministic webhook fixtures declared in
-`harn.toml`, including supported event variants and a signature rejection case.
+`harn package verify . --provider github` runs the package, import, docs, and
+deterministic connector-contract gates, including supported event variants and
+a signature rejection case.
 The `tests/fixtures/webhooks/` payloads are synthetic compatibility fixtures;
 they should stay free of live GitHub secrets or private repository data.
 
