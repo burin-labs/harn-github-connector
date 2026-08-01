@@ -42,11 +42,14 @@ fn dispatch_204() {
   return ""
 }
 
-pipeline test_dispatch_identity_hydrates_returned_run_id_after_eventual_consistency(task) {
-  http_mock_clear()
+pipeline test_dispatch_identity_hydrates_returned_run_id_after_eventual_consistency(
+  harness: Harness,
+  task,
+) {
+  harness.testing.http_mock_clear()
   const runs_url = BASE
     + "/repos/octo-org/octo-repo/actions/workflows/identity-returned.yml/runs?branch=main&event=workflow_dispatch&per_page=10"
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     runs_url,
     {
@@ -59,12 +62,12 @@ pipeline test_dispatch_identity_hydrates_returned_run_id_after_eventual_consiste
       ],
     },
   )
-  http_mock(
+  harness.testing.http_mock(
     "POST",
     BASE + "/repos/octo-org/octo-repo/actions/workflows/identity-returned.yml/dispatches",
     {status: 200, body: dispatch_returning(321), headers: {"x-ratelimit-remaining": "30"}},
   )
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/actions/runs/321",
     {
@@ -83,6 +86,7 @@ pipeline test_dispatch_identity_hydrates_returned_run_id_after_eventual_consiste
     },
   )
   const result = github_dispatch_workflow_and_resolve_run(
+    harness,
     "octo-org",
     "octo-repo",
     "identity-returned.yml",
@@ -110,18 +114,18 @@ pipeline test_dispatch_identity_hydrates_returned_run_id_after_eventual_consiste
   assert(result.run_url.contains("/actions/runs/321"), "direct-id dispatch hydrates the run URL")
   assert_eq(result.conclusion, nil, "terminal state is not observed")
   assert_eq(result.timed_out, false, "identity resolution did not time out")
-  const calls = http_mock_calls()
+  const calls = harness.testing.http_mock_calls()
   assert_eq(len(calls), 3, "identity boundary retries only the exact returned run")
   assert_eq(calls[0].method, "POST", "dispatch is the first request")
   assert_eq(calls[1].url, calls[2].url, "eventual-consistency retry keeps the exact run identity")
-  http_mock_clear()
+  harness.testing.http_mock_clear()
 }
 
-pipeline test_dispatch_with_run_id_completes_success(task) {
-  http_mock_clear()
+pipeline test_dispatch_with_run_id_completes_success(harness: Harness, task) {
+  harness.testing.http_mock_clear()
   const runs_url = BASE
     + "/repos/octo-org/octo-repo/actions/workflows/bump-harn.yml/runs?branch=main&event=workflow_dispatch&per_page=10"
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     runs_url,
     {
@@ -134,12 +138,12 @@ pipeline test_dispatch_with_run_id_completes_success(task) {
       ],
     },
   )
-  http_mock(
+  harness.testing.http_mock(
     "POST",
     BASE + "/repos/octo-org/octo-repo/actions/workflows/bump-harn.yml/dispatches",
     {status: 200, body: dispatch_returning(123), headers: {"x-ratelimit-remaining": "30"}},
   )
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/actions/runs/123",
     {
@@ -158,6 +162,7 @@ pipeline test_dispatch_with_run_id_completes_success(task) {
     },
   )
   const result = github_dispatch_workflow_and_wait(
+    harness,
     "octo-org",
     "octo-repo",
     "bump-harn.yml",
@@ -181,7 +186,7 @@ pipeline test_dispatch_with_run_id_completes_success(task) {
   assert_eq(result.timed_out, false, "not timed out")
   assert(len(result.attempts) >= 2, "polled at least twice")
   assert_eq(result.candidate_run_ids, [123], "returned run id is the only candidate")
-  const calls = http_mock_calls()
+  const calls = harness.testing.http_mock_calls()
   assert_eq(len(calls), 3, "dispatch and two direct run probes")
   assert_eq(calls[0].method, "POST", "dispatch is the first request")
   assert_eq(
@@ -194,17 +199,17 @@ pipeline test_dispatch_with_run_id_completes_success(task) {
     BASE + "/repos/octo-org/octo-repo/actions/runs/123",
     "returned id stays pinned",
   )
-  http_mock_clear()
+  harness.testing.http_mock_clear()
 }
 
-pipeline test_dispatch_identity_rejects_legacy_204_without_correlation(task) {
-  http_mock_clear()
+pipeline test_dispatch_identity_rejects_legacy_204_without_correlation(harness: Harness, task) {
+  harness.testing.http_mock_clear()
   const sha = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
   const runs_url = BASE
     + "/repos/octo-org/octo-repo/actions/workflows/release.yml/runs?branch=main&event=workflow_dispatch&head_sha="
     + sha
     + "&per_page=10"
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     runs_url,
     {
@@ -238,12 +243,13 @@ pipeline test_dispatch_identity_rejects_legacy_204_without_correlation(task) {
       ],
     },
   )
-  http_mock(
+  harness.testing.http_mock(
     "POST",
     BASE + "/repos/octo-org/octo-repo/actions/workflows/release.yml/dispatches",
     {status: 204, body: dispatch_204(), headers: {"x-ratelimit-remaining": "20"}},
   )
   const result = github_dispatch_workflow_and_resolve_run(
+    harness,
     "octo-org",
     "octo-repo",
     "release.yml",
@@ -256,17 +262,20 @@ pipeline test_dispatch_identity_rejects_legacy_204_without_correlation(task) {
   assert_eq(result.run_id, nil, "no listed run is guessed")
   assert_eq(result.candidate_run_ids, [], "no candidate identity is inferred")
   assert_eq(result.error.code, "dispatch_identity_missing", "failure is typed")
-  const calls = http_mock_calls()
+  const calls = harness.testing.http_mock_calls()
   assert_eq(len(calls), 1, "legacy response never triggers a workflow-list query")
   assert_eq(calls[0].method, "POST", "only the dispatch request is sent")
-  http_mock_clear()
+  harness.testing.http_mock_clear()
 }
 
-pipeline test_dispatch_missing_identity_never_considers_ambiguous_list_rows(task) {
-  http_mock_clear()
+pipeline test_dispatch_missing_identity_never_considers_ambiguous_list_rows(
+  harness: Harness,
+  task,
+) {
+  harness.testing.http_mock_clear()
   const runs_url = BASE
     + "/repos/octo-org/octo-repo/actions/workflows/ambiguous.yml/runs?branch=main&event=workflow_dispatch&per_page=10"
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     runs_url,
     {
@@ -295,12 +304,13 @@ pipeline test_dispatch_missing_identity_never_considers_ambiguous_list_rows(task
       ],
     },
   )
-  http_mock(
+  harness.testing.http_mock(
     "POST",
     BASE + "/repos/octo-org/octo-repo/actions/workflows/ambiguous.yml/dispatches",
     {status: 204, body: dispatch_204(), headers: {"x-ratelimit-remaining": "11"}},
   )
   const result = github_dispatch_workflow_and_wait(
+    harness,
     "octo-org",
     "octo-repo",
     "ambiguous.yml",
@@ -314,15 +324,15 @@ pipeline test_dispatch_missing_identity_never_considers_ambiguous_list_rows(task
   assert_eq(result.candidate_run_ids, [], "list rows are never considered")
   assert_eq(result.error.code, "dispatch_identity_missing", "typed error is preserved")
   assert_eq(result.timed_out, false, "missing identity terminates immediately")
-  assert_eq(len(http_mock_calls()), 1, "workflow runs are never listed")
-  http_mock_clear()
+  assert_eq(len(harness.testing.http_mock_calls()), 1, "workflow runs are never listed")
+  harness.testing.http_mock_clear()
 }
 
-pipeline test_dispatch_identity_missing_does_not_poll_for_a_run(task) {
-  http_mock_clear()
+pipeline test_dispatch_identity_missing_does_not_poll_for_a_run(harness: Harness, task) {
+  harness.testing.http_mock_clear()
   const runs_url = BASE
     + "/repos/octo-org/octo-repo/actions/workflows/never.yml/runs?branch=main&event=workflow_dispatch&per_page=10"
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     runs_url,
     {
@@ -334,12 +344,13 @@ pipeline test_dispatch_identity_missing_does_not_poll_for_a_run(task) {
       ],
     },
   )
-  http_mock(
+  harness.testing.http_mock(
     "POST",
     BASE + "/repos/octo-org/octo-repo/actions/workflows/never.yml/dispatches",
     {status: 204, body: "", headers: {"x-ratelimit-remaining": "10"}},
   )
   const result = github_dispatch_workflow_and_resolve_run(
+    harness,
     "octo-org",
     "octo-repo",
     "never.yml",
@@ -351,19 +362,23 @@ pipeline test_dispatch_identity_missing_does_not_poll_for_a_run(task) {
   assert_eq(result.status, "dispatch_identity_missing", "status is fail-closed")
   assert_eq(result.timed_out, false, "missing identity is not a timeout")
   assert_eq(result.run_id, nil, "run_id=nil")
-  assert_eq(len(http_mock_calls()), 1, "the connector does not poll after a legacy response")
-  http_mock_clear()
+  assert_eq(
+    len(harness.testing.http_mock_calls()),
+    1,
+    "the connector does not poll after a legacy response",
+  )
+  harness.testing.http_mock_clear()
 }
 
-pipeline test_dispatch_returns_dispatch_failed(task) {
-  http_mock_clear()
-  http_mock(
+pipeline test_dispatch_returns_dispatch_failed(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
     "GET",
     BASE
       + "/repos/octo-org/octo-repo/actions/workflows/broken.yml/runs?branch=main&event=workflow_dispatch&per_page=10",
     {responses: [{status: 200, body: json_stringify({total_count: 0, workflow_runs: []})}]},
   )
-  http_mock(
+  harness.testing.http_mock(
     "POST",
     BASE + "/repos/octo-org/octo-repo/actions/workflows/broken.yml/dispatches",
     {
@@ -373,6 +388,7 @@ pipeline test_dispatch_returns_dispatch_failed(task) {
     },
   )
   const result = github_dispatch_workflow_and_resolve_run(
+    harness,
     "octo-org",
     "octo-repo",
     "broken.yml",
@@ -383,13 +399,13 @@ pipeline test_dispatch_returns_dispatch_failed(task) {
   assert_eq(result.ok, false, "ok=false")
   assert_eq(result.status, "dispatch_failed", "status=dispatch_failed")
   assert(result.error != nil, "error captured")
-  assert_eq(len(http_mock_calls()), 1, "dispatch failure is returned directly")
-  http_mock_clear()
+  assert_eq(len(harness.testing.http_mock_calls()), 1, "dispatch failure is returned directly")
+  harness.testing.http_mock_clear()
 }
 
-pipeline test_dispatch_does_not_query_workflow_runs_before_post(task) {
-  http_mock_clear()
-  http_mock(
+pipeline test_dispatch_does_not_query_workflow_runs_before_post(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
     "GET",
     BASE
       + "/repos/octo-org/octo-repo/actions/workflows/private.yml/runs?branch=main&event=workflow_dispatch&per_page=10",
@@ -403,17 +419,18 @@ pipeline test_dispatch_does_not_query_workflow_runs_before_post(task) {
       ],
     },
   )
-  http_mock(
+  harness.testing.http_mock(
     "POST",
     BASE + "/repos/octo-org/octo-repo/actions/workflows/private.yml/dispatches",
     {status: 200, body: dispatch_returning(55)},
   )
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/actions/runs/55",
     {status: 200, body: json_stringify(run_payload(55, "queued"))},
   )
   const result = github_dispatch_workflow_and_resolve_run(
+    harness,
     "octo-org",
     "octo-repo",
     "private.yml",
@@ -423,16 +440,16 @@ pipeline test_dispatch_does_not_query_workflow_runs_before_post(task) {
   )
   assert_eq(result.ok, true, "dispatch does not depend on a list-runs permission probe")
   assert_eq(result.status, "dispatch_accepted", "returned run id is hydrated directly")
-  const calls = http_mock_calls()
+  const calls = harness.testing.http_mock_calls()
   assert_eq(len(calls), 2, "only dispatch and exact-run hydration are requested")
   assert_eq(calls[0].method, "POST", "dispatch is first")
   assert(calls[1].url.ends_with("/actions/runs/55"), "exact returned run is hydrated")
-  http_mock_clear()
+  harness.testing.http_mock_clear()
 }
 
-pipeline test_wait_for_workflow_run_times_out_with_known_run(task) {
-  http_mock_clear()
-  http_mock(
+pipeline test_wait_for_workflow_run_times_out_with_known_run(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/actions/runs/777",
     {
@@ -451,6 +468,7 @@ pipeline test_wait_for_workflow_run_times_out_with_known_run(task) {
     },
   )
   const result = github_wait_for_workflow_run(
+    harness,
     "octo-org",
     "octo-repo",
     777,
@@ -467,12 +485,12 @@ pipeline test_wait_for_workflow_run_times_out_with_known_run(task) {
   assert_eq(result.head_branch, "main", "timeout preserves source branch")
   assert_eq(result.event, "workflow_dispatch", "timeout preserves source event")
   assert_eq(result.ok, false, "ok=false on timeout")
-  http_mock_clear()
+  harness.testing.http_mock_clear()
 }
 
-pipeline test_ensure_auto_merge_already_enabled(task) {
-  http_mock_clear()
-  http_mock(
+pipeline test_ensure_auto_merge_already_enabled(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/pulls/9",
     {
@@ -491,6 +509,7 @@ pipeline test_ensure_auto_merge_already_enabled(task) {
   )
   const result = unwrap(
     github_ensure_auto_merge(
+      harness,
       "octo-org",
       "octo-repo",
       9,
@@ -500,12 +519,12 @@ pipeline test_ensure_auto_merge_already_enabled(task) {
   assert_eq(result.state, "already_enabled", "already_enabled state")
   assert_eq(result.already_enabled, true, "already_enabled flag")
   assert_eq(result.merge_method, "SQUASH", "merge method recorded from existing auto_merge")
-  http_mock_clear()
+  harness.testing.http_mock_clear()
 }
 
-pipeline test_ensure_auto_merge_enables_via_graphql(task) {
-  http_mock_clear()
-  http_mock(
+pipeline test_ensure_auto_merge_enables_via_graphql(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/pulls/12",
     {
@@ -522,7 +541,7 @@ pipeline test_ensure_auto_merge_enables_via_graphql(task) {
       headers: {"x-ratelimit-remaining": "19"},
     },
   )
-  http_mock(
+  harness.testing.http_mock(
     "POST",
     BASE + "/graphql",
     {
@@ -546,23 +565,30 @@ pipeline test_ensure_auto_merge_enables_via_graphql(task) {
     },
   )
   const result = unwrap(
-    github_ensure_auto_merge("octo-org", "octo-repo", 12, auth() + {expected_head_oid: "fff"}),
+    github_ensure_auto_merge(
+      harness,
+      "octo-org",
+      "octo-repo",
+      12,
+      auth() + {expected_head_oid: "fff"},
+    ),
   )
   assert_eq(result.state, "enabled", "state=enabled")
   assert_eq(result.already_enabled, false, "not already enabled")
   assert_eq(result.merge_method, "MERGE", "default method MERGE")
   assert_eq(result.url, "https://github.com/octo-org/octo-repo/pull/12", "url surfaced")
-  http_mock_clear()
+  harness.testing.http_mock_clear()
 }
 
-pipeline test_ensure_auto_merge_failed(task) {
-  http_mock_clear()
-  http_mock(
+pipeline test_ensure_auto_merge_failed(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/pulls/77",
     {status: 404, body: "{\"message\":\"Not Found\"}", headers: {"x-ratelimit-remaining": "10"}},
   )
   const result = github_ensure_auto_merge(
+    harness,
     "octo-org",
     "octo-repo",
     77,
@@ -570,12 +596,12 @@ pipeline test_ensure_auto_merge_failed(task) {
   )
   assert(is_err(result), "provider error remains a Result failure")
   assert_eq(unwrap_err(result).http_status, 404, "HTTP status remains structured")
-  http_mock_clear()
+  harness.testing.http_mock_clear()
 }
 
-pipeline test_wait_for_pr_checks_green(task) {
-  http_mock_clear()
-  http_mock(
+pipeline test_wait_for_pr_checks_green(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/commits/green-sha/check-runs",
     {
@@ -600,17 +626,17 @@ pipeline test_wait_for_pr_checks_green(task) {
       headers: {"x-ratelimit-remaining": "20"},
     },
   )
-  const result = github_wait_for_pr_checks("octo-org", "octo-repo", "green-sha", auth())
+  const result = github_wait_for_pr_checks(harness, "octo-org", "octo-repo", "green-sha", auth())
   assert_eq(result.ok, true, "ok=true")
   assert_eq(result.state, "green", "state=green")
   assert_eq(len(result.failing_checks), 0, "no failing checks")
   assert_eq(len(result.pending_checks), 0, "no pending checks")
-  http_mock_clear()
+  harness.testing.http_mock_clear()
 }
 
-pipeline test_wait_for_pr_checks_pending_then_failing_with_logs(task) {
-  http_mock_clear()
-  http_mock(
+pipeline test_wait_for_pr_checks_pending_then_failing_with_logs(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/commits/sha-1/check-runs",
     {
@@ -648,12 +674,13 @@ pipeline test_wait_for_pr_checks_pending_then_failing_with_logs(task) {
     },
   )
   const huge_log = "step output line\n".repeat(600)
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/actions/runs/4242/logs",
     {status: 200, body: huge_log, headers: {"x-ratelimit-remaining": "14"}},
   )
   const result = github_wait_for_pr_checks(
+    harness,
     "octo-org",
     "octo-repo",
     "sha-1",
@@ -665,12 +692,12 @@ pipeline test_wait_for_pr_checks_pending_then_failing_with_logs(task) {
   assert_eq(result.logs[0].run_id, 4242, "log run id resolved from details_url")
   assert(result.logs[0].lines <= 50, "log lines truncated to tail")
   assert_eq(result.logs[0].truncated, true, "log marked truncated")
-  http_mock_clear()
+  harness.testing.http_mock_clear()
 }
 
-pipeline test_wait_for_pr_checks_times_out(task) {
-  http_mock_clear()
-  http_mock(
+pipeline test_wait_for_pr_checks_times_out(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/commits/pending-forever/check-runs",
     {
@@ -682,6 +709,7 @@ pipeline test_wait_for_pr_checks_times_out(task) {
     },
   )
   const result = github_wait_for_pr_checks(
+    harness,
     "octo-org",
     "octo-repo",
     "pending-forever",
@@ -691,12 +719,12 @@ pipeline test_wait_for_pr_checks_times_out(task) {
   assert_eq(result.ok, false, "ok=false on timeout")
   assert_eq(result.timed_out, true, "timed_out flag")
   assert_eq(len(result.pending_checks), 1, "still surfaces pending check")
-  http_mock_clear()
+  harness.testing.http_mock_clear()
 }
 
-pipeline test_wait_for_pr_checks_log_summary_handles_non_actions_url(task) {
-  http_mock_clear()
-  http_mock(
+pipeline test_wait_for_pr_checks_log_summary_handles_non_actions_url(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/commits/sha-2/check-runs",
     {
@@ -718,6 +746,7 @@ pipeline test_wait_for_pr_checks_log_summary_handles_non_actions_url(task) {
     },
   )
   const result = github_wait_for_pr_checks(
+    harness,
     "octo-org",
     "octo-repo",
     "sha-2",
@@ -726,17 +755,18 @@ pipeline test_wait_for_pr_checks_log_summary_handles_non_actions_url(task) {
   assert_eq(result.state, "failing", "state=failing")
   assert_eq(result.logs[0].run_id, nil, "no actions run id from non-actions URL")
   assert_eq(result.logs[0].error, "no_actions_run_url", "error tag for non-actions URL")
-  http_mock_clear()
+  harness.testing.http_mock_clear()
 }
 
-pipeline test_find_open_pr_no_match(task) {
-  http_mock_clear()
-  http_mock(
+pipeline test_find_open_pr_no_match(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/pulls?state=open&head=octo-org%3Abump%2Fharn-runtime",
     {status: 200, body: "[]", headers: {"x-ratelimit-remaining": "8"}},
   )
   const result = github_find_open_pr(
+    harness,
     "octo-org",
     "octo-repo",
     auth() + {head_ref: "bump/harn-runtime", head_owner: "octo-org"},
@@ -745,12 +775,12 @@ pipeline test_find_open_pr_no_match(task) {
   assert_eq(result.found, false, "found=false")
   assert_eq(result.pull_number, nil, "pull_number=nil")
   assert_eq(result.total_matches, 0, "no matches")
-  http_mock_clear()
+  harness.testing.http_mock_clear()
 }
 
-pipeline test_find_open_pr_matches_by_head_and_filters_labels(task) {
-  http_mock_clear()
-  http_mock(
+pipeline test_find_open_pr_matches_by_head_and_filters_labels(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/pulls?state=open&head=octo-org%3Afeature%2Ffoo&base=main",
     {
@@ -779,6 +809,7 @@ pipeline test_find_open_pr_matches_by_head_and_filters_labels(task) {
     },
   )
   const matched = github_find_open_pr(
+    harness,
     "octo-org",
     "octo-repo",
     auth() + {head_ref: "feature/foo", base_ref: "main", labels: ["automation"]},
@@ -786,12 +817,12 @@ pipeline test_find_open_pr_matches_by_head_and_filters_labels(task) {
   assert_eq(matched.found, true, "found")
   assert_eq(matched.pull_number, 314, "matched PR has automation label")
   assert_eq(matched.total_matches, 1, "exactly one match after label filter")
-  http_mock_clear()
+  harness.testing.http_mock_clear()
 }
 
-pipeline test_close_pr_with_comment(task) {
-  http_mock_clear()
-  http_mock(
+pipeline test_close_pr_with_comment(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
     "POST",
     BASE + "/repos/octo-org/octo-repo/issues/55/comments",
     {
@@ -800,7 +831,7 @@ pipeline test_close_pr_with_comment(task) {
       headers: {"x-ratelimit-remaining": "6"},
     },
   )
-  http_mock(
+  harness.testing.http_mock(
     "PATCH",
     BASE + "/repos/octo-org/octo-repo/issues/55",
     {
@@ -809,21 +840,21 @@ pipeline test_close_pr_with_comment(task) {
       headers: {"x-ratelimit-remaining": "5"},
     },
   )
-  const closed = github_close_pr("octo-org", "octo-repo", 55, "stale, closing", auth())
+  const closed = github_close_pr(harness, "octo-org", "octo-repo", 55, "stale, closing", auth())
   assert_eq(closed.ok, true, "close ok")
   assert_eq(closed.state, "closed", "state=closed")
   assert_eq(closed.comment_posted, true, "comment posted")
-  const calls = http_mock_calls()
+  const calls = harness.testing.http_mock_calls()
   assert_eq(calls[0].method, "POST", "comment posted before close")
   assert_eq(calls[1].method, "PATCH", "issue update follows")
   const update_body: {state: string} = json_parse(calls[1].body)
   assert_eq(update_body.state, "closed", "update body sets closed state")
-  http_mock_clear()
+  harness.testing.http_mock_clear()
 }
 
-pipeline test_close_pr_without_comment(task) {
-  http_mock_clear()
-  http_mock(
+pipeline test_close_pr_without_comment(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
     "PATCH",
     BASE + "/repos/octo-org/octo-repo/issues/77",
     {
@@ -832,11 +863,11 @@ pipeline test_close_pr_without_comment(task) {
       headers: {"x-ratelimit-remaining": "5"},
     },
   )
-  const closed = github_close_pr("octo-org", "octo-repo", 77, nil, auth())
+  const closed = github_close_pr(harness, "octo-org", "octo-repo", 77, nil, auth())
   assert_eq(closed.ok, true, "close ok without comment")
   assert_eq(closed.comment_posted, false, "no comment posted")
-  const calls = http_mock_calls()
+  const calls = harness.testing.http_mock_calls()
   assert_eq(len(calls), 1, "only the update call ran")
   assert_eq(calls[0].method, "PATCH", "single PATCH issued")
-  http_mock_clear()
+  harness.testing.http_mock_clear()
 }

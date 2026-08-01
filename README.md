@@ -261,10 +261,10 @@ Token helpers:
 
 | Helper | Purpose |
 |---|---|
-| `mint_app_jwt(config)` | Mint a GitHub App JWT with Harn `jwt_sign`. |
-| `installation_token(config)` | Return a cached installation token or refresh it when stale. |
-| `reset_token_cache()` | Clear all cached installation tokens. |
-| `invalidate_installation_token(installation_id)` | Remove one cached installation token. |
+| `mint_app_jwt(clock, secrets, config)` | Mint a GitHub App JWT with Harn `jwt_sign`. |
+| `installation_token(harness, config)` | Return a cached installation token or refresh it when stale. |
+| `reset_token_cache(runtime)` | Clear all cached installation tokens. |
+| `invalidate_installation_token(runtime, installation_id)` | Remove one cached installation token. |
 
 Common auth options include `installation_token`,
 `app_id`/`installation_id`/`private_key_secret`, `api_base_url`, and
@@ -294,13 +294,13 @@ const request: GithubWorktreeCommitRequest = {
   create_branch: true,
   reset_branch: true,
 }
-const receipt = unwrap(github_commit_worktree(request, {installation_token: token}))
+const receipt = unwrap(github_commit_worktree(harness, request, {installation_token: token}))
 ```
 
 | Helper | Purpose |
 |---|---|
-| `github_worktree_delta(selector)` | Derive typed additions/deletions from an exact Git state. No network I/O. |
-| `github_commit_worktree(request, options)` | Derive, take the branch lease, publish through `github_create_signed_commit`, return one receipt. |
+| `github_worktree_delta(process, selector)` | Derive typed additions/deletions from an exact Git state. No network I/O. |
+| `github_commit_worktree(harness, request, options)` | Derive, take the branch lease, publish through `github_create_signed_commit`, return one receipt. |
 
 Behavior worth knowing before you use it:
 
@@ -341,7 +341,7 @@ consumer keeps one entry file for `harn run` to target:
 import { publish_main } from "harn-github-connector/publish"
 
 fn main(harness: Harness) {
-  exit(publish_main(harness, argv ?? []))
+  harness.runtime.exit(publish_main(harness, argv ?? []))
 }
 ```
 

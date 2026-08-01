@@ -93,7 +93,7 @@ fn pull_number(pull: GithubPullRequestSummary) -> int {
   return pull.number
 }
 
-pipeline test_exported_contract_imports_and_result_narrowing(task) {
+pipeline test_exported_contract_imports_and_result_narrowing(harness: Harness, task) {
   const pull: GithubPullRequestSummary = {
     repo: "octo-org/octo-repo",
     number: 42,
@@ -114,15 +114,15 @@ pipeline test_exported_contract_imports_and_result_narrowing(task) {
     in_merge_queue: false,
   }
   assert_eq(pull_number(pull), 42, "re-exported records work in downstream annotations")
-  const failed: GithubConnectorResult<unknown> = call("not.a.github.method", {})
+  const failed: GithubConnectorResult<unknown> = call(harness, "not.a.github.method", {})
   assert(is_err(failed), "unsupported methods return one Result failure")
   const error: GithubConnectorError = unwrap_err(failed)
   assert_eq(error.code, "method_not_found", "Result narrowing exposes the typed error")
 }
 
-pipeline test_call_typed_validates_dynamic_escape_hatches(task) {
-  http_mock_clear()
-  http_mock(
+pipeline test_call_typed_validates_dynamic_escape_hatches(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
     "GET",
     "https://github-api.test/repos/octo-org/octo-repo",
     {
@@ -145,9 +145,9 @@ pipeline test_call_typed_validates_dynamic_escape_hatches(task) {
     installation_token: "test-token",
     path: "/repos/octo-org/octo-repo",
   }
-  const valid = call_typed("api_call", args, GithubPullRequestUser)
+  const valid = call_typed(harness, "api_call", args, GithubPullRequestUser)
   assert_eq(unwrap(valid).login, "octocat", "explicit schemas narrow dynamic responses")
-  const mismatch = call_typed("api_call", args, GithubPullRequestRef)
+  const mismatch = call_typed(harness, "api_call", args, GithubPullRequestRef)
   assert(is_err(mismatch), "schema mismatches fail closed")
   assert_eq(unwrap_err(mismatch).code, "invalid_response", "schema mismatch is normalized")
 }

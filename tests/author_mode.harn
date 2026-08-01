@@ -1,7 +1,7 @@
 import { call } from "../src/lib"
 
-pipeline default() {
-  http_mock_clear()
+pipeline test_author_mode(harness: Harness, task) {
+  harness.testing.http_mock_clear()
   const base_url = "https://github-api.test"
   const app_auth = {api_base_url: base_url, installation_token: "github-installation-token"}
   const user_auth = {api_base_url: base_url, allow_gh_auth_fallback: true, gh_token: "user-token"}
@@ -11,7 +11,7 @@ pipeline default() {
     trailers: "Co-Authored-By: Merge Captain <merge-captain@bots.example>",
   }
   const bot_choice = {author_mode: "bot", trailers: human_choice.trailers}
-  http_mock(
+  harness.testing.http_mock(
     "PUT",
     base_url + "/repos/octo-org/octo-repo/contents/README.md",
     {
@@ -21,6 +21,7 @@ pipeline default() {
     },
   )
   call(
+    harness,
     "repos.create_or_update_file",
     app_auth
       + {
@@ -32,7 +33,7 @@ pipeline default() {
       github_author_choice: human_choice,
     },
   )
-  http_mock(
+  harness.testing.http_mock(
     "PUT",
     base_url + "/repos/octo-org/octo-repo/contents/BOT.md",
     {
@@ -42,6 +43,7 @@ pipeline default() {
     },
   )
   call(
+    harness,
     "repos.create_or_update_file",
     app_auth
       + {
@@ -54,6 +56,7 @@ pipeline default() {
     },
   )
   const human_pr_with_app = call(
+    harness,
     "pulls.create",
     app_auth
       + {
@@ -68,6 +71,7 @@ pipeline default() {
   assert(is_err(human_pr_with_app), "human PR creation must reject app auth")
   assert_eq(unwrap_err(human_pr_with_app).code, "author_mode", "human PR app-auth error code")
   const bot_pr_with_user = call(
+    harness,
     "pulls.create",
     user_auth
       + {
@@ -81,7 +85,7 @@ pipeline default() {
   )
   assert(is_err(bot_pr_with_user), "bot PR creation must reject user auth")
   assert_eq(unwrap_err(bot_pr_with_user).code, "author_mode", "bot PR user-auth error code")
-  http_mock(
+  harness.testing.http_mock(
     "POST",
     base_url + "/repos/octo-org/octo-repo/pulls",
     {
@@ -91,6 +95,7 @@ pipeline default() {
     },
   )
   call(
+    harness,
     "pulls.create",
     user_auth
       + {
@@ -103,7 +108,7 @@ pipeline default() {
       github_author_choice: human_choice,
     },
   )
-  http_mock(
+  harness.testing.http_mock(
     "PUT",
     base_url + "/repos/octo-org/octo-repo/contents/restricted.txt",
     {
@@ -113,6 +118,7 @@ pipeline default() {
     },
   )
   const restricted = call(
+    harness,
     "repos.create_or_update_file",
     app_auth
       + {
@@ -130,7 +136,7 @@ pipeline default() {
     contains(unwrap_err(restricted).message, "Commit author email is not allowed"),
     "restricted author error message",
   )
-  const calls = http_mock_calls()
+  const calls = harness.testing.http_mock_calls()
   const human_body = json_parse(calls[0].body)
   assert_eq(human_body.author.name, "Kenneth Sinder", "human content write author name")
   assert_eq(human_body.author.email, "kenneth@example.com", "human content write author email")
@@ -150,5 +156,5 @@ pipeline default() {
     contains(pr_body.body, "Co-Authored-By: Merge Captain <merge-captain@bots.example>"),
     "human PR body appends trailers",
   )
-  http_mock_clear()
+  harness.testing.http_mock_clear()
 }

@@ -1,10 +1,10 @@
 import { call } from "../src/lib"
 
-pipeline default() {
-  http_mock_clear()
+pipeline test_call_smoke(harness: Harness, task) {
+  harness.testing.http_mock_clear()
   const base = "https://github-api.test"
   const token = "github-installation-token"
-  http_mock(
+  harness.testing.http_mock(
     "POST",
     base + "/repos/octo-org/octo-repo/issues/7/comments",
     {
@@ -15,6 +15,7 @@ pipeline default() {
   )
   const comment = unwrap(
     call(
+      harness,
       "issues.create_comment",
       {
         api_base_url: base,
@@ -27,7 +28,7 @@ pipeline default() {
     ),
   )
   assert_eq(comment.id, 101, "comment id")
-  http_mock(
+  harness.testing.http_mock(
     "POST",
     base + "/graphql",
     {
@@ -38,6 +39,7 @@ pipeline default() {
   )
   const graph = unwrap(
     call(
+      harness,
       "graphql",
       {
         api_base_url: base,
@@ -48,7 +50,7 @@ pipeline default() {
     ),
   )
   assert_eq(graph.data.viewer.login, "octocat", "graphql viewer")
-  http_mock(
+  harness.testing.http_mock(
     "PATCH",
     base + "/repos/octo-org/octo-repo/issues/7",
     {
@@ -58,6 +60,7 @@ pipeline default() {
     },
   )
   call(
+    harness,
     "issues.update",
     {
       api_base_url: base,
@@ -68,12 +71,13 @@ pipeline default() {
       state: "closed",
     },
   )
-  http_mock(
+  harness.testing.http_mock(
     "POST",
     base + "/repos/octo-org/octo-repo/pulls/42/comments",
     {status: 201, body: "{\"id\":202}", headers: {"x-ratelimit-remaining": "7"}},
   )
   call(
+    harness,
     "pulls.create_review_comment",
     {
       api_base_url: base,
@@ -88,7 +92,7 @@ pipeline default() {
       side: "RIGHT",
     },
   )
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/pulls/42",
     {
@@ -99,6 +103,7 @@ pipeline default() {
   )
   const pull = unwrap(
     call(
+      harness,
       "pulls.get",
       {
         api_base_url: base,
@@ -110,7 +115,7 @@ pipeline default() {
     ),
   )
   assert_eq(pull.number, 42, "pulls.get response")
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/pulls/42",
     {
@@ -121,6 +126,7 @@ pipeline default() {
   )
   const diff = unwrap(
     call(
+      harness,
       "pulls.get_diff",
       {
         api_base_url: base,
@@ -132,12 +138,13 @@ pipeline default() {
     ),
   )
   assert(diff.contains("diff --git"), "pulls.get_diff should return raw diff text")
-  http_mock(
+  harness.testing.http_mock(
     "POST",
     base + "/repos/octo-org/octo-repo/check-runs",
     {status: 201, body: "{\"id\":8001}", headers: {"x-ratelimit-remaining": "6"}},
   )
   call(
+    harness,
     "check_runs.create",
     {
       api_base_url: base,
@@ -149,7 +156,7 @@ pipeline default() {
       status: "queued",
     },
   )
-  http_mock(
+  harness.testing.http_mock(
     "PATCH",
     base + "/repos/octo-org/octo-repo/check-runs/8001",
     {
@@ -159,6 +166,7 @@ pipeline default() {
     },
   )
   call(
+    harness,
     "check_runs.update",
     {
       api_base_url: base,
@@ -170,7 +178,7 @@ pipeline default() {
       conclusion: "success",
     },
   )
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/pulls/42/files?per_page=2",
     {
@@ -190,6 +198,7 @@ pipeline default() {
   )
   const files = unwrap(
     call(
+      harness,
       "pulls.list_files",
       {
         api_base_url: base,
@@ -202,7 +211,7 @@ pipeline default() {
     ),
   )
   assert_eq(files[0].filename, "src/lib.rs", "list files response")
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/contents/README.md",
     {
@@ -212,6 +221,7 @@ pipeline default() {
     },
   )
   const capped = call(
+    harness,
     "repos.get_content",
     {
       api_base_url: base,
@@ -225,7 +235,7 @@ pipeline default() {
   )
   assert(is_err(capped), "rate-limit cap rejects")
   assert_eq(unwrap_err(capped).code, "rate_limited", "rate-limit cap code")
-  const calls = http_mock_calls()
+  const calls = harness.testing.http_mock_calls()
   assert_eq(calls[0].method, "POST", "create comment method")
   assert_eq(calls[0].headers.authorization, "[redacted]", "authorization header is redacted")
   assert_eq(calls[0].headers["x-github-api-version"], "2022-11-28", "api version header")
@@ -262,8 +272,8 @@ pipeline default() {
     "list files URL",
   )
   assert_eq(calls[9].url, calls[8].url, "rate-limit retry URL")
-  const unsupported = call("issues.lock", {api_base_url: base, installation_token: token})
+  const unsupported = call(harness, "issues.lock", {api_base_url: base, installation_token: token})
   assert(is_err(unsupported), "unsupported method rejected")
   assert_eq(unwrap_err(unsupported).code, "method_not_found", "unsupported method code")
-  http_mock_clear()
+  harness.testing.http_mock_clear()
 }

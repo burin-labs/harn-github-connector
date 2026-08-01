@@ -55,9 +55,9 @@ fn queue_entry(number, sha) {
   }
 }
 
-pipeline test_pr_create_files_and_comment_are_closed_records(task) {
-  http_mock_clear()
-  http_mock(
+pipeline test_pr_create_files_and_comment_are_closed_records(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
     "POST",
     BASE + "/repos/octo-org/octo-repo/pulls",
     {
@@ -68,6 +68,7 @@ pipeline test_pr_create_files_and_comment_are_closed_records(task) {
   )
   const created = unwrap(
     call(
+      harness,
       "github.pr.create",
       auth()
         + {
@@ -83,7 +84,7 @@ pipeline test_pr_create_files_and_comment_are_closed_records(task) {
   assert_eq(created.number, 41, "created PR is normalized")
   assert_eq(created.created, true, "creation receipt is explicit")
   assert_eq(created.head.sha, "head-41", "created PR retains head evidence")
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/pulls/41/files?per_page=50&page=2",
     {
@@ -106,13 +107,14 @@ pipeline test_pr_create_files_and_comment_are_closed_records(task) {
   )
   const files = unwrap(
     call(
+      harness,
       "github.pr.files",
       auth() + {repo: "octo-org/octo-repo", number: 41, per_page: 50, page: 2},
     ),
   )
   assert_eq(files.files[0].filename, "src/lib.harn", "file path is normalized")
   assert_eq(files.files[0].changes, 12, "file counts are retained")
-  http_mock(
+  harness.testing.http_mock(
     "POST",
     BASE + "/repos/octo-org/octo-repo/issues/41/comments",
     {
@@ -131,15 +133,22 @@ pipeline test_pr_create_files_and_comment_are_closed_records(task) {
     },
   )
   const comment = unwrap(
-    call("github.pr.comment", auth() + {repo: "octo-org/octo-repo", number: 41, body: "ready"}),
+    call(
+      harness,
+      "github.pr.comment",
+      auth() + {repo: "octo-org/octo-repo", number: 41, body: "ready"},
+    ),
   )
   assert_eq(comment.pull_number, 41, "comment retains PR number")
   assert_eq(comment.user.login, "octocat", "comment actor is normalized")
 }
 
-pipeline test_pr_view_survives_missing_branch_admin_permission_and_armed_is_not_queued(task) {
-  http_mock_clear()
-  http_mock(
+pipeline test_pr_view_survives_missing_branch_admin_permission_and_armed_is_not_queued(
+  harness: Harness,
+  task,
+) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/pulls/42",
     {
@@ -148,7 +157,7 @@ pipeline test_pr_view_survives_missing_branch_admin_permission_and_armed_is_not_
       headers: {"x-ratelimit-remaining": "20"},
     },
   )
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/branches/main/protection",
     {
@@ -157,7 +166,7 @@ pipeline test_pr_view_survives_missing_branch_admin_permission_and_armed_is_not_
       headers: {"x-ratelimit-remaining": "19"},
     },
   )
-  http_mock(
+  harness.testing.http_mock(
     "POST",
     BASE + "/graphql",
     {
@@ -178,7 +187,9 @@ pipeline test_pr_view_survives_missing_branch_admin_permission_and_armed_is_not_
       headers: {"x-ratelimit-remaining": "18"},
     },
   )
-  const viewed = unwrap(call("github.pr.view", auth() + {repo: "octo-org/octo-repo", number: 42}))
+  const viewed = unwrap(
+    call(harness, "github.pr.view", auth() + {repo: "octo-org/octo-repo", number: 42}),
+  )
   assert_eq(viewed.number, 42, "base PR read succeeds")
   assert_eq(
     viewed.branch_protection.available,
@@ -195,9 +206,9 @@ pipeline test_pr_view_survives_missing_branch_admin_permission_and_armed_is_not_
   assert_eq(viewed.state, "green", "armed PR is not classified as queued")
 }
 
-pipeline test_merge_queue_membership_uses_queue_entry_evidence(task) {
-  http_mock_clear()
-  http_mock(
+pipeline test_merge_queue_membership_uses_queue_entry_evidence(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/pulls/43",
     {
@@ -206,7 +217,7 @@ pipeline test_merge_queue_membership_uses_queue_entry_evidence(task) {
       headers: {"x-ratelimit-remaining": "20"},
     },
   )
-  http_mock(
+  harness.testing.http_mock(
     "POST",
     BASE + "/graphql",
     {
@@ -228,23 +239,28 @@ pipeline test_merge_queue_membership_uses_queue_entry_evidence(task) {
     },
   )
   const membership = unwrap(
-    call("github.merge_queue.membership", auth() + {repo: "octo-org/octo-repo", number: 43}),
+    call(
+      harness,
+      "github.merge_queue.membership",
+      auth() + {repo: "octo-org/octo-repo", number: 43},
+    ),
   )
   assert_eq(membership.queued, true, "queue entry proves membership")
   assert_eq(membership.entry.pull_number, 43, "membership returns the exact entry")
   assert_eq(membership.entry.state, "awaiting_checks", "wire enum is normalized once")
 }
 
-pipeline test_auto_merge_rejects_stale_expected_head_before_mutation(task) {
-  http_mock_clear()
+pipeline test_auto_merge_rejects_stale_expected_head_before_mutation(harness: Harness, task) {
+  harness.testing.http_mock_clear()
   const missing = call(
+    harness,
     "github.pr.enable_auto_merge",
     auth() + {repo: "octo-org/octo-repo", number: 44, method: "squash"},
   )
   assert(is_err(missing), "missing head lease fails closed")
   assert_eq(unwrap_err(missing).code, "schema_drift", "head lease is required")
-  assert_eq(len(http_mock_calls()), 0, "missing lease performs no I/O")
-  http_mock(
+  assert_eq(len(harness.testing.http_mock_calls()), 0, "missing lease performs no I/O")
+  harness.testing.http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/pulls/44",
     {
@@ -254,6 +270,7 @@ pipeline test_auto_merge_rejects_stale_expected_head_before_mutation(task) {
     },
   )
   const result = call(
+    harness,
     "github.pr.enable_auto_merge",
     auth()
       + {repo: "octo-org/octo-repo", number: 44, expected_head_oid: "old-head", method: "squash"},
@@ -261,12 +278,12 @@ pipeline test_auto_merge_rejects_stale_expected_head_before_mutation(task) {
   assert(is_err(result), "stale head fails closed")
   assert_eq(unwrap_err(result).code, "stale_head", "stale lease has a stable error code")
   assert_eq(unwrap_err(result).observed_head_oid, "new-head", "observed head is reported")
-  assert_eq(len(http_mock_calls()), 1, "stale lease performs no mutation")
+  assert_eq(len(harness.testing.http_mock_calls()), 1, "stale lease performs no mutation")
 }
 
-pipeline test_commit_signature_states_are_normalized(task) {
-  http_mock_clear()
-  http_mock(
+pipeline test_commit_signature_states_are_normalized(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/commits/verified",
     {
@@ -289,11 +306,15 @@ pipeline test_commit_signature_states_are_normalized(task) {
     },
   )
   const verified = unwrap(
-    call("github.commit.signature", auth() + {repo: "octo-org/octo-repo", ref: "verified"}),
+    call(
+      harness,
+      "github.commit.signature",
+      auth() + {repo: "octo-org/octo-repo", ref: "verified"},
+    ),
   )
   assert_eq(verified.verified, true, "valid signature is verified")
   assert_eq(verified.signature_present, true, "signature material is present")
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/commits/unsigned",
     {
@@ -316,11 +337,15 @@ pipeline test_commit_signature_states_are_normalized(task) {
     },
   )
   const unsigned = unwrap(
-    call("github.commit.signature", auth() + {repo: "octo-org/octo-repo", ref: "unsigned"}),
+    call(
+      harness,
+      "github.commit.signature",
+      auth() + {repo: "octo-org/octo-repo", ref: "unsigned"},
+    ),
   )
   assert_eq(unsigned.verified, false, "unsigned is evidence, not transport failure")
   assert_eq(unsigned.reason, "unsigned", "unsigned reason is retained")
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/commits/invalid",
     {
@@ -343,11 +368,11 @@ pipeline test_commit_signature_states_are_normalized(task) {
     },
   )
   const invalid = unwrap(
-    call("github.commit.signature", auth() + {repo: "octo-org/octo-repo", ref: "invalid"}),
+    call(harness, "github.commit.signature", auth() + {repo: "octo-org/octo-repo", ref: "invalid"}),
   )
   assert_eq(invalid.reason, "bad_email", "invalid signature reason is retained")
   assert_eq(invalid.signature_present, true, "invalid signature still reports material")
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/commits/malformed",
     {
@@ -357,6 +382,7 @@ pipeline test_commit_signature_states_are_normalized(task) {
     },
   )
   const malformed = call(
+    harness,
     "github.commit.signature",
     auth() + {repo: "octo-org/octo-repo", ref: "malformed"},
   )
@@ -364,9 +390,9 @@ pipeline test_commit_signature_states_are_normalized(task) {
   assert_eq(unwrap_err(malformed).code, "invalid_response", "signature shape is validated once")
 }
 
-pipeline test_exact_file_lookup_separates_absence_from_inaccessibility(task) {
-  http_mock_clear()
-  http_mock(
+pipeline test_exact_file_lookup_separates_absence_from_inaccessibility(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/contents/VERSION?ref=main",
     {
@@ -400,7 +426,7 @@ pipeline test_exact_file_lookup_separates_absence_from_inaccessibility(task) {
       ],
     },
   )
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo",
     {
@@ -419,14 +445,23 @@ pipeline test_exact_file_lookup_separates_absence_from_inaccessibility(task) {
     },
   )
   const found = unwrap(
-    call("github.file.view", auth() + {repo: "octo-org/octo-repo", path: "VERSION", ref: "main"}),
+    call(
+      harness,
+      "github.file.view",
+      auth() + {repo: "octo-org/octo-repo", path: "VERSION", ref: "main"},
+    ),
   )
   assert_eq(found.file.text, "0.4.0\n", "found file is decoded")
   const absent = unwrap(
-    call("github.file.view", auth() + {repo: "octo-org/octo-repo", path: "VERSION", ref: "main"}),
+    call(
+      harness,
+      "github.file.view",
+      auth() + {repo: "octo-org/octo-repo", path: "VERSION", ref: "main"},
+    ),
   )
   assert_eq(absent.state, "absent", "accessible repository proves absence")
   const inaccessible = call(
+    harness,
     "github.file.view",
     auth() + {repo: "octo-org/octo-repo", path: "VERSION", ref: "main"},
   )
@@ -438,8 +473,8 @@ pipeline test_exact_file_lookup_separates_absence_from_inaccessibility(task) {
   )
 }
 
-pipeline test_canonical_http_failures_and_malformed_payloads_fail_closed(task) {
-  http_mock_clear()
+pipeline test_canonical_http_failures_and_malformed_payloads_fail_closed(harness: Harness, task) {
+  harness.testing.http_mock_clear()
   const cases = [
     {path: "unauthorized", status: 401, code: "auth", message: "Bad credentials", headers: {}},
     {
@@ -459,12 +494,13 @@ pipeline test_canonical_http_failures_and_malformed_payloads_fail_closed(task) {
     {path: "server", status: 500, code: "network", message: "server error", headers: {}},
   ]
   for item in cases {
-    http_mock(
+    harness.testing.http_mock(
       "GET",
       BASE + "/repos/octo-org/octo-repo/contents/" + item.path + "?ref=main",
       {status: item.status, body: json_stringify({message: item.message}), headers: item.headers},
     )
     const result = call(
+      harness,
       "github.file.view",
       auth() + {repo: "octo-org/octo-repo", path: item.path, ref: "main"},
     )
@@ -472,23 +508,25 @@ pipeline test_canonical_http_failures_and_malformed_payloads_fail_closed(task) {
     assert_eq(unwrap_err(result).code, item.code, item.path + " preserves error category")
     assert_eq(unwrap_err(result).http_status, item.status, item.path + " preserves HTTP status")
   }
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/contents/malformed-json?ref=main",
     {status: 200, body: "{", headers: {"x-ratelimit-remaining": "10"}},
   )
   const bad_json = call(
+    harness,
     "github.file.view",
     auth() + {repo: "octo-org/octo-repo", path: "malformed-json", ref: "main"},
   )
   assert(is_err(bad_json), "malformed JSON fails closed")
   assert_eq(unwrap_err(bad_json).code, "invalid_response", "malformed JSON uses boundary error")
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/contents/malformed-shape?ref=main",
     {status: 200, body: json_stringify({type: "dir"}), headers: {"x-ratelimit-remaining": "9"}},
   )
   const bad_shape = call(
+    harness,
     "github.file.view",
     auth() + {repo: "octo-org/octo-repo", path: "malformed-shape", ref: "main"},
   )
@@ -496,9 +534,9 @@ pipeline test_canonical_http_failures_and_malformed_payloads_fail_closed(task) {
   assert_eq(unwrap_err(bad_shape).code, "invalid_response", "shape error is normalized")
 }
 
-pipeline test_exact_workflow_run_and_jobs_are_normalized(task) {
-  http_mock_clear()
-  http_mock(
+pipeline test_exact_workflow_run_and_jobs_are_normalized(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/actions/runs/321",
     {
@@ -525,10 +563,12 @@ pipeline test_exact_workflow_run_and_jobs_are_normalized(task) {
       headers: {"x-ratelimit-remaining": "20"},
     },
   )
-  const run = unwrap(call("github.actions.run", auth() + {repo: "octo-org/octo-repo", run_id: 321}))
+  const run = unwrap(
+    call(harness, "github.actions.run", auth() + {repo: "octo-org/octo-repo", run_id: 321}),
+  )
   assert_eq(run.id, 321, "exact run id is retained")
   assert_eq(run.conclusion, "success", "run conclusion is normalized")
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/actions/runs/321/jobs?filter=all",
     {
@@ -556,6 +596,7 @@ pipeline test_exact_workflow_run_and_jobs_are_normalized(task) {
   )
   const jobs = unwrap(
     call(
+      harness,
       "github.actions.run_jobs",
       auth() + {repo: "octo-org/octo-repo", run_id: 321, filter: "all"},
     ),
@@ -564,9 +605,9 @@ pipeline test_exact_workflow_run_and_jobs_are_normalized(task) {
   assert_eq(jobs.jobs[0].steps[0].name, "Run tests", "step evidence is normalized")
 }
 
-pipeline test_workflow_dispatch_returns_exact_accepted_run_identity(task) {
-  http_mock_clear()
-  http_mock(
+pipeline test_workflow_dispatch_returns_exact_accepted_run_identity(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
     "GET",
     BASE
       + "/repos/octo-org/octo-repo/actions/workflows/release.yml/runs?branch=main&event=workflow_dispatch&per_page=10",
@@ -576,7 +617,7 @@ pipeline test_workflow_dispatch_returns_exact_accepted_run_identity(task) {
       headers: {"x-ratelimit-remaining": "20"},
     },
   )
-  http_mock(
+  harness.testing.http_mock(
     "POST",
     BASE + "/repos/octo-org/octo-repo/actions/workflows/release.yml/dispatches",
     {
@@ -585,7 +626,7 @@ pipeline test_workflow_dispatch_returns_exact_accepted_run_identity(task) {
       headers: {"x-ratelimit-remaining": "19"},
     },
   )
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/actions/runs/322",
     {
@@ -612,6 +653,7 @@ pipeline test_workflow_dispatch_returns_exact_accepted_run_identity(task) {
   )
   const dispatched = unwrap(
     call(
+      harness,
       "github.actions.workflow_dispatch",
       auth()
         + {
@@ -627,5 +669,9 @@ pipeline test_workflow_dispatch_returns_exact_accepted_run_identity(task) {
   assert_eq(dispatched.workflow_path, ".github/workflows/release.yml")
   assert_eq(dispatched.run_attempt, 1)
   assert_eq(dispatched.head_sha, "dispatch-sha", "dispatch returns observed source SHA")
-  assert_eq(len(http_mock_calls()), 2, "dispatch and exact run hydration are required")
+  assert_eq(
+    len(harness.testing.http_mock_calls()),
+    2,
+    "dispatch and exact run hydration are required",
+  )
 }

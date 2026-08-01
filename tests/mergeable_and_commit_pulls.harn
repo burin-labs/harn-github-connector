@@ -1,12 +1,12 @@
 import { call, github_resolve_mergeable, github_resolve_pr_for_sha } from "../src/lib"
 
-pipeline default() {
-  http_mock_clear()
+pipeline test_mergeable_and_commit_pulls(harness: Harness, task) {
+  harness.testing.http_mock_clear()
   const base = "https://github-api.test"
   const token = "github-installation-token"
   const auth = {api_base_url: base, installation_token: token}
   // resolve_mergeable: first GET returns null/unknown, second resolves clean.
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/pulls/42",
     {
@@ -26,6 +26,7 @@ pipeline default() {
   )
   const resolved = unwrap(
     github_resolve_mergeable(
+      harness,
       "octo-org",
       "octo-repo",
       42,
@@ -38,7 +39,7 @@ pipeline default() {
   assert_eq(resolved.resolved, true, "resolved within attempts")
   assert_eq(resolved.attempts, 2, "took two attempts")
   // resolve_mergeable: dirty == conflict.
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/pulls/99",
     {
@@ -48,12 +49,12 @@ pipeline default() {
     },
   )
   const conflict = unwrap(
-    github_resolve_mergeable("octo-org", "octo-repo", 99, auth + {poll_interval_ms: 0}),
+    github_resolve_mergeable(harness, "octo-org", "octo-repo", 99, auth + {poll_interval_ms: 0}),
   )
   assert_eq(conflict.is_conflict, true, "dirty is a conflict")
   assert_eq(conflict.mergeable_state, "dirty", "dirty state")
   // resolve_mergeable: stays unknown across all attempts -> ok but unresolved.
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/pulls/7",
     {
@@ -64,6 +65,7 @@ pipeline default() {
   )
   const stuck = unwrap(
     github_resolve_mergeable(
+      harness,
       "octo-org",
       "octo-repo",
       7,
@@ -74,7 +76,7 @@ pipeline default() {
   assert_eq(stuck.mergeable_state, "unknown", "still unknown")
   assert_eq(stuck.attempts, 2, "exhausted attempts")
   // commit_pulls: direct REST lookup.
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/commits/abcdef1/pulls",
     {
@@ -84,11 +86,16 @@ pipeline default() {
     },
   )
   const pulls = unwrap(
-    call("repos.commit_pulls", auth + {owner: "octo-org", repo: "octo-repo", sha: "abcdef1"}),
+    call(
+      harness,
+      "repos.commit_pulls",
+      auth + {owner: "octo-org", repo: "octo-repo", sha: "abcdef1"},
+    ),
   )
   assert_eq(pulls[0].number, 13, "commit_pulls returns PR")
   // github_resolve_pr_for_sha: prefers payload pull_requests[].
   const from_payload = github_resolve_pr_for_sha(
+    harness,
     "octo-org",
     "octo-repo",
     "abcdef1",
@@ -97,12 +104,13 @@ pipeline default() {
   assert_eq(from_payload.source, "payload", "prefers payload PRs")
   assert_eq(from_payload.pull_number, 55, "payload PR number")
   // github_resolve_pr_for_sha: empty payload (fork) falls back to commit_pulls.
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/commits/deadbeef/pulls",
     {status: 200, body: "[{\"number\":21}]", headers: {"x-ratelimit-remaining": "5"}},
   )
   const fallback = github_resolve_pr_for_sha(
+    harness,
     "octo-org",
     "octo-repo",
     "deadbeef",
@@ -111,13 +119,13 @@ pipeline default() {
   assert_eq(fallback.source, "commit_pulls", "falls back to commit_pulls")
   assert_eq(fallback.pull_number, 21, "fallback PR number")
   // github_resolve_pr_for_sha: status event with no PR anywhere -> not found.
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/commits/orphan/pulls",
     {status: 200, body: "[]", headers: {"x-ratelimit-remaining": "4"}},
   )
-  const none = github_resolve_pr_for_sha("octo-org", "octo-repo", "orphan", auth)
+  const none = github_resolve_pr_for_sha(harness, "octo-org", "octo-repo", "orphan", auth)
   assert_eq(none.found, false, "no PR found for orphan commit")
   assert_eq(none.ok, true, "empty result is not an error")
-  http_mock_clear()
+  harness.testing.http_mock_clear()
 }

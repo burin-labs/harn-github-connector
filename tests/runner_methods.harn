@@ -5,13 +5,13 @@ import {
   call,
 } from "../src/lib"
 
-pipeline default() {
-  http_mock_clear()
+pipeline test_runner_methods(harness: Harness, task) {
+  harness.testing.http_mock_clear()
   const base = "https://github-api.test"
   const token = "github-installation-token"
   const auth = {api_base_url: base, installation_token: token}
   // Repo-scope registration token.
-  http_mock(
+  harness.testing.http_mock(
     "POST",
     base + "/repos/octo-org/octo-repo/actions/runners/registration-token",
     {
@@ -21,19 +21,19 @@ pipeline default() {
     },
   )
   const reg = unwrap(
-    actions_runner_registration_token({owner: "octo-org", repo: "octo-repo"}, auth),
+    actions_runner_registration_token(harness, {owner: "octo-org", repo: "octo-repo"}, auth),
   )
   assert_eq(reg.token, "AABBCC", "repo registration token")
   // Org-scope remove token.
-  http_mock(
+  harness.testing.http_mock(
     "POST",
     base + "/orgs/octo-org/actions/runners/remove-token",
     {status: 201, body: "{\"token\":\"DDEEFF\"}", headers: {"x-ratelimit-remaining": "9"}},
   )
-  const rem = unwrap(call("actions.runners.remove_token", auth + {org: "octo-org"}))
+  const rem = unwrap(call(harness, "actions.runners.remove_token", auth + {org: "octo-org"}))
   assert_eq(rem.token, "DDEEFF", "org remove token")
   // JIT config (modern stateless path).
-  http_mock(
+  harness.testing.http_mock(
     "POST",
     base + "/orgs/octo-org/actions/runners/generate-jitconfig",
     {
@@ -44,6 +44,7 @@ pipeline default() {
   )
   const jit = unwrap(
     actions_runner_generate_jitconfig(
+      harness,
       {org: "octo-org"},
       "jit-1",
       1,
@@ -53,7 +54,7 @@ pipeline default() {
   )
   assert_eq(jit.runner.id, 77, "jit runner id")
   // List runners (repo scope, with pagination).
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/actions/runners?per_page=5",
     {
@@ -64,25 +65,25 @@ pipeline default() {
     },
   )
   const runners = unwrap(
-    actions_runners_list({owner: "octo-org", repo: "octo-repo"}, auth + {per_page: 5}),
+    actions_runners_list(harness, {owner: "octo-org", repo: "octo-repo"}, auth + {per_page: 5}),
   )
   assert_eq(runners.runners[0].id, 77, "list runners")
   // Get + delete a runner.
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/orgs/octo-org/actions/runners/77",
     {status: 200, body: "{\"id\":77,\"name\":\"jit-1\"}", headers: {"x-ratelimit-remaining": "6"}},
   )
-  const got = unwrap(call("actions.runners.get", auth + {org: "octo-org", runner_id: 77}))
+  const got = unwrap(call(harness, "actions.runners.get", auth + {org: "octo-org", runner_id: 77}))
   assert_eq(got.id, 77, "get runner")
-  http_mock(
+  harness.testing.http_mock(
     "DELETE",
     base + "/orgs/octo-org/actions/runners/77",
     {status: 204, body: "", headers: {"x-ratelimit-remaining": "5"}},
   )
-  call("actions.runners.delete", auth + {org: "octo-org", runner_id: 77})
+  call(harness, "actions.runners.delete", auth + {org: "octo-org", runner_id: 77})
   // Labels: add, replace, remove one.
-  http_mock(
+  harness.testing.http_mock(
     "POST",
     base + "/repos/octo-org/octo-repo/actions/runners/77/labels",
     {
@@ -92,10 +93,11 @@ pipeline default() {
     },
   )
   call(
+    harness,
     "actions.runners.labels.add",
     auth + {owner: "octo-org", repo: "octo-repo", runner_id: 77, labels: ["gpu"]},
   )
-  http_mock(
+  harness.testing.http_mock(
     "PUT",
     base + "/repos/octo-org/octo-repo/actions/runners/77/labels",
     {
@@ -105,10 +107,11 @@ pipeline default() {
     },
   )
   call(
+    harness,
     "actions.runners.labels.replace",
     auth + {owner: "octo-org", repo: "octo-repo", runner_id: 77, labels: ["self-hosted"]},
   )
-  http_mock(
+  harness.testing.http_mock(
     "DELETE",
     base + "/repos/octo-org/octo-repo/actions/runners/77/labels/gpu",
     {
@@ -118,11 +121,12 @@ pipeline default() {
     },
   )
   call(
+    harness,
     "actions.runners.labels.remove",
     auth + {owner: "octo-org", repo: "octo-repo", runner_id: 77, name: "gpu"},
   )
   // Runner groups (org only).
-  http_mock(
+  harness.testing.http_mock(
     "POST",
     base + "/orgs/octo-org/actions/runner-groups",
     {
@@ -133,13 +137,14 @@ pipeline default() {
   )
   const group = unwrap(
     call(
+      harness,
       "actions.runner_groups.create",
       auth + {org: "octo-org", name: "gpu-pool", visibility: "selected"},
     ),
   )
   assert_eq(group.id, 3, "create runner group")
   // Downloads.
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/actions/runners/downloads",
     {
@@ -149,22 +154,22 @@ pipeline default() {
     },
   )
   const downloads = unwrap(
-    call("actions.runners.downloads", auth + {owner: "octo-org", repo: "octo-repo"}),
+    call(harness, "actions.runners.downloads", auth + {owner: "octo-org", repo: "octo-repo"}),
   )
   assert_eq(downloads[0].os, "linux", "runner downloads")
   // Scope validation: missing org and owner/repo.
-  const bad = call("actions.runners.list", auth)
+  const bad = call(harness, "actions.runners.list", auth)
   assert(is_err(bad), "missing scope rejected")
   assert_eq(unwrap_err(bad).category, "schema_drift", "missing scope category")
   // JIT config without a runner name is rejected before any HTTP request,
   // rather than POSTing a placeholder `{error: "missing_name"}` body.
-  const bad_jit = call("actions.runners.generate_jitconfig", auth + {org: "octo-org"})
+  const bad_jit = call(harness, "actions.runners.generate_jitconfig", auth + {org: "octo-org"})
   assert(is_err(bad_jit), "jitconfig without name rejected")
   assert_eq(unwrap_err(bad_jit).category, "schema_drift", "jitconfig missing name category")
-  const calls = http_mock_calls()
+  const calls = harness.testing.http_mock_calls()
   assert_eq(calls[0].method, "POST", "registration token method")
   assert_eq(json_parse(calls[2].body).name, "jit-1", "jitconfig body name")
   assert_eq(json_parse(calls[2].body).work_folder, "_work", "jitconfig body work_folder")
   assert_eq(json_parse(calls[6].body).labels[0], "gpu", "labels add body")
-  http_mock_clear()
+  harness.testing.http_mock_clear()
 }

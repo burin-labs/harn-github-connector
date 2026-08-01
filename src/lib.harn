@@ -252,7 +252,7 @@ pub fn payload_schema() {
 }
 
 /** Initialize connector state with orchestrator context. */
-pub fn init(ctx = nil) {
+pub fn init(_harness: Harness, ctx = nil) {
   const next = __state()
     + {
     initialized: true,
@@ -267,7 +267,7 @@ pub fn init(ctx = nil) {
 }
 
 /** Activate webhook bindings and reject duplicate configured paths. */
-pub fn activate(bindings = []) {
+pub fn activate(_harness: Harness, bindings = []) {
   let by_id = {}
   let seen_paths = {}
   for binding in bindings ?? [] {
@@ -293,22 +293,22 @@ pub fn activate(bindings = []) {
 /**
  * Clear connector lifecycle state. Cached installation tokens persist
  * across restarts so subsequent runs can refresh them lazily. Call
- * `reset_token_cache()` explicitly to invalidate the persistent cache.
+ * `reset_token_cache(harness.runtime)` explicitly to invalidate the persistent cache.
  */
-pub fn shutdown() {
+pub fn shutdown(_harness: Harness) {
   GITHUB_STATE = {initialized: false, active: false, bindings: {}, ctx: {}}
   return {provider: GITHUB_PROVIDER_ID, active: false}
 }
 
 @complexity(allow)
 /** Verify and normalize a raw GitHub webhook request into NormalizeResult v1. */
-pub fn normalize_inbound(raw) {
+pub fn normalize_inbound(harness: Harness, raw) {
   const body_text = raw?.body_text ?? raw?.body ?? ""
   if len(body_text) > MAX_BODY_BYTES {
     return __reject(413, "payload_too_large", "github webhook body exceeds 1 MiB cap")
   }
   const headers = raw?.headers ?? {}
-  const verified = __verify_github_signature(raw, headers, body_text)
+  const verified = __verify_github_signature(harness.secrets, raw, headers, body_text)
   if is_err(verified) {
     return __reject_err(unwrap_err(verified))
   }
@@ -337,8 +337,8 @@ pub fn normalize_inbound(raw) {
 
 @complexity(allow)
 /** Dispatch a supported GitHub method through one explicit Result boundary. */
-pub fn call(method: string, args: dict = {}) -> GithubConnectorResult<unknown> {
-  const value = __call_raw(method, args)
+pub fn call(harness: Harness, method: string, args: dict = {}) -> GithubConnectorResult<unknown> {
+  const value = __call_raw(harness, method, args)
   if is_err(value) {
     const error: GithubConnectorError = unwrap_err(value)
     return Err(error)
@@ -347,8 +347,13 @@ pub fn call(method: string, args: dict = {}) -> GithubConnectorResult<unknown> {
 }
 
 /** Dispatch and validate one method against an exported success contract. */
-pub fn call_typed<T>(method: string, args: dict, schema: Schema<T>) -> GithubConnectorResult<T> {
-  const result = call(method, args)
+pub fn call_typed<T>(
+  harness: Harness,
+  method: string,
+  args: dict,
+  schema: Schema<T>,
+) -> GithubConnectorResult<T> {
+  const result = call(harness, method, args)
   if is_err(result) {
     return Err(unwrap_err(result))
   }
@@ -363,7 +368,7 @@ pub fn call_typed<T>(method: string, args: dict, schema: Schema<T>) -> GithubCon
 }
 
 @complexity(allow)
-fn __call_raw(method, args = {}) {
+fn __call_raw(harness: Harness, method, args = {}) {
   if !contains(GITHUB_OUTBOUND_METHODS, method) {
     return __err(
       "method_not_found",
@@ -371,9 +376,9 @@ fn __call_raw(method, args = {}) {
     )
   }
   if starts_with(method, "oauth.user.") {
-    return __oauth_user_dispatch(method, args ?? {})
+    return __oauth_user_dispatch(harness, method, args ?? {})
   }
-  const config = __outbound_config(args ?? {})
+  const config = __outbound_config(harness, args ?? {})
   if is_err(config) {
     return config
   }
@@ -393,97 +398,98 @@ fn __call_raw(method, args = {}) {
     }
   }
   if method == "github.pr.list" {
-    return __github_pr_list(args, cfg)
+    return __github_pr_list(harness, args, cfg)
   }
   if method == "github.pr.create" {
-    return __github_pr_create(args, cfg)
+    return __github_pr_create(harness, args, cfg)
   }
   if method == "github.pr.view" {
-    return __github_pr_view(args, cfg)
+    return __github_pr_view(harness, args, cfg)
   }
   if method == "github.pr.edit" {
-    return __github_pr_edit(args, cfg)
+    return __github_pr_edit(harness, args, cfg)
   }
   if method == "github.pr.files" {
-    return __github_pr_files(args, cfg)
+    return __github_pr_files(harness, args, cfg)
   }
   if method == "github.pr.commits" {
-    return __github_pr_commits(args, cfg)
+    return __github_pr_commits(harness, args, cfg)
   }
   if method == "github.pr.checks" {
-    return __github_pr_checks(args, cfg)
+    return __github_pr_checks(harness, args, cfg)
   }
   if method == "github.pr.merge" {
-    return __github_pr_merge(args, cfg)
+    return __github_pr_merge(harness, args, cfg)
   }
   if method == "github.pr.enable_auto_merge" {
-    return __github_pr_enable_auto_merge(args, cfg)
+    return __github_pr_enable_auto_merge(harness, args, cfg)
   }
   if method == "github.pr.comment" {
-    return __github_pr_comment(args, cfg)
+    return __github_pr_comment(harness, args, cfg)
   }
   if method == "github.actions.workflow_dispatch" {
-    return __github_actions_workflow_dispatch(args, cfg)
+    return __github_actions_workflow_dispatch(harness, args, cfg)
   }
   if method == "github.actions.runs" {
-    return __github_actions_runs(args, cfg)
+    return __github_actions_runs(harness, args, cfg)
   }
   if method == "github.actions.run" {
-    return __github_actions_run(args, cfg)
+    return __github_actions_run(harness, args, cfg)
   }
   if method == "github.actions.run_jobs" {
-    return __github_actions_run_jobs(args, cfg)
+    return __github_actions_run_jobs(harness, args, cfg)
   }
   if method == "github.actions.run_cancel" {
-    return __github_actions_run_cancel(args, cfg)
+    return __github_actions_run_cancel(harness, args, cfg)
   }
   if method == "github.actions.logs" {
-    return __github_actions_logs(args, cfg)
+    return __github_actions_logs(harness, args, cfg)
   }
   if method == "github.release.view" {
-    return __github_release_view(args, cfg)
+    return __github_release_view(harness, args, cfg)
   }
   if method == "github.release.edit_body" {
-    return __github_release_edit_body(args, cfg)
+    return __github_release_edit_body(harness, args, cfg)
   }
   if method == "github.release.latest" {
-    return __github_release_latest(args, cfg)
+    return __github_release_latest(harness, args, cfg)
   }
   if method == "github.release.assets" {
-    return __github_release_assets(args, cfg)
+    return __github_release_assets(harness, args, cfg)
   }
   if method == "github.merge_queue.entries" {
-    return __github_merge_queue_entries(args, cfg)
+    return __github_merge_queue_entries(harness, args, cfg)
   }
   if method == "github.merge_queue.membership" {
-    return __github_merge_queue_membership(args, cfg)
+    return __github_merge_queue_membership(harness, args, cfg)
   }
   if method == "github.merge_queue.enqueue" {
-    return __github_merge_queue_enqueue(args, cfg)
+    return __github_merge_queue_enqueue(harness, args, cfg)
   }
   if method == "github.issue.create" {
-    return __github_issue_create(args, cfg)
+    return __github_issue_create(harness, args, cfg)
   }
   if method == "github.issue.comment" {
-    return __github_issue_comment(args, cfg)
+    return __github_issue_comment(harness, args, cfg)
   }
   if method == "github.branch.protection" {
-    return __github_branch_protection(args, cfg)
+    return __github_branch_protection(harness, args, cfg)
   }
   if method == "github.branch.create_signed_commit" {
-    return __github_create_signed_commit(args, cfg)
+    return __github_create_signed_commit(harness, args, cfg)
   }
   if method == "github.commit.signature" {
-    return __github_commit_signature(args, cfg)
+    return __github_commit_signature(harness, args, cfg)
   }
   if method == "github.file.view" {
-    return __github_file_view(args, cfg)
+    return __github_file_view(harness, args, cfg)
   }
   if method == "api_call" {
-    return __api_call(args, cfg)
+    return __api_call(harness, args, cfg)
   }
   if method == "issues.create_comment" {
     return __github_json(
+      harness,
       "POST",
       __github_api_url(
         cfg.api_base_url,
@@ -496,6 +502,7 @@ fn __call_raw(method, args = {}) {
   }
   if method == "issues.create" {
     return __github_json(
+      harness,
       "POST",
       __github_api_url(cfg.api_base_url, "/repos/" + args.owner + "/" + args.repo + "/issues"),
       __body_without(args, __config_keys() + ["owner", "repo"]),
@@ -503,10 +510,11 @@ fn __call_raw(method, args = {}) {
     )
   }
   if method == "issues.create_with_template" {
-    return __issues_create_with_template(args, cfg)
+    return __issues_create_with_template(harness, args, cfg)
   }
   if method == "issues.update" {
     return __github_json(
+      harness,
       "PATCH",
       __github_api_url(
         cfg.api_base_url,
@@ -518,6 +526,7 @@ fn __call_raw(method, args = {}) {
   }
   if method == "issues.add_labels" {
     return __github_json(
+      harness,
       "POST",
       __github_api_url(
         cfg.api_base_url,
@@ -530,6 +539,7 @@ fn __call_raw(method, args = {}) {
   }
   if method == "pulls.list" {
     return __github_json(
+      harness,
       "GET",
       __github_api_url(
         cfg.api_base_url,
@@ -540,10 +550,11 @@ fn __call_raw(method, args = {}) {
     )
   }
   if method == "pulls.list_with_checks" {
-    return __pulls_list_with_checks(args, cfg)
+    return __pulls_list_with_checks(harness, args, cfg)
   }
   if method == "pulls.get" {
     return __github_json(
+      harness,
       "GET",
       __github_api_url(
         cfg.api_base_url,
@@ -554,13 +565,14 @@ fn __call_raw(method, args = {}) {
     )
   }
   if method == "pulls.update" {
-    return __pulls_update(args, cfg)
+    return __pulls_update(harness, args, cfg)
   }
   if method == "pulls.create" {
-    return __pulls_create(args, cfg)
+    return __pulls_create(harness, args, cfg)
   }
   if method == "pulls.merge" {
     const merged = __github_json(
+      harness,
       "PUT",
       __github_api_url(
         cfg.api_base_url,
@@ -579,10 +591,11 @@ fn __call_raw(method, args = {}) {
     return __merge_annotation(merged, args)
   }
   if method == "pulls.merge_safe" {
-    return __pulls_merge_safe(args, cfg)
+    return __pulls_merge_safe(harness, args, cfg)
   }
   if method == "pulls.create_review_comment" {
     return __github_json(
+      harness,
       "POST",
       __github_api_url(
         cfg.api_base_url,
@@ -595,6 +608,7 @@ fn __call_raw(method, args = {}) {
   }
   if method == "pulls.get_diff" {
     return __github_text(
+      harness,
       "GET",
       __github_api_url(
         cfg.api_base_url,
@@ -606,6 +620,7 @@ fn __call_raw(method, args = {}) {
   }
   if method == "pulls.list_files" {
     return __github_json(
+      harness,
       "GET",
       __github_api_url(
         cfg.api_base_url,
@@ -619,6 +634,7 @@ fn __call_raw(method, args = {}) {
   }
   if method == "pulls.list_reviews" {
     return __github_json(
+      harness,
       "GET",
       __github_api_url(
         cfg.api_base_url,
@@ -632,6 +648,7 @@ fn __call_raw(method, args = {}) {
   }
   if method == "repos.get_content" {
     return __github_json(
+      harness,
       "GET",
       __github_api_url(
         cfg.api_base_url,
@@ -646,22 +663,23 @@ fn __call_raw(method, args = {}) {
     )
   }
   if method == "repos.get_text" {
-    return __repos_get_text(args, cfg)
+    return __repos_get_text(harness, args, cfg)
   }
   if method == "repos.create_or_update_file" || method == "repos.put_content" {
-    return __repos_create_or_update_file(args, cfg)
+    return __repos_create_or_update_file(harness, args, cfg)
   }
   if method == "repos.delete_file" {
-    return __repos_delete_file(args, cfg)
+    return __repos_delete_file(harness, args, cfg)
   }
   if method == "repos.get_latest_release" {
-    return __repos_get_latest_release(args, cfg)
+    return __repos_get_latest_release(harness, args, cfg)
   }
   if method == "repos.list_release_assets" {
-    return __repos_list_release_assets(args, cfg)
+    return __repos_list_release_assets(harness, args, cfg)
   }
   if method == "repos.get_branch_protection" {
     return __github_json(
+      harness,
       "GET",
       __github_api_url(
         cfg.api_base_url,
@@ -674,10 +692,11 @@ fn __call_raw(method, args = {}) {
     )
   }
   if method == "git.create_commit" {
-    return __git_create_commit(args, cfg)
+    return __git_create_commit(harness, args, cfg)
   }
   if method == "git.delete_ref" {
     return __github_json(
+      harness,
       "DELETE",
       __github_api_url(
         cfg.api_base_url,
@@ -689,31 +708,32 @@ fn __call_raw(method, args = {}) {
     )
   }
   if method == "actions.workflow_dispatch" {
-    return __actions_workflow_dispatch(args, cfg)
+    return __actions_workflow_dispatch(harness, args, cfg)
   }
   if method == "actions.workflow_runs.list" {
-    return __actions_workflow_runs_list(args, cfg)
+    return __actions_workflow_runs_list(harness, args, cfg)
   }
   if method == "actions.workflow_run.get" {
-    return __actions_workflow_run_get(args, cfg)
+    return __actions_workflow_run_get(harness, args, cfg)
   }
   if method == "actions.workflow_run.jobs" {
-    return __actions_workflow_run_jobs(args, cfg)
+    return __actions_workflow_run_jobs(harness, args, cfg)
   }
   if method == "actions.workflow_run.cancel" {
-    return __actions_workflow_run_cancel(args, cfg)
+    return __actions_workflow_run_cancel(harness, args, cfg)
   }
   if starts_with(method, "actions.runners.") || starts_with(method, "actions.runner_groups.") {
-    return __actions_runners_dispatch(method, args, cfg)
+    return __actions_runners_dispatch(harness, method, args, cfg)
   }
   if method == "repos.commit_pulls" {
-    return __repos_commit_pulls(args, cfg)
+    return __repos_commit_pulls(harness, args, cfg)
   }
   if method == "pull_requests.resolve_mergeable" {
-    return __pull_requests_resolve_mergeable(args, cfg)
+    return __pull_requests_resolve_mergeable(harness, args, cfg)
   }
   if method == "check_runs.create" {
     return __github_json(
+      harness,
       "POST",
       __github_api_url(cfg.api_base_url, "/repos/" + args.owner + "/" + args.repo + "/check-runs"),
       __body_without(args, __config_keys() + ["owner", "repo"]),
@@ -722,6 +742,7 @@ fn __call_raw(method, args = {}) {
   }
   if method == "check_runs.update" {
     return __github_json(
+      harness,
       "PATCH",
       __github_api_url(
         cfg.api_base_url,
@@ -732,6 +753,7 @@ fn __call_raw(method, args = {}) {
     )
   }
   const graph = __github_json(
+    harness,
     "POST",
     __github_api_url(cfg.api_base_url, "/graphql"),
     {query: args.query, variables: args.variables ?? {}},
@@ -747,32 +769,45 @@ fn __call_raw(method, args = {}) {
 }
 
 /** List PRs in the same shape consumed by managed merge_captain. */
-pub fn pulls_list_with_checks(owner, repo, state = "open", limit = 100, options = nil) {
+pub fn pulls_list_with_checks(
+  harness: Harness,
+  owner,
+  repo,
+  state = "open",
+  limit = 100,
+  options = nil,
+) {
   const opts = options ?? {}
   return call(
+    harness,
     "pulls.list_with_checks",
     opts + {owner: owner, repo: repo, state: state, limit: limit},
   )
 }
 
 /** Update the editable fields of one pull request. */
-pub fn pulls_update(owner, repo, number, edits, options = nil) {
+pub fn pulls_update(harness: Harness, owner, repo, number, edits, options = nil) {
   const opts = options ?? {}
   const body = pr_edit_body(edits ?? {})
   if is_err(body) {
     return body
   }
-  return call("pulls.update", opts + unwrap(body) + {owner: owner, repo: repo, pull_number: number})
+  return call(
+    harness,
+    "pulls.update",
+    opts + unwrap(body) + {owner: owner, repo: repo, pull_number: number},
+  )
 }
 
 /** Merge a PR after checking the base branch protection settings. */
-pub fn pulls_merge_safe(owner, repo, number, options = nil) {
+pub fn pulls_merge_safe(harness: Harness, owner, repo, number, options = nil) {
   const opts = options ?? {}
-  return call("pulls.merge_safe", opts + {owner: owner, repo: repo, pull_number: number})
+  return call(harness, "pulls.merge_safe", opts + {owner: owner, repo: repo, pull_number: number})
 }
 
 /** Enable GitHub auto-merge for a PR through the GraphQL auto-merge mutation. */
 pub fn pulls_enable_auto_merge(
+  harness: Harness,
   owner,
   repo,
   number,
@@ -780,6 +815,7 @@ pub fn pulls_enable_auto_merge(
 ) -> GithubConnectorResult<GithubAutoMergeReceipt> {
   const opts = options ?? {}
   const result = call(
+    harness,
     "github.pr.enable_auto_merge",
     opts + {owner: owner, repo: repo, pull_number: number},
   )
@@ -795,13 +831,18 @@ pub fn pulls_enable_auto_merge(
  * GitHub signature verification evidence for each commit.
  */
 pub fn github_pr_commits(
+  harness: Harness,
   owner,
   repo,
   number,
   options = nil,
 ) -> GithubConnectorResult<GithubPullRequestCommits> {
   const opts = options ?? {}
-  const result = call("github.pr.commits", opts + {owner: owner, repo: repo, pull_number: number})
+  const result = call(
+    harness,
+    "github.pr.commits",
+    opts + {owner: owner, repo: repo, pull_number: number},
+  )
   if is_err(result) {
     return Err(unwrap_err(result))
   }
@@ -816,11 +857,13 @@ pub fn github_pr_commits(
  * publication lease and makes stale-head races fail closed.
  */
 pub fn github_create_signed_commit(
+  harness: Harness,
   request: GithubSignedCommitRequest,
   options = nil,
 ) -> GithubConnectorResult<GithubSignedCommitReceipt> {
   const opts = options ?? {}
   const result = call(
+    harness,
     "github.branch.create_signed_commit",
     opts
       + {
@@ -843,6 +886,7 @@ pub fn github_create_signed_commit(
 
 /** Dispatch a workflow_dispatch workflow and request run details when GitHub supports them. */
 pub fn actions_workflow_dispatch(
+  harness: Harness,
   owner,
   repo,
   workflow_id,
@@ -852,6 +896,7 @@ pub fn actions_workflow_dispatch(
 ) {
   const opts = options ?? {}
   return call(
+    harness,
     "actions.workflow_dispatch",
     opts
       + {owner: owner, repo: repo, workflow_id: workflow_id, ref: ref, inputs: inputs ?? {}},
@@ -859,27 +904,39 @@ pub fn actions_workflow_dispatch(
 }
 
 /** List workflow runs for a repository or one workflow file/id. */
-pub fn actions_workflow_runs(owner, repo, options = nil) {
+pub fn actions_workflow_runs(harness: Harness, owner, repo, options = nil) {
   const opts = options ?? {}
-  return call("actions.workflow_runs.list", opts + {owner: owner, repo: repo})
+  return call(harness, "actions.workflow_runs.list", opts + {owner: owner, repo: repo})
 }
 
 /** Fetch one workflow run by its exact id. */
-pub fn actions_workflow_run(owner, repo, run_id, options = nil) {
+pub fn actions_workflow_run(harness: Harness, owner, repo, run_id, options = nil) {
   const opts = options ?? {}
-  return call("actions.workflow_run.get", opts + {owner: owner, repo: repo, run_id: run_id})
+  return call(
+    harness,
+    "actions.workflow_run.get",
+    opts + {owner: owner, repo: repo, run_id: run_id},
+  )
 }
 
 /** List the jobs and steps for one workflow run. */
-pub fn actions_workflow_run_jobs(owner, repo, run_id, options = nil) {
+pub fn actions_workflow_run_jobs(harness: Harness, owner, repo, run_id, options = nil) {
   const opts = options ?? {}
-  return call("actions.workflow_run.jobs", opts + {owner: owner, repo: repo, run_id: run_id})
+  return call(
+    harness,
+    "actions.workflow_run.jobs",
+    opts + {owner: owner, repo: repo, run_id: run_id},
+  )
 }
 
 /** Request cancellation of one exact workflow run. */
-pub fn actions_workflow_run_cancel(owner, repo, run_id, options = nil) {
+pub fn actions_workflow_run_cancel(harness: Harness, owner, repo, run_id, options = nil) {
   const opts = options ?? {}
-  return call("actions.workflow_run.cancel", opts + {owner: owner, repo: repo, run_id: run_id})
+  return call(
+    harness,
+    "actions.workflow_run.cancel",
+    opts + {owner: owner, repo: repo, run_id: run_id},
+  )
 }
 
 /**
@@ -887,9 +944,9 @@ pub fn actions_workflow_run_cancel(owner, repo, run_id, options = nil) {
  * `owner`+`repo` for repo scope (via `scope`). Requires `administration:write`
  * (repo) or `organization_self_hosted_runners:write` (org).
  */
-pub fn actions_runner_registration_token(scope, options = nil) {
+pub fn actions_runner_registration_token(harness: Harness, scope, options = nil) {
   const opts = options ?? {}
-  return call("actions.runners.registration_token", opts + (scope ?? {}))
+  return call(harness, "actions.runners.registration_token", opts + (scope ?? {}))
 }
 
 /**
@@ -899,6 +956,7 @@ pub fn actions_runner_registration_token(scope, options = nil) {
  * `administration:write` (repo) or `organization_self_hosted_runners:write` (org).
  */
 pub fn actions_runner_generate_jitconfig(
+  harness: Harness,
   scope,
   name,
   runner_group_id = 1,
@@ -907,21 +965,22 @@ pub fn actions_runner_generate_jitconfig(
 ) {
   const opts = options ?? {}
   return call(
+    harness,
     "actions.runners.generate_jitconfig",
     opts + (scope ?? {}) + {name: name, runner_group_id: runner_group_id, labels: labels},
   )
 }
 
 /** List self-hosted runners for a repo (`{owner, repo}`) or org (`{org}`) scope. */
-pub fn actions_runners_list(scope, options = nil) {
+pub fn actions_runners_list(harness: Harness, scope, options = nil) {
   const opts = options ?? {}
-  return call("actions.runners.list", opts + (scope ?? {}))
+  return call(harness, "actions.runners.list", opts + (scope ?? {}))
 }
 
 /** Dispatch one raw GitHub REST call. Prefer typed helpers when one exists. */
-pub fn api_call(path, method = "GET", body = nil, options = nil) {
+pub fn api_call(harness: Harness, path, method = "GET", body = nil, options = nil) {
   const opts = options ?? {}
-  return call("api_call", opts + {path: path, method: method, body: body})
+  return call(harness, "api_call", opts + {path: path, method: method, body: body})
 }
 
 /**
@@ -929,13 +988,13 @@ pub fn api_call(path, method = "GET", body = nil, options = nil) {
  * `{device_code, user_code, verification_uri, expires_in, interval}` payload.
  * `ghu_` user tokens expire after 8h and `ghr_` refresh tokens after 6 months.
  */
-pub fn oauth_user_device_code(client_id, scope = nil, options = nil) {
+pub fn oauth_user_device_code(harness: Harness, client_id, scope = nil, options = nil) {
   const opts = options ?? {}
   let args = opts + {client_id: client_id}
   if scope != nil {
     args["scope"] = scope
   }
-  return call("oauth.user.device_code", args)
+  return call(harness, "oauth.user.device_code", args)
 }
 
 /**
@@ -943,24 +1002,32 @@ pub fn oauth_user_device_code(client_id, scope = nil, options = nil) {
  * payload with `error` (e.g. `authorization_pending`, `slow_down`) while the
  * user has not yet authorized.
  */
-pub fn oauth_user_device_poll(client_id, device_code, options = nil) {
+pub fn oauth_user_device_poll(harness: Harness, client_id, device_code, options = nil) {
   const opts = options ?? {}
-  return call("oauth.user.device_poll", opts + {client_id: client_id, device_code: device_code})
+  return call(
+    harness,
+    "oauth.user.device_poll",
+    opts + {client_id: client_id, device_code: device_code},
+  )
 }
 
 /** Exchange a web-flow authorization `code` for a user access token. */
-pub fn oauth_user_exchange_code(client_id, code, options = nil) {
+pub fn oauth_user_exchange_code(harness: Harness, client_id, code, options = nil) {
   const opts = options ?? {}
-  return call("oauth.user.exchange_code", opts + {client_id: client_id, code: code})
+  return call(harness, "oauth.user.exchange_code", opts + {client_id: client_id, code: code})
 }
 
 /**
  * Refresh an expiring `ghu_` user token. The `ghr_` refresh token ROTATES on
  * every refresh, so callers must persist the returned `refresh_token`.
  */
-pub fn oauth_user_refresh(client_id, refresh_token, options = nil) {
+pub fn oauth_user_refresh(harness: Harness, client_id, refresh_token, options = nil) {
   const opts = options ?? {}
-  return call("oauth.user.refresh", opts + {client_id: client_id, refresh_token: refresh_token})
+  return call(
+    harness,
+    "oauth.user.refresh",
+    opts + {client_id: client_id, refresh_token: refresh_token},
+  )
 }
 
 /**
@@ -974,45 +1041,47 @@ pub fn github_extract_mentions(body) {
 }
 
 /** Read a repository file as decoded UTF-8 text at an optional ref. */
-pub fn repos_get_text(owner, repo, path, ref = nil, options = nil) {
+pub fn repos_get_text(harness: Harness, owner, repo, path, ref = nil, options = nil) {
   const opts = options ?? {}
   let args = opts + {owner: owner, repo: repo, path: path}
   if ref != nil {
     args["ref"] = ref
   }
-  return call("repos.get_text", args)
+  return call(harness, "repos.get_text", args)
 }
 
 /** Fetch the latest published release for a repository. */
-pub fn repos_get_latest_release(owner, repo, options = nil) {
+pub fn repos_get_latest_release(harness: Harness, owner, repo, options = nil) {
   const opts = options ?? {}
-  return call("repos.get_latest_release", opts + {owner: owner, repo: repo})
+  return call(harness, "repos.get_latest_release", opts + {owner: owner, repo: repo})
 }
 
 /** List assets for a release id. */
-pub fn repos_list_release_assets(owner, repo, release_id, options = nil) {
+pub fn repos_list_release_assets(harness: Harness, owner, repo, release_id, options = nil) {
   const opts = options ?? {}
   return call(
+    harness,
     "repos.list_release_assets",
     opts + {owner: owner, repo: repo, release_id: release_id},
   )
 }
 
 /** Fetch latest release metadata as a stable automation envelope. */
-pub fn github_latest_release(owner, repo, options = nil) {
+pub fn github_latest_release(harness: Harness, owner, repo, options = nil) {
   const opts = options ?? {}
-  return call("github.release.latest", opts + {owner: owner, repo: repo})
+  return call(harness, "github.release.latest", opts + {owner: owner, repo: repo})
 }
 
 /** Look up release metadata by one exact tag. */
 pub fn github_release(
+  harness: Harness,
   owner,
   repo,
   tag,
   options = nil,
 ) -> GithubConnectorResult<GithubReleaseLookup> {
   const opts = options ?? {}
-  const result = call("github.release.view", opts + {owner: owner, repo: repo, tag: tag})
+  const result = call(harness, "github.release.view", opts + {owner: owner, repo: repo, tag: tag})
   if is_err(result) {
     return Err(unwrap_err(result))
   }
@@ -1022,6 +1091,7 @@ pub fn github_release(
 
 /** Replace an exact release body under its observed release and tag leases. */
 pub fn github_release_edit_body(
+  harness: Harness,
   owner,
   repo,
   tag,
@@ -1031,6 +1101,7 @@ pub fn github_release_edit_body(
 ) -> GithubConnectorResult<GithubReleaseEditReceipt> {
   const opts = options ?? {}
   const result = call(
+    harness,
     "github.release.edit_body",
     opts
       + {
@@ -1053,15 +1124,27 @@ pub fn github_release_edit_body(
 /**
  * List release assets as a stable automation envelope. Defaults to latest release when no id is supplied.
  */
-pub fn github_release_assets(owner, repo, release_id = nil, options = nil) {
+pub fn github_release_assets(harness: Harness, owner, repo, release_id = nil, options = nil) {
   const opts = options ?? {}
-  return call("github.release.assets", opts + {owner: owner, repo: repo, release_id: release_id})
+  return call(
+    harness,
+    "github.release.assets",
+    opts + {owner: owner, repo: repo, release_id: release_id},
+  )
 }
 
 /** Create an issue from a small title/body template and variables. */
-pub fn issues_create_with_template(owner, repo, template, vars = nil, options = nil) {
+pub fn issues_create_with_template(
+  harness: Harness,
+  owner,
+  repo,
+  template,
+  vars = nil,
+  options = nil,
+) {
   const opts = options ?? {}
   return call(
+    harness,
     "issues.create_with_template",
     opts + {owner: owner, repo: repo, template: template, vars: vars ?? {}},
   )
@@ -1087,6 +1170,7 @@ const DEFAULT_LOG_TAIL_LINES = 200
  * `poll_failed`, `dispatch_failed`, or `dispatch_identity_missing`.
  */
 pub fn github_dispatch_workflow_and_resolve_run(
+  harness: Harness,
   owner,
   repo,
   workflow_id,
@@ -1096,7 +1180,15 @@ pub fn github_dispatch_workflow_and_resolve_run(
 ) {
   const opts = options ?? {}
   const auth = __auth_options(opts)
-  const dispatch = actions_workflow_dispatch(owner, repo, workflow_id, ref, inputs ?? {}, auth)
+  const dispatch = actions_workflow_dispatch(
+    harness,
+    owner,
+    repo,
+    workflow_id,
+    ref,
+    inputs ?? {},
+    auth,
+  )
   if is_err(dispatch) {
     return __workflow_wait_envelope(
       false,
@@ -1127,7 +1219,7 @@ pub fn github_dispatch_workflow_and_resolve_run(
     + {
     return_on_identity: true,
   }
-  return __workflow_wait_loop(owner, repo, direct_cfg)
+  return __workflow_wait_loop(harness, owner, repo, direct_cfg)
 }
 
 /**
@@ -1139,6 +1231,7 @@ pub fn github_dispatch_workflow_and_resolve_run(
  * `dispatch_identity_missing`, `run_not_found`, or `poll_failed`.
  */
 pub fn github_dispatch_workflow_and_wait(
+  harness: Harness,
   owner,
   repo,
   workflow_id,
@@ -1148,6 +1241,7 @@ pub fn github_dispatch_workflow_and_wait(
 ) {
   const opts = options ?? {}
   const identity = github_dispatch_workflow_and_resolve_run(
+    harness,
     owner,
     repo,
     workflow_id,
@@ -1159,6 +1253,7 @@ pub fn github_dispatch_workflow_and_wait(
     return identity
   }
   const monitored = github_wait_for_workflow_run(
+    harness,
     owner,
     repo,
     identity.run_id,
@@ -1173,16 +1268,22 @@ pub fn github_dispatch_workflow_and_wait(
  * run id or a filter `{workflow_id, event, branch, head_sha, created_after,
  * per_page}`. Returns the same envelope as `github_dispatch_workflow_and_wait`.
  */
-pub fn github_wait_for_workflow_run(owner, repo, run_id_or_filter, options = nil) {
+pub fn github_wait_for_workflow_run(
+  harness: Harness,
+  owner,
+  repo,
+  run_id_or_filter,
+  options = nil,
+) {
   const opts = options ?? {}
   const cfg = __workflow_wait_config(opts, run_id_or_filter)
-  return __workflow_wait_loop(owner, repo, cfg)
+  return __workflow_wait_loop(harness, owner, repo, cfg)
 }
 
 /** Enable auto-merge under an explicit `expected_head_oid` lease. */
-pub fn github_ensure_auto_merge(owner, repo, pull_number, options = nil) {
+pub fn github_ensure_auto_merge(harness: Harness, owner, repo, pull_number, options = nil) {
   const opts = options ?? {}
-  return pulls_enable_auto_merge(owner, repo, pull_number, opts)
+  return pulls_enable_auto_merge(harness, owner, repo, pull_number, opts)
 }
 
 /**
@@ -1192,11 +1293,11 @@ pub fn github_ensure_auto_merge(owner, repo, pull_number, options = nil) {
  * `green`, `failing`, `pending`, `timed_out`, or `unknown`. Pass
  * `include_logs: true` to attach a tail of failing-check Actions logs.
  */
-pub fn github_wait_for_pr_checks(owner, repo, pull_number_or_ref, options = nil) {
+pub fn github_wait_for_pr_checks(harness: Harness, owner, repo, pull_number_or_ref, options = nil) {
   const opts = options ?? {}
   const auth = __auth_options(opts)
   const resolved = __resolve_check_target(pull_number_or_ref, opts)
-  const head_sha_result = __resolve_head_sha(owner, repo, resolved, auth)
+  const head_sha_result = __resolve_head_sha(harness, owner, repo, resolved, auth)
   if is_err(head_sha_result) {
     return unwrap_err(head_sha_result)
   }
@@ -1204,7 +1305,7 @@ pub fn github_wait_for_pr_checks(owner, repo, pull_number_or_ref, options = nil)
   if head_sha == nil {
     return __checks_envelope(false, "unknown", nil, [], [], [], [], false)
   }
-  return __checks_wait_loop(owner, repo, head_sha, opts, auth)
+  return __checks_wait_loop(harness, owner, repo, head_sha, opts, auth)
 }
 
 /**
@@ -1213,11 +1314,15 @@ pub fn github_wait_for_pr_checks(owner, repo, pull_number_or_ref, options = nil)
  * matches, error}`. `pull_request` is the typed PR summary (the same shape as
  * `github.pr.list` entries) when found, otherwise `nil`.
  */
-pub fn github_find_open_pr(owner, repo, options) {
+pub fn github_find_open_pr(harness: Harness, owner, repo, options) {
   const opts = options ?? {}
   const auth = __auth_options(opts)
   const query = __pr_finder_query(opts)
-  const prs = __call_raw("github.pr.list", auth + {owner: owner, repo: repo, filters: query})
+  const prs = __call_raw(
+    harness,
+    "github.pr.list",
+    auth + {owner: owner, repo: repo, filters: query},
+  )
   if is_err(prs) {
     return __find_open_pr_error_envelope(unwrap_err(prs))
   }
@@ -1230,15 +1335,23 @@ pub fn github_find_open_pr(owner, repo, options) {
  * closed via the issues update endpoint because GitHub models PR lifecycle
  * through the issues resource.
  */
-pub fn github_close_pr(owner, repo, pull_number, comment = nil, options = nil) {
+pub fn github_close_pr(harness: Harness, owner, repo, pull_number, comment = nil, options = nil) {
   const opts = options ?? {}
   const auth = __auth_options(opts)
-  const comment_result = __post_close_comment_if_set(owner, repo, pull_number, comment, auth)
+  const comment_result = __post_close_comment_if_set(
+    harness,
+    owner,
+    repo,
+    pull_number,
+    comment,
+    auth,
+  )
   if is_err(comment_result) {
     return __close_pr_envelope(false, pull_number, false, nil, unwrap_err(comment_result))
   }
   const comment_posted = unwrap(comment_result)
   const updated = __call_raw(
+    harness,
     "issues.update",
     auth + {owner: owner, repo: repo, issue_number: pull_number, state: "closed"},
   )
@@ -1273,7 +1386,7 @@ fn __workflow_wait_config(opts, run_id_or_filter) {
   }
 }
 
-fn __workflow_wait_loop(owner, repo, cfg) {
+fn __workflow_wait_loop(harness: Harness, owner, repo, cfg) {
   let attempts = []
   let attempt = 0
   let run_id = cfg.initial_run_id
@@ -1282,7 +1395,14 @@ fn __workflow_wait_loop(owner, repo, cfg) {
   while attempt < cfg.max_attempts {
     attempt = attempt + 1
     if run_id == nil {
-      const located = __workflow_wait_locate_step(owner, repo, cfg.filter, cfg.auth, attempt)
+      const located = __workflow_wait_locate_step(
+        harness,
+        owner,
+        repo,
+        cfg.filter,
+        cfg.auth,
+        attempt,
+      )
       attempts = attempts + located.attempts
       if len(located?.candidate_run_ids ?? []) > 1 {
         return __workflow_wait_envelope(
@@ -1311,7 +1431,7 @@ fn __workflow_wait_loop(owner, repo, cfg) {
         )
           + {workflow_id: cfg.workflow_id}
       }
-      const probed = __workflow_wait_probe_step(owner, repo, run_id, cfg.auth, attempt)
+      const probed = __workflow_wait_probe_step(harness, owner, repo, run_id, cfg.auth, attempt)
       attempts = attempts + probed.attempts
       if probed.run != nil {
         last_run = probed.run
@@ -1332,7 +1452,7 @@ fn __workflow_wait_loop(owner, repo, cfg) {
       }
     }
     if attempt < cfg.max_attempts && cfg.poll_interval_ms > 0 {
-      sleep(cfg.poll_interval_ms)
+      harness.clock.sleep_ms(cfg.poll_interval_ms)
     }
   }
   return __workflow_wait_loop_terminal(cfg, attempts, run_id, last_run)
@@ -1356,8 +1476,8 @@ fn __workflow_wait_loop_terminal(cfg, attempts, run_id, last_run) {
   return __workflow_wait_envelope(false, "timed_out", cfg.workflow_id, run_id, attempts, true, nil)
 }
 
-fn __workflow_wait_locate_step(owner, repo, filter, auth, attempt) {
-  const located = __locate_workflow_run(owner, repo, filter, auth)
+fn __workflow_wait_locate_step(harness: Harness, owner, repo, filter, auth, attempt) {
+  const located = __locate_workflow_run(harness, owner, repo, filter, auth)
   if is_err(located) {
     return {
       attempts: [{attempt: attempt, kind: "list_failed", error: unwrap_err(located)}],
@@ -1376,8 +1496,9 @@ fn __workflow_wait_locate_step(owner, repo, filter, auth, attempt) {
   }
 }
 
-fn __workflow_wait_probe_step(owner, repo, run_id, auth, attempt) {
+fn __workflow_wait_probe_step(harness: Harness, owner, repo, run_id, auth, attempt) {
   const run = __call_raw(
+    harness,
     "actions.workflow_run.get",
     auth + {owner: owner, repo: repo, run_id: run_id},
   )
@@ -1404,7 +1525,7 @@ fn __workflow_wait_probe_step(owner, repo, run_id, auth, attempt) {
   }
 }
 
-fn __resolve_head_sha(owner, repo, resolved, auth) {
+fn __resolve_head_sha(harness: Harness, owner, repo, resolved, auth) {
   if resolved?.head_sha != nil && trim(to_string(resolved.head_sha)) != "" {
     return Ok(resolved.head_sha)
   }
@@ -1412,6 +1533,7 @@ fn __resolve_head_sha(owner, repo, resolved, auth) {
     return Ok(nil)
   }
   const pr = __call_raw(
+    harness,
     "pulls.get",
     auth + {owner: owner, repo: repo, pull_number: resolved.pull_number},
   )
@@ -1432,7 +1554,7 @@ fn __resolve_head_sha(owner, repo, resolved, auth) {
   return Ok(pr?.head?.sha)
 }
 
-fn __checks_wait_loop(owner, repo, head_sha, opts, auth) {
+fn __checks_wait_loop(harness: Harness, owner, repo, head_sha, opts, auth) {
   const poll_interval = __positive_int(opts?.poll_interval_ms, DEFAULT_CHECKS_POLL_INTERVAL_MS)
   const timeout_ms = __positive_int(opts?.timeout_ms, DEFAULT_CHECKS_TIMEOUT_MS)
   const max_attempts = __resolve_max_attempts(opts?.max_attempts, poll_interval, timeout_ms)
@@ -1441,13 +1563,14 @@ fn __checks_wait_loop(owner, repo, head_sha, opts, auth) {
   let last_payload = nil
   while attempt < max_attempts {
     attempt = attempt + 1
-    const probe = __checks_probe_step(owner, repo, head_sha, auth, attempt)
+    const probe = __checks_probe_step(harness, owner, repo, head_sha, auth, attempt)
     attempts = attempts + probe.attempts
     if probe.payload != nil {
       last_payload = probe.payload
     }
     if probe.terminal_state != nil {
       return __finalize_checks_payload(
+        harness,
         owner,
         repo,
         probe.payload,
@@ -1458,7 +1581,7 @@ fn __checks_wait_loop(owner, repo, head_sha, opts, auth) {
       )
     }
     if attempt < max_attempts && poll_interval > 0 {
-      sleep(poll_interval)
+      harness.clock.sleep_ms(poll_interval)
     }
   }
   if last_payload != nil {
@@ -1467,8 +1590,9 @@ fn __checks_wait_loop(owner, repo, head_sha, opts, auth) {
   return __checks_envelope(false, "timed_out", head_sha, [], [], [], attempts, true)
 }
 
-fn __checks_probe_step(owner, repo, head_sha, auth, attempt) {
+fn __checks_probe_step(harness: Harness, owner, repo, head_sha, auth, attempt) {
   const probe = __call_raw(
+    harness,
     "github.pr.checks",
     auth + {owner: owner, repo: repo, head_sha: head_sha},
   )
@@ -1493,10 +1617,13 @@ fn __checks_probe_step(owner, repo, head_sha, auth, attempt) {
   }
 }
 
-fn __finalize_checks_payload(owner, repo, payload, attempts, state, opts, auth) {
+fn __finalize_checks_payload(harness: Harness, owner, repo, payload, attempts, state, opts, auth) {
   const envelope = __checks_envelope_from_payload(true, state, payload, attempts, false)
   if state == "failing" && (opts?.include_logs ?? false) {
-    return envelope + {logs: __failing_check_logs(owner, repo, envelope.failing_checks, opts, auth)}
+    return envelope
+      + {
+      logs: __failing_check_logs(harness, owner, repo, envelope.failing_checks, opts, auth),
+    }
   }
   return envelope
 }
@@ -1559,11 +1686,12 @@ fn __find_open_pr_envelope(matches) {
   }
 }
 
-fn __post_close_comment_if_set(owner, repo, pull_number, comment, auth) {
+fn __post_close_comment_if_set(harness: Harness, owner, repo, pull_number, comment, auth) {
   if comment == nil || trim(to_string(comment)) == "" {
     return Ok(false)
   }
   const posted = __call_raw(
+    harness,
     "issues.create_comment",
     auth + {owner: owner, repo: repo, issue_number: pull_number, body: to_string(comment)},
   )
@@ -1627,8 +1755,8 @@ fn __extract_dispatch_run_id(dispatched) {
   return dispatched?.workflow_run_id ?? dispatched?.run_id ?? dispatched?.id
 }
 
-fn __locate_workflow_run(owner, repo, filter, auth) {
-  const resp = actions_workflow_runs(owner, repo, auth + __locate_args(filter))
+fn __locate_workflow_run(harness: Harness, owner, repo, filter, auth) {
+  const resp = actions_workflow_runs(harness, owner, repo, auth + __locate_args(filter))
   if is_err(resp) {
     return resp
   }
@@ -1820,25 +1948,29 @@ fn __classify_check(check) {
   return "failing"
 }
 
-fn __failing_check_logs(owner, repo, failing_checks, opts, auth) {
+fn __failing_check_logs(harness: Harness, owner, repo, failing_checks, opts, auth) {
   const tail_lines = max(
     1,
     to_int(opts?.log_tail_lines ?? DEFAULT_LOG_TAIL_LINES) ?? DEFAULT_LOG_TAIL_LINES,
   )
   let summaries = []
   for c in failing_checks ?? [] {
-    summaries = summaries + [__summarize_failing_check(owner, repo, c, tail_lines, auth)]
+    summaries = summaries + [__summarize_failing_check(harness, owner, repo, c, tail_lines, auth)]
   }
   return summaries
 }
 
-fn __summarize_failing_check(owner, repo, check, tail_lines, auth) {
+fn __summarize_failing_check(harness: Harness, owner, repo, check, tail_lines, auth) {
   const url = check?.details_url ?? check?.html_url
   const run_id = __extract_actions_run_id(url)
   if run_id == nil {
     return __log_summary(check, nil, nil, 0, false, "no_actions_run_url")
   }
-  const logs = __call_raw("github.actions.logs", auth + {owner: owner, repo: repo, run_id: run_id})
+  const logs = __call_raw(
+    harness,
+    "github.actions.logs",
+    auth + {owner: owner, repo: repo, run_id: run_id},
+  )
   if is_err(logs) {
     return __log_summary(check, run_id, nil, 0, false, unwrap_err(logs))
   }
@@ -1896,7 +2028,7 @@ fn __pr_matches_labels(pr, labels) {
   return true
 }
 
-fn __github_pr_list(args, cfg) {
+fn __github_pr_list(harness: Harness, args, cfg) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -1917,6 +2049,7 @@ fn __github_pr_list(args, cfg) {
     filters["head"] = r.owner + ":" + head
   }
   const pulls = __github_json(
+    harness,
     "GET",
     __github_api_url(
       cfg.api_base_url,
@@ -1945,7 +2078,7 @@ fn __github_pr_list(args, cfg) {
   return typed
 }
 
-fn __github_pr_create(args, cfg) {
+fn __github_pr_create(harness: Harness, args, cfg) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -1979,7 +2112,7 @@ fn __github_pr_create(args, cfg) {
       request[field] = args.get(field)
     }
   }
-  const created = __pulls_create(request, cfg)
+  const created = __pulls_create(harness, request, cfg)
   if is_err(created) {
     return created
   }
@@ -1991,7 +2124,7 @@ fn __github_pr_create(args, cfg) {
   return receipt
 }
 
-fn __github_pr_view(args, cfg) {
+fn __github_pr_view(harness: Harness, args, cfg) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -2002,6 +2135,7 @@ fn __github_pr_view(args, cfg) {
     return __err("schema_drift", "github.pr.view requires number, pr_number, or pull_number")
   }
   const pull = __github_json(
+    harness,
     "GET",
     __github_api_url(
       cfg.api_base_url,
@@ -2018,7 +2152,7 @@ fn __github_pr_view(args, cfg) {
     return valid
   }
   const base_branch = pull?.base?.ref ?? args?.branch ?? args?.base_branch
-  const protection = __github_branch_protection_raw(r, base_branch, cfg)
+  const protection = __github_branch_protection_raw(harness, r, base_branch, cfg)
   let protection_evidence = nil
   if is_err(protection) {
     const protection_error = unwrap_err(protection)
@@ -2030,6 +2164,7 @@ fn __github_pr_view(args, cfg) {
     protection_evidence = __branch_protection_summary(unwrap(protection), base_branch)
   }
   const membership = __github_merge_queue_membership(
+    harness,
     args + {owner: r.owner, repo: r.name, pull_number: number},
     cfg,
   )
@@ -2046,7 +2181,7 @@ fn __github_pr_view(args, cfg) {
   return __typed_pr_view(pull, protection_evidence, queue_evidence)
 }
 
-fn __github_pr_edit(args, cfg) {
+fn __github_pr_edit(harness: Harness, args, cfg) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -2056,14 +2191,18 @@ fn __github_pr_edit(args, cfg) {
   if number == nil {
     return __err("schema_drift", "github.pr.edit requires number, pr_number, or pull_number")
   }
-  const updated = __pulls_update(args + {owner: r.owner, repo: r.name, pull_number: number}, cfg)
+  const updated = __pulls_update(
+    harness,
+    args + {owner: r.owner, repo: r.name, pull_number: number},
+    cfg,
+  )
   if is_err(updated) {
     return updated
   }
   return __typed_pr_edit(updated)
 }
 
-fn __github_pr_files(args, cfg) {
+fn __github_pr_files(harness: Harness, args, cfg) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -2074,6 +2213,7 @@ fn __github_pr_files(args, cfg) {
     return __err("schema_drift", "github.pr.files requires number, pr_number, or pull_number")
   }
   const files = __github_json(
+    harness,
     "GET",
     __github_api_url(
       cfg.api_base_url,
@@ -2116,7 +2256,7 @@ fn __github_pr_files(args, cfg) {
   }
 }
 
-fn __github_pr_commits(args, cfg) {
+fn __github_pr_commits(harness: Harness, args, cfg) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -2134,7 +2274,7 @@ fn __github_pr_commits(args, cfg) {
   if per_page == nil {
     return __err("schema_drift", "github.pr.commits per_page must be an integer from 1 to 100")
   }
-  const initial = __github_pull_identity(r, number, cfg, "github.pr.commits")
+  const initial = __github_pull_identity(harness, r, number, cfg, "github.pr.commits")
   if is_err(initial) {
     return initial
   }
@@ -2154,7 +2294,7 @@ fn __github_pr_commits(args, cfg) {
   if expected_head_oid != "" && expected_head_oid != head_sha {
     return __stale_pr_head(expected_head_oid, head_sha)
   }
-  const pages = __github_pr_commit_pages(r, number, expected_commit_count, per_page, cfg)
+  const pages = __github_pr_commit_pages(harness, r, number, expected_commit_count, per_page, cfg)
   if is_err(pages) {
     return pages
   }
@@ -2168,7 +2308,7 @@ fn __github_pr_commits(args, cfg) {
   if terminal_sha != head_sha {
     return __stale_pr_head(head_sha, terminal_sha)
   }
-  const final = __github_pull_identity(r, number, cfg, "github.pr.commits")
+  const final = __github_pull_identity(harness, r, number, cfg, "github.pr.commits")
   if is_err(final) {
     return final
   }
@@ -2202,12 +2342,13 @@ fn __github_pr_commits(args, cfg) {
   return result
 }
 
-fn __github_pr_commit_pages(repo, number, expected_commit_count, per_page, cfg) {
+fn __github_pr_commit_pages(harness: Harness, repo, number, expected_commit_count, per_page, cfg) {
   let commits: list<GithubPullRequestCommit> = []
   let seen_shas = {}
   let page = 1
   while page <= MAX_PULL_REQUEST_COMMIT_PAGES {
     const raw_page = __github_json(
+      harness,
       "GET",
       __github_api_url(
         cfg.api_base_url,
@@ -2261,8 +2402,9 @@ fn __github_pr_commit_pages(repo, number, expected_commit_count, per_page, cfg) 
   return Ok({commits: commits, pages_fetched: page})
 }
 
-fn __github_pr_comment(args, cfg) {
+fn __github_pr_comment(harness: Harness, args, cfg) {
   const commented = __github_issue_comment(
+    harness,
     args + {issue_number: args?.pr_number ?? args?.number ?? args?.pull_number},
     cfg,
   )
@@ -2274,7 +2416,7 @@ fn __github_pr_comment(args, cfg) {
   return result
 }
 
-fn __github_pr_checks(args, cfg) {
+fn __github_pr_checks(harness: Harness, args, cfg) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -2285,6 +2427,7 @@ fn __github_pr_checks(args, cfg) {
   let pull = nil
   if (head_sha == nil || trim(to_string(head_sha)) == "") && number != nil {
     const fetched = __github_json(
+      harness,
       "GET",
       __github_api_url(
         cfg.api_base_url,
@@ -2306,6 +2449,7 @@ fn __github_pr_checks(args, cfg) {
     )
   }
   const envelope = __github_json(
+    harness,
     "GET",
     __github_api_url(
       cfg.api_base_url,
@@ -2332,7 +2476,7 @@ fn __github_pr_checks(args, cfg) {
   }
 }
 
-fn __github_pr_merge(args, cfg) {
+fn __github_pr_merge(harness: Harness, args, cfg) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -2345,6 +2489,7 @@ fn __github_pr_merge(args, cfg) {
   const method = args?.method ?? args?.merge_method ?? args?.options?.merge_method ?? "merge"
   const options = args?.options ?? {}
   const merged = __pulls_merge_safe(
+    harness,
     options
       + args
       + {owner: r.owner, repo: r.name, pull_number: number, merge_method: method},
@@ -2362,7 +2507,7 @@ fn __github_pr_merge(args, cfg) {
     + {repo: r.full_name, pull_number: number, requested_method: method, state: "merged"}
 }
 
-fn __github_pr_enable_auto_merge(args, cfg) {
+fn __github_pr_enable_auto_merge(harness: Harness, args, cfg) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -2375,10 +2520,14 @@ fn __github_pr_enable_auto_merge(args, cfg) {
       "github.pr.enable_auto_merge requires number, pr_number, or pull_number",
     )
   }
-  return __pulls_enable_auto_merge(args + {owner: r.owner, repo: r.name, pull_number: number}, cfg)
+  return __pulls_enable_auto_merge(
+    harness,
+    args + {owner: r.owner, repo: r.name, pull_number: number},
+    cfg,
+  )
 }
 
-fn __github_actions_workflow_dispatch(args, cfg) {
+fn __github_actions_workflow_dispatch(harness: Harness, args, cfg) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -2393,6 +2542,7 @@ fn __github_actions_workflow_dispatch(args, cfg) {
   }
   const ref = args?.ref ?? args?.branch ?? "main"
   const resolved = github_dispatch_workflow_and_resolve_run(
+    harness,
     r.owner,
     r.name,
     workflow_id,
@@ -2412,7 +2562,7 @@ fn __github_actions_workflow_dispatch(args, cfg) {
   return unwrap(receipt)
 }
 
-fn __github_actions_runs(args, cfg) {
+fn __github_actions_runs(harness: Harness, args, cfg) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -2434,7 +2584,7 @@ fn __github_actions_runs(args, cfg) {
   if page == nil {
     return __err("schema_drift", "github.actions.runs page must be a positive integer")
   }
-  const response = __actions_workflow_runs_list(args + {owner: r.owner, repo: r.name}, cfg)
+  const response = __actions_workflow_runs_list(harness, args + {owner: r.owner, repo: r.name}, cfg)
   if is_err(response) {
     return response
   }
@@ -2471,13 +2621,13 @@ fn __github_actions_runs(args, cfg) {
   return result
 }
 
-fn __github_actions_run(args, cfg) {
+fn __github_actions_run(harness: Harness, args, cfg) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
   }
   const r = unwrap(repo)
-  const run = __actions_workflow_run_get(args + {owner: r.owner, repo: r.name}, cfg)
+  const run = __actions_workflow_run_get(harness, args + {owner: r.owner, repo: r.name}, cfg)
   if is_err(run) {
     return run
   }
@@ -2488,13 +2638,13 @@ fn __github_actions_run(args, cfg) {
   return unwrap(typed)
 }
 
-fn __github_actions_run_jobs(args, cfg) {
+fn __github_actions_run_jobs(harness: Harness, args, cfg) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
   }
   const r = unwrap(repo)
-  const response = __actions_workflow_run_jobs(args + {owner: r.owner, repo: r.name}, cfg)
+  const response = __actions_workflow_run_jobs(harness, args + {owner: r.owner, repo: r.name}, cfg)
   if is_err(response) {
     return response
   }
@@ -2527,7 +2677,7 @@ fn __github_actions_run_jobs(args, cfg) {
   }
 }
 
-fn __github_actions_run_cancel(args, cfg) {
+fn __github_actions_run_cancel(harness: Harness, args, cfg) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -2538,6 +2688,7 @@ fn __github_actions_run_cancel(args, cfg) {
     return __err("schema_drift", "github.actions.run_cancel requires a positive run_id")
   }
   const cancelled = __actions_workflow_run_cancel(
+    harness,
     args + {owner: r.owner, repo: r.name, run_id: run_id},
     cfg,
   )
@@ -2553,7 +2704,7 @@ fn __github_actions_run_cancel(args, cfg) {
   return receipt
 }
 
-fn __github_actions_logs(args, cfg) {
+fn __github_actions_logs(harness: Harness, args, cfg) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -2564,6 +2715,7 @@ fn __github_actions_logs(args, cfg) {
   let check_run = nil
   if (run_id == nil || trim(to_string(run_id)) == "") && check_id != nil {
     check_run = __github_json(
+      harness,
       "GET",
       __github_api_url(
         cfg.api_base_url,
@@ -2584,6 +2736,7 @@ fn __github_actions_logs(args, cfg) {
     )
   }
   const logs = __github_text(
+    harness,
     "GET",
     __github_api_url(
       cfg.api_base_url,
@@ -2610,20 +2763,20 @@ fn __github_actions_logs(args, cfg) {
   }
 }
 
-fn __github_release_latest(args, cfg) {
+fn __github_release_latest(harness: Harness, args, cfg) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return __release_error_envelope(nil, unwrap_err(repo))
   }
   const r = unwrap(repo)
-  const release = __repos_get_latest_release(args + {owner: r.owner, repo: r.name}, cfg)
+  const release = __repos_get_latest_release(harness, args + {owner: r.owner, repo: r.name}, cfg)
   if is_err(release) {
     return __release_error_envelope(r.full_name, unwrap_err(release))
   }
   return __release_envelope(r.full_name, unwrap(release))
 }
 
-fn __github_release_view(args, cfg) {
+fn __github_release_view(harness: Harness, args, cfg) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -2638,6 +2791,7 @@ fn __github_release_view(args, cfg) {
     return __err("schema_drift", "github.release.view requires a non-empty exact tag")
   }
   const release = __github_json(
+    harness,
     "GET",
     __github_api_url(
       cfg.api_base_url,
@@ -2649,7 +2803,7 @@ fn __github_release_view(args, cfg) {
   if is_err(release) {
     const error = unwrap_err(release)
     if __is_status_error(error, 404) {
-      const access = __prove_repository_access(r, cfg)
+      const access = __prove_repository_access(harness, r, cfg)
       if is_err(access) {
         return access
       }
@@ -2661,7 +2815,7 @@ fn __github_release_view(args, cfg) {
   if is_err(typed) {
     return typed
   }
-  const tag_lease = __github_tag_lease(r, tag, cfg)
+  const tag_lease = __github_tag_lease(harness, r, tag, cfg)
   if is_err(tag_lease) {
     return tag_lease
   }
@@ -2675,7 +2829,7 @@ fn __github_release_view(args, cfg) {
   }
 }
 
-fn __github_release_edit_body(args, cfg) {
+fn __github_release_edit_body(harness: Harness, args, cfg) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -2693,7 +2847,11 @@ fn __github_release_edit_body(args, cfg) {
       "github.release.edit_body requires tag, body, and the complete observed release/tag lease",
     )
   }
-  const observed = __github_release_view(args + {owner: r.owner, repo: r.name, tag: tag}, cfg)
+  const observed = __github_release_view(
+    harness,
+    args + {owner: r.owner, repo: r.name, tag: tag},
+    cfg,
+  )
   if is_err(observed) {
     return observed
   }
@@ -2723,6 +2881,7 @@ fn __github_release_edit_body(args, cfg) {
   }
   const body = to_string(args.body)
   const edited = __github_json(
+    harness,
     "PATCH",
     __github_api_url(
       cfg.api_base_url,
@@ -2754,8 +2913,9 @@ fn __github_release_edit_body(args, cfg) {
   }
 }
 
-fn __github_tag_lease(repo, tag, cfg) {
+fn __github_tag_lease(harness: Harness, repo, tag, cfg) {
   const ref = __github_json(
+    harness,
     "GET",
     __github_api_url(
       cfg.api_base_url,
@@ -2777,6 +2937,7 @@ fn __github_tag_lease(repo, tag, cfg) {
   let depth = 0
   while target_type == "tag" && depth < 16 {
     const object = __github_json(
+      harness,
       "GET",
       __github_api_url(
         cfg.api_base_url,
@@ -2801,7 +2962,7 @@ fn __github_tag_lease(repo, tag, cfg) {
   return Ok({tag_ref_oid: ref_oid, tag_target_oid: target_oid, tag_target_type: target_type})
 }
 
-fn __github_file_view(args, cfg) {
+fn __github_file_view(harness: Harness, args, cfg) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -2813,6 +2974,7 @@ fn __github_file_view(args, cfg) {
     return __err("schema_drift", "github.file.view requires a non-empty path and exact ref")
   }
   const content = __github_json(
+    harness,
     "GET",
     __github_api_url(
       cfg.api_base_url,
@@ -2824,7 +2986,7 @@ fn __github_file_view(args, cfg) {
   if is_err(content) {
     const error = unwrap_err(content)
     if __is_status_error(error, 404) {
-      const access = __prove_repository_access(r, cfg)
+      const access = __prove_repository_access(harness, r, cfg)
       if is_err(access) {
         return access
       }
@@ -2839,7 +3001,7 @@ fn __github_file_view(args, cfg) {
   return {repo: r.full_name, path: path, ref: ref, state: "found", found: true, file: unwrap(file)}
 }
 
-fn __github_commit_signature(args, cfg) {
+fn __github_commit_signature(harness: Harness, args, cfg) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -2850,6 +3012,7 @@ fn __github_commit_signature(args, cfg) {
     return __err("schema_drift", "github.commit.signature requires sha or ref")
   }
   const commit = __github_json(
+    harness,
     "GET",
     __github_api_url(
       cfg.api_base_url,
@@ -2908,7 +3071,7 @@ fn __typed_pull_request_commit(repo, commit) {
   return Ok(result)
 }
 
-fn __github_release_assets(args, cfg) {
+fn __github_release_assets(harness: Harness, args, cfg) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return __release_assets_error_envelope(nil, args?.release_id ?? args?.id, unwrap_err(repo))
@@ -2916,13 +3079,14 @@ fn __github_release_assets(args, cfg) {
   const r = unwrap(repo)
   let release_id = args?.release_id ?? args?.id
   if release_id == nil || trim(to_string(release_id)) == "" {
-    const release = __repos_get_latest_release(args + {owner: r.owner, repo: r.name}, cfg)
+    const release = __repos_get_latest_release(harness, args + {owner: r.owner, repo: r.name}, cfg)
     if is_err(release) {
       return __release_assets_error_envelope(r.full_name, nil, unwrap_err(release))
     }
     release_id = unwrap(release)?.id
   }
   const assets = __repos_list_release_assets(
+    harness,
     args + {owner: r.owner, repo: r.name, release_id: release_id},
     cfg,
   )
@@ -2932,7 +3096,7 @@ fn __github_release_assets(args, cfg) {
   return __release_assets_envelope(r.full_name, release_id, unwrap(assets))
 }
 
-fn __github_merge_queue_entries(args, cfg) {
+fn __github_merge_queue_entries(harness: Harness, args, cfg) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -2947,6 +3111,7 @@ fn __github_merge_queue_entries(args, cfg) {
     return __err("schema_drift", "github.merge_queue.entries limit must be from 1 to 100")
   }
   const response = __github_json(
+    harness,
     "POST",
     __github_api_url(cfg.api_base_url, "/graphql"),
     {
@@ -3001,7 +3166,7 @@ fn __github_merge_queue_entries(args, cfg) {
   return result
 }
 
-fn __github_merge_queue_membership(args, cfg) {
+fn __github_merge_queue_membership(harness: Harness, args, cfg) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -3017,6 +3182,7 @@ fn __github_merge_queue_membership(args, cfg) {
   let pull = args?.pull
   if pull == nil {
     pull = __github_json(
+      harness,
       "GET",
       __github_api_url(
         cfg.api_base_url,
@@ -3034,6 +3200,7 @@ fn __github_merge_queue_membership(args, cfg) {
     return valid
   }
   const response = __github_json(
+    harness,
     "POST",
     __github_api_url(cfg.api_base_url, "/graphql"),
     {
@@ -3078,7 +3245,7 @@ fn __github_merge_queue_membership(args, cfg) {
   return membership
 }
 
-fn __github_merge_queue_enqueue(args, cfg) {
+fn __github_merge_queue_enqueue(harness: Harness, args, cfg) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -3096,6 +3263,7 @@ fn __github_merge_queue_enqueue(args, cfg) {
     return __err("schema_drift", "github.merge_queue.enqueue requires expected_head_oid")
   }
   const pull = __github_json(
+    harness,
     "GET",
     __github_api_url(
       cfg.api_base_url,
@@ -3125,6 +3293,7 @@ fn __github_merge_queue_enqueue(args, cfg) {
     )
   }
   const response = __github_json(
+    harness,
     "POST",
     __github_api_url(cfg.api_base_url, "/graphql"),
     {
@@ -3167,13 +3336,14 @@ fn __github_merge_queue_enqueue(args, cfg) {
   return receipt
 }
 
-fn __github_issue_create(args, cfg) {
+fn __github_issue_create(harness: Harness, args, cfg) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
   }
   const r = unwrap(repo)
   return __github_json(
+    harness,
     "POST",
     __github_api_url(cfg.api_base_url, "/repos/" + r.owner + "/" + r.name + "/issues"),
     __body_without(
@@ -3184,7 +3354,7 @@ fn __github_issue_create(args, cfg) {
   )
 }
 
-fn __github_issue_comment(args, cfg) {
+fn __github_issue_comment(harness: Harness, args, cfg) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -3201,6 +3371,7 @@ fn __github_issue_comment(args, cfg) {
     return __err("schema_drift", "github issue comment helpers require a non-empty body")
   }
   const comment = __github_json(
+    harness,
     "POST",
     __github_api_url(
       cfg.api_base_url,
@@ -3227,21 +3398,21 @@ fn __github_issue_comment(args, cfg) {
   }
 }
 
-fn __github_branch_protection(args, cfg) {
+fn __github_branch_protection(harness: Harness, args, cfg) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
   }
   const r = unwrap(repo)
   const branch = args?.branch ?? args?.base_branch ?? args?.base
-  const protection = __github_branch_protection_raw(r, branch, cfg)
+  const protection = __github_branch_protection_raw(harness, r, branch, cfg)
   if is_err(protection) {
     return protection
   }
   return __branch_protection_summary(unwrap(protection), branch)
 }
 
-fn __issues_create_with_template(args, cfg) {
+fn __issues_create_with_template(harness: Harness, args, cfg) {
   const template = args?.template ?? {}
   const title_template = if type_of(template) == "dict" {
     template?.title ?? args?.title_template ?? args?.title ?? "Merge Captain follow-up"
@@ -3285,6 +3456,7 @@ fn __issues_create_with_template(args, cfg) {
     body["milestone"] = milestone
   }
   return __github_json(
+    harness,
     "POST",
     __github_api_url(cfg.api_base_url, "/repos/" + args.owner + "/" + args.repo + "/issues"),
     body,
@@ -3292,8 +3464,9 @@ fn __issues_create_with_template(args, cfg) {
   )
 }
 
-fn __pulls_list_with_checks(args, cfg) {
+fn __pulls_list_with_checks(harness: Harness, args, cfg) {
   const graph = __github_json(
+    harness,
     "POST",
     __github_api_url(cfg.api_base_url, "/graphql"),
     {
@@ -3323,8 +3496,9 @@ fn __pulls_list_with_checks(args, cfg) {
   return pulls
 }
 
-fn __pulls_merge_safe(args, cfg) {
+fn __pulls_merge_safe(harness: Harness, args, cfg) {
   const pull = __github_json(
+    harness,
     "GET",
     __github_api_url(
       cfg.api_base_url,
@@ -3338,6 +3512,7 @@ fn __pulls_merge_safe(args, cfg) {
   }
   const base_branch = pull?.base?.ref ?? args?.base_branch
   const protection_result = __github_branch_protection_raw(
+    harness,
     {owner: to_string(args.owner), name: to_string(args.repo)},
     base_branch,
     cfg,
@@ -3355,6 +3530,7 @@ fn __pulls_merge_safe(args, cfg) {
     )
   }
   const merged = __github_json(
+    harness,
     "PUT",
     __github_api_url(
       cfg.api_base_url,
@@ -3373,7 +3549,7 @@ fn __pulls_merge_safe(args, cfg) {
     merge: __merge_annotation(merged, args),
   }
   if args?.delete_branch ?? false {
-    const deleted = __delete_pull_head_branch(args, pull, cfg)
+    const deleted = __delete_pull_head_branch(harness, args, pull, cfg)
     if is_err(deleted) {
       return deleted
     }
@@ -3382,7 +3558,7 @@ fn __pulls_merge_safe(args, cfg) {
   return result
 }
 
-fn __pulls_enable_auto_merge(args, cfg) {
+fn __pulls_enable_auto_merge(harness: Harness, args, cfg) {
   const expected_head_oid = trim(to_string(args?.expected_head_oid ?? args?.expectedHeadOid ?? ""))
   if expected_head_oid == "" {
     return __err(
@@ -3391,6 +3567,7 @@ fn __pulls_enable_auto_merge(args, cfg) {
     )
   }
   const pull = __github_json(
+    harness,
     "GET",
     __github_api_url(
       cfg.api_base_url,
@@ -3435,6 +3612,7 @@ fn __pulls_enable_auto_merge(args, cfg) {
     return __err("schema_drift", "GitHub PR response did not include node_id for auto-merge")
   }
   const graph = __github_json(
+    harness,
     "POST",
     __github_api_url(cfg.api_base_url, "/graphql"),
     {
@@ -3481,8 +3659,9 @@ fn __pulls_enable_auto_merge(args, cfg) {
   }
 }
 
-fn __repos_get_text(args, cfg) {
+fn __repos_get_text(harness: Harness, args, cfg) {
   const content = __github_json(
+    harness,
     "GET",
     __github_api_url(
       cfg.api_base_url,
@@ -3532,8 +3711,9 @@ fn __repos_get_text(args, cfg) {
   }
 }
 
-fn __repos_get_latest_release(args, cfg) {
+fn __repos_get_latest_release(harness: Harness, args, cfg) {
   return __github_json(
+    harness,
     "GET",
     __github_api_url(
       cfg.api_base_url,
@@ -3544,12 +3724,13 @@ fn __repos_get_latest_release(args, cfg) {
   )
 }
 
-fn __repos_list_release_assets(args, cfg) {
+fn __repos_list_release_assets(harness: Harness, args, cfg) {
   const release_id = args?.release_id ?? args?.id
   if release_id == nil || trim(to_string(release_id)) == "" {
     return __err("schema_drift", "repos.list_release_assets requires release_id or id")
   }
   return __github_json(
+    harness,
     "GET",
     __github_api_url(
       cfg.api_base_url,
@@ -3562,7 +3743,7 @@ fn __repos_list_release_assets(args, cfg) {
   )
 }
 
-fn __actions_workflow_dispatch(args, cfg) {
+fn __actions_workflow_dispatch(harness: Harness, args, cfg) {
   const workflow_id = args?.workflow_id ?? args?.workflow ?? args?.workflow_file
   if workflow_id == nil || trim(to_string(workflow_id)) == "" {
     return __err(
@@ -3573,6 +3754,7 @@ fn __actions_workflow_dispatch(args, cfg) {
   const ref = args?.ref ?? args?.branch ?? "main"
   const body = {ref: ref, inputs: args?.inputs ?? {}, return_run_details: true}
   return __github_json(
+    harness,
     "POST",
     __github_api_url(
       cfg.api_base_url,
@@ -3587,7 +3769,7 @@ fn __actions_workflow_dispatch(args, cfg) {
   )
 }
 
-fn __actions_workflow_runs_list(args, cfg) {
+fn __actions_workflow_runs_list(harness: Harness, args, cfg) {
   const workflow_id = args?.workflow_id ?? args?.workflow ?? args?.workflow_file
   const path = if workflow_id == nil || trim(to_string(workflow_id)) == "" {
     "/repos/" + args.owner + "/" + args.repo + "/actions/runs"
@@ -3599,6 +3781,7 @@ fn __actions_workflow_runs_list(args, cfg) {
       + "/runs"
   }
   return __github_json(
+    harness,
     "GET",
     __github_api_url(cfg.api_base_url, path + __workflow_runs_query(args)),
     nil,
@@ -3606,7 +3789,7 @@ fn __actions_workflow_runs_list(args, cfg) {
   )
 }
 
-fn __actions_workflow_run_get(args, cfg) {
+fn __actions_workflow_run_get(harness: Harness, args, cfg) {
   const run_id = __actions_run_id(args?.run_id ?? args?.id)
   if run_id == nil {
     return __err(
@@ -3615,6 +3798,7 @@ fn __actions_workflow_run_get(args, cfg) {
     )
   }
   return __github_json(
+    harness,
     "GET",
     __github_api_url(
       cfg.api_base_url,
@@ -3625,7 +3809,7 @@ fn __actions_workflow_run_get(args, cfg) {
   )
 }
 
-fn __actions_workflow_run_jobs(args, cfg) {
+fn __actions_workflow_run_jobs(harness: Harness, args, cfg) {
   const run_id = __actions_run_id(args?.run_id)
   if run_id == nil {
     return __err("schema_drift", "actions.workflow_run.jobs requires a positive decimal run_id")
@@ -3644,6 +3828,7 @@ fn __actions_workflow_run_jobs(args, cfg) {
     return __err("schema_drift", "actions.workflow_run.jobs page must be a positive integer")
   }
   return __github_json(
+    harness,
     "GET",
     __github_api_url(
       cfg.api_base_url,
@@ -3657,12 +3842,13 @@ fn __actions_workflow_run_jobs(args, cfg) {
   )
 }
 
-fn __actions_workflow_run_cancel(args, cfg) {
+fn __actions_workflow_run_cancel(harness: Harness, args, cfg) {
   const run_id = __actions_run_id(args?.run_id)
   if run_id == nil {
     return __err("schema_drift", "actions.workflow_run.cancel requires a positive run_id")
   }
   return __github_json(
+    harness,
     "POST",
     __github_api_url(
       cfg.api_base_url,
@@ -3728,7 +3914,7 @@ fn __runner_scope_prefix(args) {
  * require the matching read permission.
  */
 @complexity(allow)
-fn __actions_runners_dispatch(method, args, cfg) {
+fn __actions_runners_dispatch(harness: Harness, method, args, cfg) {
   const runner_id = args?.runner_id ?? args?.id
   if method == "actions.runner_groups.list" || method == "actions.runner_groups.create" {
     const org = args?.org
@@ -3740,9 +3926,15 @@ fn __actions_runners_dispatch(method, args, cfg) {
       "/orgs/" + url_encode(to_string(org)) + "/actions/runner-groups",
     )
     if method == "actions.runner_groups.create" {
-      return __github_json("POST", url, __body_without(args, __config_keys() + ["org"]), cfg)
+      return __github_json(
+        harness,
+        "POST",
+        url,
+        __body_without(args, __config_keys() + ["org"]),
+        cfg,
+      )
     }
-    return __github_json("GET", url + __pagination_query(args), nil, cfg)
+    return __github_json(harness, "GET", url + __pagination_query(args), nil, cfg)
   }
   if method == "actions.runner_groups.get" || method == "actions.runner_groups.update"
     || method
@@ -3758,6 +3950,7 @@ fn __actions_runners_dispatch(method, args, cfg) {
     )
     if method == "actions.runner_groups.update" {
       return __github_json(
+        harness,
         "PATCH",
         url,
         __body_without(args, __config_keys() + ["org", "runner_group_id", "group_id", "id"]),
@@ -3765,9 +3958,9 @@ fn __actions_runners_dispatch(method, args, cfg) {
       )
     }
     if method == "actions.runner_groups.delete" {
-      return __github_json("DELETE", url, nil, cfg)
+      return __github_json(harness, "DELETE", url, nil, cfg)
     }
-    return __github_json("GET", url, nil, cfg)
+    return __github_json(harness, "GET", url, nil, cfg)
   }
   const prefix = __runner_scope_prefix(args)
   if is_err(prefix) {
@@ -3776,6 +3969,7 @@ fn __actions_runners_dispatch(method, args, cfg) {
   const base = unwrap(prefix) + "/actions/runners"
   if method == "actions.runners.registration_token" {
     return __github_json(
+      harness,
       "POST",
       __github_api_url(cfg.api_base_url, base + "/registration-token"),
       nil,
@@ -3784,6 +3978,7 @@ fn __actions_runners_dispatch(method, args, cfg) {
   }
   if method == "actions.runners.remove_token" {
     return __github_json(
+      harness,
       "POST",
       __github_api_url(cfg.api_base_url, base + "/remove-token"),
       nil,
@@ -3795,6 +3990,7 @@ fn __actions_runners_dispatch(method, args, cfg) {
       return __err("schema_drift", "actions.runners.generate_jitconfig requires `name`")
     }
     return __github_json(
+      harness,
       "POST",
       __github_api_url(cfg.api_base_url, base + "/generate-jitconfig"),
       __runner_jitconfig_body(args),
@@ -3802,10 +3998,17 @@ fn __actions_runners_dispatch(method, args, cfg) {
     )
   }
   if method == "actions.runners.downloads" {
-    return __github_json("GET", __github_api_url(cfg.api_base_url, base + "/downloads"), nil, cfg)
+    return __github_json(
+      harness,
+      "GET",
+      __github_api_url(cfg.api_base_url, base + "/downloads"),
+      nil,
+      cfg,
+    )
   }
   if method == "actions.runners.list" {
     return __github_json(
+      harness,
       "GET",
       __github_api_url(cfg.api_base_url, base + __pagination_query(args)),
       nil,
@@ -3818,9 +4021,9 @@ fn __actions_runners_dispatch(method, args, cfg) {
     }
     const url = __github_api_url(cfg.api_base_url, base + "/" + to_string(runner_id))
     if method == "actions.runners.delete" {
-      return __github_json("DELETE", url, nil, cfg)
+      return __github_json(harness, "DELETE", url, nil, cfg)
     }
-    return __github_json("GET", url, nil, cfg)
+    return __github_json(harness, "GET", url, nil, cfg)
   }
   if starts_with(method, "actions.runners.labels.") {
     if runner_id == nil {
@@ -3828,20 +4031,20 @@ fn __actions_runners_dispatch(method, args, cfg) {
     }
     const url = __github_api_url(cfg.api_base_url, base + "/" + to_string(runner_id) + "/labels")
     if method == "actions.runners.labels.list" {
-      return __github_json("GET", url, nil, cfg)
+      return __github_json(harness, "GET", url, nil, cfg)
     }
     if method == "actions.runners.labels.add" {
-      return __github_json("POST", url, {labels: args?.labels ?? []}, cfg)
+      return __github_json(harness, "POST", url, {labels: args?.labels ?? []}, cfg)
     }
     if method == "actions.runners.labels.replace" {
-      return __github_json("PUT", url, {labels: args?.labels ?? []}, cfg)
+      return __github_json(harness, "PUT", url, {labels: args?.labels ?? []}, cfg)
     }
     if method == "actions.runners.labels.remove" {
       const label = args?.name ?? args?.label
       if label != nil && trim(to_string(label)) != "" {
-        return __github_json("DELETE", url + "/" + url_encode(to_string(label)), nil, cfg)
+        return __github_json(harness, "DELETE", url + "/" + url_encode(to_string(label)), nil, cfg)
       }
-      return __github_json("DELETE", url, nil, cfg)
+      return __github_json(harness, "DELETE", url, nil, cfg)
     }
   }
   return __err("method_not_found", "unsupported runner method `" + method + "`")
@@ -3864,7 +4067,7 @@ fn __runner_jitconfig_body(args) {
  * contain the given commit. Used to recover the PR for `status` events and
  * fork pushes whose webhook `pull_requests[]` array is empty.
  */
-fn __repos_commit_pulls(args, cfg) {
+fn __repos_commit_pulls(harness: Harness, args, cfg) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -3875,6 +4078,7 @@ fn __repos_commit_pulls(args, cfg) {
     return __err("schema_drift", "repos.commit_pulls requires `sha`")
   }
   return __github_json(
+    harness,
     "GET",
     __github_api_url(
       cfg.api_base_url,
@@ -3901,7 +4105,7 @@ const DEFAULT_MERGEABLE_POLL_INTERVAL_MS = 1500
  * `poll_interval_ms` (default 1500ms) between attempts.
  */
 @complexity(allow)
-fn __pull_requests_resolve_mergeable(args, cfg) {
+fn __pull_requests_resolve_mergeable(harness: Harness, args, cfg) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return __mergeable_envelope(false, nil, "unknown", 0, false, nil, unwrap_err(repo))
@@ -3933,7 +4137,7 @@ fn __pull_requests_resolve_mergeable(args, cfg) {
   let last = nil
   while attempt < max_attempts {
     attempt = attempt + 1
-    const pull = __github_json("GET", url, nil, cfg)
+    const pull = __github_json(harness, "GET", url, nil, cfg)
     if is_err(pull) {
       return __mergeable_envelope(false, nil, "unknown", attempt, false, nil, unwrap_err(pull))
     }
@@ -3944,7 +4148,7 @@ fn __pull_requests_resolve_mergeable(args, cfg) {
       return __mergeable_envelope(true, mergeable, state, attempt, true, pull, nil)
     }
     if attempt < max_attempts && poll_interval > 0 {
-      sleep(poll_interval)
+      harness.clock.sleep_ms(poll_interval)
     }
   }
   return __mergeable_envelope(
@@ -3980,7 +4184,7 @@ fn __mergeable_envelope(ok, mergeable, mergeable_state, attempts, resolved, raw,
  * PR. Returns `{ok, found, pull_number, pull_request, source, error}` where
  * `source` is `payload` or `commit_pulls`.
  */
-pub fn github_resolve_pr_for_sha(owner, repo, sha, options = nil) {
+pub fn github_resolve_pr_for_sha(harness: Harness, owner, repo, sha, options = nil) {
   const opts = options ?? {}
   const payload_prs = opts?.pull_requests ?? []
   const from_payload = __first(payload_prs)
@@ -3995,7 +4199,11 @@ pub fn github_resolve_pr_for_sha(owner, repo, sha, options = nil) {
     }
   }
   const auth = __auth_options(opts)
-  const pulls = __call_raw("repos.commit_pulls", auth + {owner: owner, repo: repo, sha: sha})
+  const pulls = __call_raw(
+    harness,
+    "repos.commit_pulls",
+    auth + {owner: owner, repo: repo, sha: sha},
+  )
   if is_err(pulls) {
     return {
       ok: false,
@@ -4033,6 +4241,7 @@ pub fn github_resolve_pr_for_sha(owner, repo, sha, options = nil) {
  * `pull_requests.resolve_mergeable`.
  */
 pub fn github_resolve_mergeable(
+  harness: Harness,
   owner,
   repo,
   pull_number,
@@ -4040,6 +4249,7 @@ pub fn github_resolve_mergeable(
 ) -> GithubConnectorResult<GithubMergeability> {
   const opts = options ?? {}
   const result = call(
+    harness,
     "pull_requests.resolve_mergeable",
     opts + {owner: owner, repo: repo, pull_number: pull_number},
   )
@@ -4060,7 +4270,7 @@ const GITHUB_OAUTH_BASE_URL = "https://github.com"
  * refresh, so callers must persist the returned `refresh_token`.
  */
 @complexity(allow)
-fn __oauth_user_dispatch(method, args) {
+fn __oauth_user_dispatch(harness: Harness, method, args) {
   const client_id = args?.client_id ?? harness.env.get("GITHUB_OAUTH_CLIENT_ID")
   if client_id == nil || trim(to_string(client_id)) == "" {
     return __err("schema_drift", method + " requires `client_id`")
@@ -4071,7 +4281,13 @@ fn __oauth_user_dispatch(method, args) {
     if args?.scope != nil {
       body["scope"] = to_string(args.scope)
     }
-    return __oauth_post((args?.device_code_url ?? base) + "/login/device/code", body, args)
+    return __oauth_post(
+      harness.clock,
+      harness.net,
+      (args?.device_code_url ?? base) + "/login/device/code",
+      body,
+      args,
+    )
   }
   if method == "oauth.user.device_poll" {
     const device_code = args?.device_code
@@ -4079,6 +4295,8 @@ fn __oauth_user_dispatch(method, args) {
       return __err("schema_drift", "oauth.user.device_poll requires `device_code`")
     }
     return __oauth_post(
+      harness.clock,
+      harness.net,
       (args?.access_token_url ?? base) + "/login/oauth/access_token",
       {
         client_id: to_string(client_id),
@@ -4100,7 +4318,13 @@ fn __oauth_user_dispatch(method, args) {
     if args?.redirect_uri != nil {
       body["redirect_uri"] = to_string(args.redirect_uri)
     }
-    return __oauth_post((args?.access_token_url ?? base) + "/login/oauth/access_token", body, args)
+    return __oauth_post(
+      harness.clock,
+      harness.net,
+      (args?.access_token_url ?? base) + "/login/oauth/access_token",
+      body,
+      args,
+    )
   }
   if method == "oauth.user.refresh" {
     const refresh_token = args?.refresh_token
@@ -4115,13 +4339,21 @@ fn __oauth_user_dispatch(method, args) {
     if args?.client_secret != nil {
       body["client_secret"] = to_string(args.client_secret)
     }
-    return __oauth_post((args?.access_token_url ?? base) + "/login/oauth/access_token", body, args)
+    return __oauth_post(
+      harness.clock,
+      harness.net,
+      (args?.access_token_url ?? base) + "/login/oauth/access_token",
+      body,
+      args,
+    )
   }
   return __err("method_not_found", "unsupported oauth method `" + method + "`")
 }
 
-fn __oauth_post(url, body, args) {
+fn __oauth_post(clock: HarnessClock, net: HarnessNet, url, body, args) {
   const response = connector_http_json(
+    clock,
+    net,
     "POST",
     url,
     {
@@ -4296,7 +4528,7 @@ fn __graphql_errors_indicate_stale_head(errors) {
     || contains(message, "head sha")
 }
 
-fn __github_create_signed_commit(args, cfg) {
+fn __github_create_signed_commit(harness: Harness, args, cfg) {
   const owner = trim(to_string(args?.owner ?? ""))
   const repo = trim(to_string(args?.repo ?? ""))
   const branch = trim(to_string(args?.branch ?? ""))
@@ -4342,6 +4574,7 @@ fn __github_create_signed_commit(args, cfg) {
     message["body"] = body
   }
   const payload = __github_json(
+    harness,
     "POST",
     __github_api_url(cfg.api_base_url, "/graphql"),
     {
@@ -4549,11 +4782,12 @@ fn __repo_parts(args) {
   return __err("schema_drift", "github typed API requires repo as `owner/name` or owner + repo")
 }
 
-fn __github_branch_protection_raw(repo, branch, cfg) {
+fn __github_branch_protection_raw(harness: Harness, repo, branch, cfg) {
   if branch == nil || trim(to_string(branch)) == "" {
     return Ok(nil)
   }
   const protection = __github_json(
+    harness,
     "GET",
     __github_api_url(
       cfg.api_base_url,
@@ -4700,8 +4934,9 @@ fn __pull_merge_commit_oid(pull) {
   return lowercase(to_string(oid))
 }
 
-fn __github_pull_identity(repo, number, cfg, surface) {
+fn __github_pull_identity(harness: Harness, repo, number, cfg, surface) {
   const pull = __github_json(
+    harness,
     "GET",
     __github_api_url(
       cfg.api_base_url,
@@ -5261,7 +5496,7 @@ fn __merge_annotation(response, args) {
   return response
 }
 
-fn __delete_pull_head_branch(args, pull, cfg) {
+fn __delete_pull_head_branch(harness: Harness, args, pull, cfg) {
   const head_ref = pull?.head?.ref
   if head_ref == nil || trim(to_string(head_ref)) == "" {
     return __err("missing_head_ref", "cannot delete PR branch because pull.head.ref was missing")
@@ -5270,6 +5505,7 @@ fn __delete_pull_head_branch(args, pull, cfg) {
   const repo_owner = head_repo?.owner?.login ?? args.owner
   const repo_name = head_repo?.name ?? args.repo
   return __github_json(
+    harness,
     "DELETE",
     __github_api_url(
       cfg.api_base_url,
@@ -5281,16 +5517,16 @@ fn __delete_pull_head_branch(args, pull, cfg) {
 }
 
 /** Mint a GitHub App JWT using Harn jwt_sign and the configured app private key. */
-pub fn mint_app_jwt(config) {
+pub fn mint_app_jwt(clock: HarnessClock, secrets: HarnessSecrets, config) {
   const app_id = config?.app_id
   if app_id == nil {
     return __err("missing_app_id", "github connector requires app_id to mint JWT")
   }
-  const pem_result = __private_key_pem(config)
+  const pem_result = __private_key_pem(secrets, config)
   if is_err(pem_result) {
     return pem_result
   }
-  const now = __now_seconds(config)
+  const now = __now_seconds(clock, config)
   const backdate = config?.jwt_backdate_seconds ?? DEFAULT_JWT_BACKDATE_SECONDS
   const ttl = config?.jwt_ttl_seconds ?? DEFAULT_JWT_TTL_SECONDS
   const claims = {iss: to_string(app_id), iat: now - backdate, exp: now + ttl}
@@ -5298,35 +5534,39 @@ pub fn mint_app_jwt(config) {
 }
 
 /** Return a cached installation token or refresh it when stale. */
-pub fn installation_token(config) {
+pub fn installation_token(harness: Harness, config) {
   const resolved_result = __resolve_token_config(config)
   if is_err(resolved_result) {
     return resolved_result
   }
   const resolved = unwrap(resolved_result)
   const key = to_string(resolved.installation_id)
-  const now = __now_seconds(resolved)
-  const cached = __token_cache()[key]
+  const now = __now_seconds(harness.clock, resolved)
+  const cached = __token_cache(harness.runtime)[key]
   if cached != nil && cached.refresh_at > now {
     return cached.token
   }
   let token = nil
   mutex {
-    let cache = __token_cache()
+    let cache = __token_cache(harness.runtime)
     const again = cache[key]
-    if again != nil && again.refresh_at > __now_seconds(resolved) {
+    if again != nil && again.refresh_at > __now_seconds(harness.clock, resolved) {
       token = again.token
     } else {
-      const exchanged = __exchange_installation_token(resolved)
+      const exchanged = __exchange_installation_token(harness, resolved)
       if is_err(exchanged) {
         token = exchanged
       } else {
         const response = unwrap(exchanged)
         cache[key] = {
           token: response.token,
-          refresh_at: __token_refresh_at(response?.expires_at, __now_seconds(resolved), resolved),
+          refresh_at: __token_refresh_at(
+            response?.expires_at,
+            __now_seconds(harness.clock, resolved),
+            resolved,
+          ),
         }
-        store_set(TOKEN_CACHE_KEY, cache)
+        harness.runtime.store_set(TOKEN_CACHE_KEY, cache)
         token = response.token
       }
     }
@@ -5335,16 +5575,16 @@ pub fn installation_token(config) {
 }
 
 /** Clear all cached installation tokens. */
-pub fn reset_token_cache() {
-  store_delete(TOKEN_CACHE_KEY)
+pub fn reset_token_cache(runtime: HarnessRuntime) {
+  runtime.store_delete(TOKEN_CACHE_KEY)
 }
 
 /** Invalidate one cached installation token by installation id. */
-pub fn invalidate_installation_token(installation_id) {
+pub fn invalidate_installation_token(runtime: HarnessRuntime, installation_id) {
   const key = to_string(installation_id)
-  let cache = __token_cache()
+  let cache = __token_cache(runtime)
   cache.remove(key)
-  store_set(TOKEN_CACHE_KEY, cache)
+  runtime.store_set(TOKEN_CACHE_KEY, cache)
 }
 
 fn __state() -> GithubConnectorState {
@@ -5445,7 +5685,7 @@ fn __event_kind(raw, headers) {
   return __header(headers, "x-github-event") ?? raw?.kind ?? raw?.event
 }
 
-fn __signing_secret(raw) {
+fn __signing_secret(secrets: HarnessSecrets, raw) {
   const state = __state()
   const ctx_secret = state.ctx?.signing_secret ?? state.ctx?.secrets?.signing_secret
   if ctx_secret != nil && trim(to_string(ctx_secret)) != "" {
@@ -5463,7 +5703,7 @@ fn __signing_secret(raw) {
     }
   }
   const secret_id = __signing_secret_id(raw)
-  const secret = __secret_get_optional(secret_id)
+  const secret = __secret_get_optional(secrets, secret_id)
   if secret != nil && trim(to_string(secret)) != "" {
     return secret
   }
@@ -5511,12 +5751,12 @@ fn __secret_id_candidate(value, fallback_name) {
   return nil
 }
 
-fn __secret_get_optional(secret_id) {
+fn __secret_get_optional(secrets: HarnessSecrets, secret_id) {
   if secret_id == nil || trim(to_string(secret_id)) == "" {
     return nil
   }
   const resolved = try {
-    secret_get(to_string(secret_id))
+    secrets.read(to_string(secret_id))
   }
   if is_err(resolved) {
     return nil
@@ -5524,7 +5764,7 @@ fn __secret_get_optional(secret_id) {
   return to_string(unwrap(resolved))
 }
 
-fn __verify_github_signature(raw, headers, body_text) {
+fn __verify_github_signature(secrets: HarnessSecrets, raw, headers, body_text) {
   const signature = __header(headers, "x-hub-signature-256")
   if signature == nil || signature == "" {
     return __err("missing_signature", "missing x-hub-signature-256 header")
@@ -5532,7 +5772,7 @@ fn __verify_github_signature(raw, headers, body_text) {
   if !starts_with(signature, "sha256=") {
     return __err("invalid_signature", "x-hub-signature-256 must start with sha256=")
   }
-  const secret = __signing_secret(raw)
+  const secret = __signing_secret(secrets, raw)
   if secret == nil || trim(to_string(secret)) == "" {
     return __err("missing_secret", "github signing_secret is required")
   }
@@ -7147,7 +7387,7 @@ fn __occurred_at(event_kind, payload, raw) {
     ?.created_at
 }
 
-fn __outbound_config(args) {
+fn __outbound_config(harness: Harness, args) {
   const api_base_url = args?.api_base_url
     ?? harness.env.get_or(
     "GITHUB_API_BASE_URL",
@@ -7194,8 +7434,8 @@ fn __outbound_config(args) {
     to_string(installation_id),
   )
     == "" {
-    if __allow_gh_auth_fallback(args) {
-      const gh_token = __gh_auth_token(args)
+    if __allow_gh_auth_fallback(harness.env, args) {
+      const gh_token = __gh_auth_token(harness.env, harness.process, args)
       if is_err(gh_token) {
         return gh_token
       }
@@ -7236,7 +7476,7 @@ fn __outbound_config(args) {
       ?? DEFAULT_RATE_LIMIT_MAX_SLEEP_SECONDS,
   }
     + __http_policy_config(args)
-  const token_result = installation_token(resolved)
+  const token_result = installation_token(harness, resolved)
   if is_err(token_result) {
     return token_result
   }
@@ -7318,20 +7558,20 @@ pub fn github_auth_fallback_enabled(
   return environment_enabled
 }
 
-fn __allow_gh_auth_fallback(args) {
+fn __allow_gh_auth_fallback(env: HarnessEnv, args) {
   return github_auth_fallback_enabled(
     args,
-    harness.env.get_or("HARN_GITHUB_ALLOW_GH_AUTH_FALLBACK", "") == "1",
+    env.get_or("HARN_GITHUB_ALLOW_GH_AUTH_FALLBACK", "") == "1",
   )
 }
 
-fn __gh_auth_token(args) {
-  const env_token = args?.gh_token ?? harness.env.get("GH_TOKEN") ?? harness.env.get("GITHUB_TOKEN")
+fn __gh_auth_token(env: HarnessEnv, process: HarnessProcess, args) {
+  const env_token = args?.gh_token ?? env.get("GH_TOKEN") ?? env.get("GITHUB_TOKEN")
   if env_token != nil && trim(to_string(env_token)) != "" {
     return Ok(to_string(env_token))
   }
   const output = try {
-    exec("gh", "auth", "token")
+    process.exec("gh", "auth", "token")
   }
   if is_err(output) {
     return __err(
@@ -7570,7 +7810,7 @@ fn __ref_query(args) {
   return "?ref=" + url_encode(to_string(args.ref))
 }
 
-fn __api_call(args, cfg) {
+fn __api_call(harness: Harness, args, cfg) {
   const path = args?.path
   if path == nil || trim(to_string(path)) == "" {
     return __err("schema_drift", "api_call requires path")
@@ -7584,6 +7824,7 @@ fn __api_call(args, cfg) {
   const accept = args?.accept ?? "application/vnd.github+json"
   const parse_json = args?.parse_json ?? true
   return __github_request(
+    harness,
     method,
     __github_api_url(cfg.api_base_url, path),
     body,
@@ -7812,7 +8053,7 @@ fn __pulls_update_body(args) {
   return pr_edit_body(args, context_fields)
 }
 
-fn __pulls_update(args, cfg) {
+fn __pulls_update(harness: Harness, args, cfg) {
   const number = args?.pull_number ?? args?.number ?? args?.pr_number
   if number == nil {
     return __err("schema_drift", "pulls.update requires pull_number, number, or pr_number")
@@ -7822,6 +8063,7 @@ fn __pulls_update(args, cfg) {
     return body
   }
   return __github_json(
+    harness,
     "PATCH",
     __github_api_url(
       cfg.api_base_url,
@@ -7832,12 +8074,13 @@ fn __pulls_update(args, cfg) {
   )
 }
 
-fn __pulls_create(args, cfg) {
+fn __pulls_create(harness: Harness, args, cfg) {
   const body = __pull_create_body(args, cfg)
   if is_err(body) {
     return body
   }
   return __github_json(
+    harness,
     "POST",
     __github_api_url(cfg.api_base_url, "/repos/" + args.owner + "/" + args.repo + "/pulls"),
     unwrap(body),
@@ -7845,12 +8088,13 @@ fn __pulls_create(args, cfg) {
   )
 }
 
-fn __repos_create_or_update_file(args, cfg) {
+fn __repos_create_or_update_file(harness: Harness, args, cfg) {
   const body = __commit_write_body(args, ["owner", "repo", "path"], cfg)
   if is_err(body) {
     return body
   }
   return __github_json(
+    harness,
     "PUT",
     __github_api_url(
       cfg.api_base_url,
@@ -7862,12 +8106,13 @@ fn __repos_create_or_update_file(args, cfg) {
   )
 }
 
-fn __repos_delete_file(args, cfg) {
+fn __repos_delete_file(harness: Harness, args, cfg) {
   const body = __commit_write_body(args, ["owner", "repo", "path"], cfg)
   if is_err(body) {
     return body
   }
   return __github_json(
+    harness,
     "DELETE",
     __github_api_url(
       cfg.api_base_url,
@@ -7879,12 +8124,13 @@ fn __repos_delete_file(args, cfg) {
   )
 }
 
-fn __git_create_commit(args, cfg) {
+fn __git_create_commit(harness: Harness, args, cfg) {
   const body = __commit_write_body(args, ["owner", "repo"], cfg)
   if is_err(body) {
     return body
   }
   return __github_json(
+    harness,
     "POST",
     __github_api_url(cfg.api_base_url, "/repos/" + args.owner + "/" + args.repo + "/git/commits"),
     unwrap(body),
@@ -7965,8 +8211,9 @@ fn __release_assets_error_envelope(repo, release_id, error) {
   }
 }
 
-fn __prove_repository_access(repo, cfg) {
+fn __prove_repository_access(harness: Harness, repo, cfg) {
   const visible = __github_json(
+    harness,
     "GET",
     __github_api_url(cfg.api_base_url, "/repos/" + repo.owner + "/" + repo.name),
     nil,
@@ -7983,21 +8230,23 @@ fn __prove_repository_access(repo, cfg) {
 }
 
 @complexity(allow)
-fn __github_json(method, url, body, cfg) {
-  return __github_request(method, url, body, cfg, "application/vnd.github+json", true)
+fn __github_json(harness: Harness, method, url, body, cfg) {
+  return __github_request(harness, method, url, body, cfg, "application/vnd.github+json", true)
 }
 
-fn __github_text(method, url, cfg, accept) {
-  return __github_request(method, url, nil, cfg, accept, false)
+fn __github_text(harness: Harness, method, url, cfg, accept) {
+  return __github_request(harness, method, url, nil, cfg, accept, false)
 }
 
 @complexity(allow)
-fn __github_request(method, url, body, cfg, accept, parse_json) {
+fn __github_request(harness: Harness, method, url, body, cfg, accept, parse_json) {
   let current_token = cfg.installation_token
   let retried_rate_limit = false
   let retried_auth = false
   while true {
     const response = __github_policy_request(
+      harness.clock,
+      harness.net,
       method,
       url,
       body,
@@ -8008,15 +8257,15 @@ fn __github_request(method, url, body, cfg, accept, parse_json) {
     )
     if response.status == 401 && cfg.token_mode == "jwt" && !retried_auth {
       retried_auth = true
-      invalidate_installation_token(cfg.installation_id)
-      const refreshed = installation_token(cfg)
+      invalidate_installation_token(harness.runtime, cfg.installation_id)
+      const refreshed = installation_token(harness, cfg)
       if is_err(refreshed) {
         return refreshed
       }
       current_token = to_string(refreshed)
       continue
     }
-    const limited = __maybe_wait_for_rate_limit(response, cfg)
+    const limited = __maybe_wait_for_rate_limit(harness.clock, response, cfg)
     if is_err(limited) {
       return limited
     }
@@ -8026,7 +8275,7 @@ fn __github_request(method, url, body, cfg, accept, parse_json) {
       continue
     }
     if !(response.ok ?? false) {
-      return __github_request_error(response)
+      return __github_request_error(harness.clock, response)
     }
     if trim(response.body ?? "") == "" {
       return {status: response.status, headers: response.headers, body: ""}
@@ -8038,12 +8287,22 @@ fn __github_request(method, url, body, cfg, accept, parse_json) {
   }
 }
 
-fn __github_policy_request(method, url, body, cfg, current_token, accept, parse_json) {
+fn __github_policy_request(
+  clock: HarnessClock,
+  net: HarnessNet,
+  method,
+  url,
+  body,
+  cfg,
+  current_token,
+  accept,
+  parse_json,
+) {
   const options = __github_policy_request_options(body, cfg, current_token, accept)
   if parse_json {
-    return connector_http_json(method, url, options)
+    return connector_http_json(clock, net, method, url, options)
   }
-  return connector_http_request(method, url, options)
+  return connector_http_request(clock, net, method, url, options)
 }
 
 fn __github_policy_request_options(body, cfg, current_token, accept) {
@@ -8114,7 +8373,7 @@ fn __github_generic_retry_statuses(statuses) {
   return out
 }
 
-fn __github_request_error(response) {
+fn __github_request_error(clock: HarnessClock, response) {
   if response?.error?.category == "invalid_json" {
     return __err("invalid_response", "GitHub API returned invalid JSON")
   }
@@ -8142,7 +8401,7 @@ fn __github_request_error(response) {
       {http_status: response.status},
     )
   }
-  const code = __github_error_code(response)
+  const code = __github_error_code(clock, response)
   return __err(
     code,
     "github API request failed with status " + to_string(response.status),
@@ -8150,12 +8409,12 @@ fn __github_request_error(response) {
   )
 }
 
-fn __github_error_code(response) {
+fn __github_error_code(clock: HarnessClock, response) {
   if response.status == 401 {
     return "auth"
   }
   if response.status == 403 || response.status == 429 {
-    if __is_rate_limit_response(response) {
+    if __is_rate_limit_response(clock, response) {
       return "rate_limited"
     }
     const message = lowercase(__github_error_message(response))
@@ -8188,15 +8447,15 @@ fn __github_error_message(response) {
   return to_string(body_text ?? response?.error?.message ?? "")
 }
 
-fn __is_rate_limit_response(response) {
+fn __is_rate_limit_response(clock: HarnessClock, response) {
   if response.status == 429 {
     return true
   }
-  return trim(to_string(connector_http_rate_limit(response)?.remaining ?? "")) == "0"
+  return trim(to_string(connector_http_rate_limit(clock, response)?.remaining ?? "")) == "0"
 }
 
-fn __maybe_wait_for_rate_limit(response, cfg) {
-  const rate_limit = connector_http_rate_limit(response)
+fn __maybe_wait_for_rate_limit(clock: HarnessClock, response, cfg) {
+  const rate_limit = connector_http_rate_limit(clock, response)
   const remaining = rate_limit?.remaining
   if remaining == nil || trim(to_string(remaining)) != "0" {
     return Ok(false)
@@ -8211,7 +8470,7 @@ fn __maybe_wait_for_rate_limit(response, cfg) {
   if is_err(parsed_reset) {
     return Ok(true)
   }
-  const wait_seconds = unwrap(parsed_reset) - __now_seconds(cfg ?? {})
+  const wait_seconds = unwrap(parsed_reset) - __now_seconds(clock, cfg ?? {})
   const max_sleep = max(
     0,
     to_int(cfg?.rate_limit_max_sleep_seconds ?? DEFAULT_RATE_LIMIT_MAX_SLEEP_SECONDS)
@@ -8224,7 +8483,7 @@ fn __maybe_wait_for_rate_limit(response, cfg) {
     )
   }
   if wait_seconds > 0 {
-    sleep(wait_seconds * 1000)
+    clock.sleep_ms(wait_seconds * 1000)
   }
   return Ok(true)
 }
@@ -8261,14 +8520,14 @@ fn __resolve_token_config(config) {
   )
 }
 
-fn __token_cache() {
-  return store_get(TOKEN_CACHE_KEY) ?? {}
+fn __token_cache(runtime: HarnessRuntime) {
+  return runtime.store_get(TOKEN_CACHE_KEY) ?? {}
 }
 
-fn __private_key_pem(config) {
+fn __private_key_pem(secrets: HarnessSecrets, config) {
   if config?.private_key_secret != nil && trim(to_string(config.private_key_secret)) != "" {
     const resolved = try {
-      secret_get(to_string(config.private_key_secret))
+      secrets.read(to_string(config.private_key_secret))
     }
     if is_err(resolved) {
       return __err(
@@ -8288,8 +8547,8 @@ fn __private_key_pem(config) {
 }
 
 @complexity(allow)
-fn __exchange_installation_token(config) {
-  const jwt_result = mint_app_jwt(config)
+fn __exchange_installation_token(harness: Harness, config) {
+  const jwt_result = mint_app_jwt(harness.clock, harness.secrets, config)
   if is_err(jwt_result) {
     return jwt_result
   }
@@ -8299,6 +8558,8 @@ fn __exchange_installation_token(config) {
     "/app/installations/" + to_string(config.installation_id) + "/access_tokens",
   )
   const response = connector_http_json(
+    harness.clock,
+    harness.net,
     "POST",
     url,
     {
@@ -8353,9 +8614,9 @@ fn __token_refresh_at(expires_at, now, config) {
   return refresh_at
 }
 
-fn __now_seconds(config) {
+fn __now_seconds(clock: HarnessClock, config) {
   if config?.now != nil {
     return to_int(config.now)
   }
-  return to_int(date_parse(date_now_iso()))
+  return to_int(date_parse(clock.date_iso()))
 }

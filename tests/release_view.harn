@@ -14,12 +14,12 @@ fn release_fixture(tag) {
   }
 }
 
-pipeline test_release_view_by_tag(task) {
-  http_mock_clear()
+pipeline test_release_view_by_tag(harness: Harness, task) {
+  harness.testing.http_mock_clear()
   const base = "https://github-api.test"
   const auth = {api_base_url: base, installation_token: "token"}
   const tag = "v1.2.3+build/7"
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/releases/tags/v1.2.3%2Bbuild%2F7",
     {
@@ -28,7 +28,7 @@ pipeline test_release_view_by_tag(task) {
       headers: {"x-ratelimit-remaining": "10"},
     },
   )
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/git/ref/tags/v1.2.3%2Bbuild%2F7",
     {
@@ -42,7 +42,7 @@ pipeline test_release_view_by_tag(task) {
       headers: {"x-ratelimit-remaining": "9"},
     },
   )
-  const lookup = unwrap(github_release("octo-org", "octo-repo", tag, auth))
+  const lookup = unwrap(github_release(harness, "octo-org", "octo-repo", tag, auth))
   assert(lookup.found, "release view succeeds")
   assert_eq(lookup.repo, "octo-org/octo-repo", "repo is normalized")
   assert_eq(lookup.release.tag_name, tag, "tag is preserved")
@@ -53,26 +53,26 @@ pipeline test_release_view_by_tag(task) {
     "tag target is leased",
   )
   assert_eq(lookup.release.assets[0].name, "harn.tar.gz", "assets use the closed record")
-  assert_eq(len(http_mock_calls()), 2, "release and tag identity are observed")
+  assert_eq(len(harness.testing.http_mock_calls()), 2, "release and tag identity are observed")
 }
 
-pipeline test_release_view_requires_exact_tag(task) {
-  http_mock_clear()
+pipeline test_release_view_requires_exact_tag(harness: Harness, task) {
+  harness.testing.http_mock_clear()
   const base = "https://github-api.test"
   const auth = {api_base_url: base, installation_token: "token"}
-  const missing = call("github.release.view", auth + {repo: "octo-org/octo-repo"})
+  const missing = call(harness, "github.release.view", auth + {repo: "octo-org/octo-repo"})
   assert(is_err(missing), "missing exact tag fails closed")
-  const invalid = github_release("octo-org", "octo-repo", "   ", auth)
+  const invalid = github_release(harness, "octo-org", "octo-repo", "   ", auth)
   assert(is_err(invalid), "blank tag fails closed")
   assert_eq(unwrap_err(invalid).code, "schema_drift", "blank tag error category")
-  assert_eq(len(http_mock_calls()), 0, "blank tag performs no request")
+  assert_eq(len(harness.testing.http_mock_calls()), 0, "blank tag performs no request")
 }
 
-pipeline test_release_view_provider_error(task) {
-  http_mock_clear()
+pipeline test_release_view_provider_error(harness: Harness, task) {
+  harness.testing.http_mock_clear()
   const base = "https://github-api.test"
   const auth = {api_base_url: base, installation_token: "token"}
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/releases/tags/v9.9.9",
     {
@@ -81,7 +81,7 @@ pipeline test_release_view_provider_error(task) {
       headers: {"x-ratelimit-remaining": "10"},
     },
   )
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo",
     {
@@ -90,10 +90,10 @@ pipeline test_release_view_provider_error(task) {
       headers: {"x-ratelimit-remaining": "9"},
     },
   )
-  const missing = unwrap(github_release("octo-org", "octo-repo", "v9.9.9", auth))
+  const missing = unwrap(github_release(harness, "octo-org", "octo-repo", "v9.9.9", auth))
   assert_eq(missing.found, false, "accessible repository proves release absence")
   assert_eq(missing.state, "absent", "absence is explicit")
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/releases/tags/v9.9.8",
     {
@@ -102,7 +102,7 @@ pipeline test_release_view_provider_error(task) {
       headers: {"x-ratelimit-remaining": "10"},
     },
   )
-  const forbidden = github_release("octo-org", "octo-repo", "v9.9.8", auth)
+  const forbidden = github_release(harness, "octo-org", "octo-repo", "v9.9.8", auth)
   assert(is_err(forbidden), "permission failure remains typed")
   assert_eq(unwrap_err(forbidden).http_status, 403, "non-404 provider status is retained")
 }

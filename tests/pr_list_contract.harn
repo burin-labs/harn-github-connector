@@ -22,10 +22,10 @@ fn pull_fixture(number, head, merged_at = nil) {
   }
 }
 
-pipeline test_pr_list_qualifies_bare_head_to_repository_owner(task) {
-  http_mock_clear()
+pipeline test_pr_list_qualifies_bare_head_to_repository_owner(harness: Harness, task) {
+  harness.testing.http_mock_clear()
   const base = "https://github-api.test"
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base
       + "/repos/octo-org/octo-repo/pulls?state=open&head=octo-org%3Aautomation%2Fbump&base=main&per_page=10",
@@ -37,6 +37,7 @@ pipeline test_pr_list_qualifies_bare_head_to_repository_owner(task) {
   )
   const pulls = unwrap(
     call(
+      harness,
       "github.pr.list",
       auth(base)
         + {
@@ -47,13 +48,13 @@ pipeline test_pr_list_qualifies_bare_head_to_repository_owner(task) {
   )
   assert_eq(len(pulls), 1, "qualified head returns the intended PR")
   assert_eq(pulls[0].head.ref, "automation/bump", "typed head remains branch-only")
-  assert_eq(len(http_mock_calls()), 1, "one exact REST request")
+  assert_eq(len(harness.testing.http_mock_calls()), 1, "one exact REST request")
 }
 
-pipeline test_pr_list_preserves_explicit_fork_owner(task) {
-  http_mock_clear()
+pipeline test_pr_list_preserves_explicit_fork_owner(harness: Harness, task) {
+  harness.testing.http_mock_clear()
   const base = "https://github-api.test"
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/pulls?state=open&head=fork-user%3Afeature%2Fsafe",
     {
@@ -64,6 +65,7 @@ pipeline test_pr_list_preserves_explicit_fork_owner(task) {
   )
   const pulls = unwrap(
     call(
+      harness,
       "github.pr.list",
       auth(base)
         + {
@@ -73,13 +75,13 @@ pipeline test_pr_list_preserves_explicit_fork_owner(task) {
     ),
   )
   assert_eq(pulls.map({ pull -> pull.number }), [10], "explicit fork owner is preserved")
-  assert_eq(len(http_mock_calls()), 1, "one exact fork-owner request")
+  assert_eq(len(harness.testing.http_mock_calls()), 1, "one exact fork-owner request")
 }
 
-pipeline test_pr_list_merged_maps_to_closed_and_filters_unmerged_prs(task) {
-  http_mock_clear()
+pipeline test_pr_list_merged_maps_to_closed_and_filters_unmerged_prs(harness: Harness, task) {
+  harness.testing.http_mock_clear()
   const base = "https://github-api.test"
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/pulls?state=closed&base=main&per_page=30",
     {
@@ -95,6 +97,7 @@ pipeline test_pr_list_merged_maps_to_closed_and_filters_unmerged_prs(task) {
   )
   const pulls = unwrap(
     call(
+      harness,
       "github.pr.list",
       auth(base)
         + {
@@ -110,24 +113,25 @@ pipeline test_pr_list_merged_maps_to_closed_and_filters_unmerged_prs(task) {
     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "REST merge SHA is normalized to merge_commit_oid",
   )
-  assert_eq(len(http_mock_calls()), 1, "merged state uses one closed-PR request")
+  assert_eq(len(harness.testing.http_mock_calls()), 1, "merged state uses one closed-PR request")
 }
 
-pipeline test_pr_list_rejects_unsupported_state_before_network(task) {
-  http_mock_clear()
+pipeline test_pr_list_rejects_unsupported_state_before_network(harness: Harness, task) {
+  harness.testing.http_mock_clear()
   const result = call(
+    harness,
     "github.pr.list",
     auth("https://github-api.test") + {repo: "octo-org/octo-repo", filters: {state: "draft"}},
   )
   assert(is_err(result), "unsupported REST state fails closed")
   assert_eq(unwrap_err(result).code, "schema_drift", "stable validation code")
-  assert_eq(len(http_mock_calls()), 0, "invalid state performs no network request")
+  assert_eq(len(harness.testing.http_mock_calls()), 0, "invalid state performs no network request")
 }
 
-pipeline test_graphql_promotes_protocol_errors(task) {
-  http_mock_clear()
+pipeline test_graphql_promotes_protocol_errors(harness: Harness, task) {
+  harness.testing.http_mock_clear()
   const base = "https://github-api.test"
-  http_mock(
+  harness.testing.http_mock(
     "POST",
     base + "/graphql",
     {
@@ -136,7 +140,11 @@ pipeline test_graphql_promotes_protocol_errors(task) {
       headers: {"x-ratelimit-remaining": "10"},
     },
   )
-  const result = call("graphql", auth(base) + {query: "query { viewer { login } }", variables: {}})
+  const result = call(
+    harness,
+    "graphql",
+    auth(base) + {query: "query { viewer { login } }", variables: {}},
+  )
   assert(is_err(result), "HTTP 200 GraphQL errors fail closed")
   assert_eq(unwrap_err(result).code, "graphql", "stable GraphQL error code")
   assert(contains(unwrap_err(result).message, "denied"), "provider message remains visible")

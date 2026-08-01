@@ -63,8 +63,6 @@ harn lint src/lib.harn
 harn fmt --check src tests
 harn connector check . --provider github
 
-printf '%s\0' tests/*.harn \
-  | xargs -0 -n1 -P 4 env HARN_EGRESS_BLOCK_PRIVATE=off harn run
 harn test tests --parallel
 
 smoke_root="$(mktemp -d)"
@@ -94,13 +92,13 @@ fn release_state(result: GithubConnectorResult<GithubReleaseLookup>) -> string {
 // Every declared export must resolve from a real consumer, not just from
 // inside this package. `worktree` and `publish` were added after the smoke was
 // written, and a missing `[exports]` entry is invisible to `harn check src`.
-fn commit(request: GithubWorktreeCommitRequest) {
-  return github_commit_worktree(request)
+fn commit(harness: Harness, request: GithubWorktreeCommitRequest) {
+  return github_commit_worktree(harness, request)
 }
 
 // The exact entry file the README tells consumers to write.
 fn main(harness: Harness) {
-  exit(publish_main(harness, argv ?? []))
+  harness.runtime.exit(publish_main(harness, argv ?? []))
 }
 EOF
 harn check smoke.harn

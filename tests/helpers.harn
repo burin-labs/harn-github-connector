@@ -18,7 +18,7 @@ pub fn github_headers(secret, body, event, delivery = "delivery-1") {
 }
 
 /**
- * Build a raw inbound envelope WITHOUT embedding the signing secret. Tests must seed the secret via `init({signing_secret: secret})` before calling normalize_inbound.
+ * Build a raw inbound envelope WITHOUT embedding the signing secret. Tests must seed the secret via `init(harness, {signing_secret: secret})` before calling normalize_inbound.
  */
 pub fn signed_raw(secret, body, event, extra = nil) {
   return (extra ?? {}) + {body_text: body, headers: github_headers(secret, body, event)}
@@ -26,7 +26,7 @@ pub fn signed_raw(secret, body, event, extra = nil) {
 
 /** Read a fixture JSON body from the test fixtures directory. */
 pub fn fixture_body(harness: Harness, name) {
-  return harness.fs.read_text(source_dir() + "/fixtures/webhooks/" + name + ".json")
+  return harness.fs.read_text(harness.fs.source_dir() + "/fixtures/webhooks/" + name + ".json")
 }
 
 /** Build a signed raw inbound envelope from a named fixture. */
@@ -34,23 +34,24 @@ pub fn fixture_raw(harness: Harness, name, secret, event, extra = nil) {
   return signed_raw(secret, fixture_body(harness, name), event, extra)
 }
 
-pub fn assert_github_interface() {
-  shutdown()
+pub fn assert_github_interface(harness: Harness) {
+  shutdown(harness)
   assert_eq(provider_id(), "github", "provider id")
   assert_eq(kinds()[0], "webhook", "webhook kind")
   assert_eq(payload_schema().harn_schema_name, "GitHubEventPayload", "payload schema name")
-  const initialized = init({signing_secret: "test-secret"})
+  const initialized = init(harness, {signing_secret: "test-secret"})
   assert(initialized.initialized, "init stores state")
   const activated = activate(
+    harness,
     [{id: "primary", path: "/github/events", secrets: {signing_secret: "test-secret"}}],
   )
   assert_eq(activated.bindings, 1, "activate counts bindings")
 }
 
-pub fn github_call(method, args) {
-  return call(method, args)
+pub fn github_call(harness: Harness, method, args) {
+  return call(harness, method, args)
 }
 
-pub fn github_normalize(raw) {
-  return normalize_inbound(raw)
+pub fn github_normalize(harness: Harness, raw) {
+  return normalize_inbound(harness, raw)
 }
