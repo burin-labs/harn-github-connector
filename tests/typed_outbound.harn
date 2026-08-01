@@ -1,11 +1,11 @@
 import { call } from "../src/lib"
 
-pipeline default() {
-  http_mock_clear()
+pipeline test_typed_outbound(harness: Harness, task) {
+  harness.testing.http_mock_clear()
   const base = "https://github-api.test"
   const token = "github-installation-token"
   const auth = {api_base_url: base, installation_token: token}
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/pulls?state=open&per_page=4",
     {
@@ -76,6 +76,7 @@ pipeline default() {
   )
   const prs = unwrap(
     call(
+      harness,
       "github.pr.list",
       auth + {repo: "octo-org/octo-repo", filters: {state: "open", per_page: 4}},
     ),
@@ -87,7 +88,7 @@ pipeline default() {
   assert_eq(prs[2].in_merge_queue, nil, "list does not invent queue membership")
   assert_eq(prs[3].state, "merged", "merged PR classified merged")
   assert_eq(prs[0].head.sha, "green-sha", "typed head sha")
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/pulls/101",
     {
@@ -124,7 +125,7 @@ pipeline default() {
       ],
     },
   )
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/branches/main/protection",
     {
@@ -151,7 +152,7 @@ pipeline default() {
       ],
     },
   )
-  http_mock(
+  harness.testing.http_mock(
     "POST",
     base + "/graphql",
     {
@@ -235,12 +236,14 @@ pipeline default() {
       ],
     },
   )
-  const viewed = unwrap(call("github.pr.view", auth + {repo: "octo-org/octo-repo", number: 101}))
+  const viewed = unwrap(
+    call(harness, "github.pr.view", auth + {repo: "octo-org/octo-repo", number: 101}),
+  )
   assert_eq(viewed.base.sha, "base-sha", "view includes base sha")
   assert_eq(viewed.head.sha, "green-sha", "view includes head sha")
   assert(viewed.branch_protection.protected, "view includes branch protection")
   assert_eq(viewed.branch_protection.required_checks[0], "Harn CI", "required checks summarized")
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/commits/green-sha/check-runs",
     {
@@ -266,12 +269,12 @@ pipeline default() {
     },
   )
   const green_checks = unwrap(
-    call("github.pr.checks", auth + {repo: "octo-org/octo-repo", head_sha: "green-sha"}),
+    call(harness, "github.pr.checks", auth + {repo: "octo-org/octo-repo", head_sha: "green-sha"}),
   )
   assert_eq(green_checks.state, "green", "green checks classify green")
   assert_eq(green_checks.rollup.conclusion, "success", "green rollup conclusion")
   assert_eq(green_checks.checks[0].duration_seconds, 180, "check duration")
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/commits/pending-sha/check-runs",
     {
@@ -283,12 +286,17 @@ pipeline default() {
     },
   )
   assert_eq(
-    unwrap(call("github.pr.checks", auth + {repo: "octo-org/octo-repo", head_sha: "pending-sha"}))
-      .state,
+    unwrap(
+      call(
+        harness,
+        "github.pr.checks",
+        auth + {repo: "octo-org/octo-repo", head_sha: "pending-sha"},
+      ),
+    ).state,
     "pending",
     "pending checks classify pending",
   )
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/commits/failing-sha/check-runs",
     {
@@ -300,12 +308,17 @@ pipeline default() {
     },
   )
   assert_eq(
-    unwrap(call("github.pr.checks", auth + {repo: "octo-org/octo-repo", head_sha: "failing-sha"}))
-      .state,
+    unwrap(
+      call(
+        harness,
+        "github.pr.checks",
+        auth + {repo: "octo-org/octo-repo", head_sha: "failing-sha"},
+      ),
+    ).state,
     "failing",
     "failing checks classify failing",
   )
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/check-runs/8001",
     {
@@ -316,21 +329,25 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "14"},
     },
   )
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/actions/runs/6001/logs",
     {status: 200, body: "step 1 / 1 succeeded\n", headers: {"x-ratelimit-remaining": "13"}},
   )
   const logs = unwrap(
-    call("github.actions.logs", auth + {repo: "octo-org/octo-repo", check_id: 8001}),
+    call(harness, "github.actions.logs", auth + {repo: "octo-org/octo-repo", check_id: 8001}),
   )
   assert_eq(logs.run_id, 6001, "check id resolves action run id")
   assert(logs.content.contains("succeeded"), "logs content returned")
   const queue = unwrap(
-    call("github.merge_queue.entries", auth + {repo: "octo-org/octo-repo", branch: "main"}),
+    call(
+      harness,
+      "github.merge_queue.entries",
+      auth + {repo: "octo-org/octo-repo", branch: "main"},
+    ),
   )
   assert_eq(queue.entries[0].pull_number, 103, "merge queue entry PR number")
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/pulls/105",
     {
@@ -341,13 +358,14 @@ pipeline default() {
   )
   const enqueued = unwrap(
     call(
+      harness,
       "github.merge_queue.enqueue",
       auth
         + {repo: "octo-org/octo-repo", pr_number: 105, expected_head_oid: "enqueue-sha"},
     ),
   )
   assert_eq(enqueued.entry.state, "queued", "enqueue returns typed entry")
-  http_mock(
+  harness.testing.http_mock(
     "POST",
     base + "/repos/octo-org/octo-repo/issues",
     {
@@ -357,11 +375,12 @@ pipeline default() {
     },
   )
   assert_eq(
-    unwrap(call("github.issue.create", auth + {repo: "octo-org/octo-repo", title: "Follow up"}))
-      .number,
+    unwrap(
+      call(harness, "github.issue.create", auth + {repo: "octo-org/octo-repo", title: "Follow up"}),
+    ).number,
     77,
   )
-  http_mock(
+  harness.testing.http_mock(
     "POST",
     base + "/repos/octo-org/octo-repo/issues/77/comments",
     {
@@ -372,11 +391,15 @@ pipeline default() {
   )
   assert_eq(
     unwrap(
-      call("github.issue.comment", auth + {repo: "octo-org/octo-repo", number: 77, body: "noted"}),
+      call(
+        harness,
+        "github.issue.comment",
+        auth + {repo: "octo-org/octo-repo", number: 77, body: "noted"},
+      ),
     ).id,
     9001,
   )
-  http_mock(
+  harness.testing.http_mock(
     "POST",
     base + "/repos/octo-org/octo-repo/issues/101/comments",
     {
@@ -387,11 +410,15 @@ pipeline default() {
   )
   assert_eq(
     unwrap(
-      call("github.pr.comment", auth + {repo: "octo-org/octo-repo", number: 101, body: "PR note"}),
+      call(
+        harness,
+        "github.pr.comment",
+        auth + {repo: "octo-org/octo-repo", number: 101, body: "PR note"},
+      ),
     ).id,
     9002,
   )
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/branches/develop/protection",
     {
@@ -402,21 +429,27 @@ pipeline default() {
   )
   assert(
     unwrap(
-      call("github.branch.protection", auth + {repo: "octo-org/octo-repo", branch: "develop"}),
+      call(
+        harness,
+        "github.branch.protection",
+        auth + {repo: "octo-org/octo-repo", branch: "develop"},
+      ),
     ).protected,
   )
   const blocked = call(
+    harness,
     "github.pr.merge",
     auth + {repo: "octo-org/octo-repo", number: 101, method: "squash"},
   )
   assert(is_err(blocked), "protected branch blocks github.pr.merge without override")
   assert_eq(unwrap_err(blocked).category, "branch_protection", "branch protection error category")
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/pulls?state=open",
     {status: 200, body: "[]", headers: {"x-ratelimit-remaining": "6"}},
   )
   call(
+    harness,
     "github.pr.list",
     {
       api_base_url: base,
@@ -426,7 +459,7 @@ pipeline default() {
       filters: {state: "open"},
     },
   )
-  const calls = http_mock_calls()
+  const calls = harness.testing.http_mock_calls()
   assert_eq(calls[len(calls) - 1].headers.authorization, "[redacted]", "gh fallback token redacted")
-  http_mock_clear()
+  harness.testing.http_mock_clear()
 }

@@ -146,9 +146,9 @@ fn __wc_is_object_id(value: string) -> bool {
   return true
 }
 
-fn __wc_run(spec: dict) {
+fn __wc_run(process: HarnessProcess, spec: dict) {
   const attempt = try {
-    spawn_captured(spec)
+    process.run(spec)
   }
   if is_err(attempt) {
     return __wc_err("git", "local command failed: " + to_string(unwrap_err(attempt)))
@@ -158,7 +158,7 @@ fn __wc_run(spec: dict) {
     return __wc_err(
       "git",
       "local command `"
-        + to_string(spec?.cmd ?? "")
+        + to_string(spec?.program ?? "")
         + "` failed with exit "
         + to_string(run?.exit_code ?? -1)
         + ": "
@@ -168,10 +168,11 @@ fn __wc_run(spec: dict) {
   return Ok(to_string(run?.stdout ?? ""))
 }
 
-fn __wc_git(repo_dir: string, args: list<string>, env: dict) {
+fn __wc_git(process: HarnessProcess, repo_dir: string, args: list<string>, env: dict) {
   return __wc_run(
+    process,
     {
-      cmd: "git",
+      program: "git",
       args: args,
       cwd: repo_dir,
       env: env,
@@ -181,8 +182,8 @@ fn __wc_git(repo_dir: string, args: list<string>, env: dict) {
   )
 }
 
-fn __wc_git_line(repo_dir: string, args: list<string>, env: dict) {
-  const out = __wc_git(repo_dir, args, env)
+fn __wc_git_line(process: HarnessProcess, repo_dir: string, args: list<string>, env: dict) {
+  const out = __wc_git(process, repo_dir, args, env)
   if is_err(out) {
     return out
   }
@@ -200,10 +201,11 @@ fn __wc_source(raw) -> string? {
   return nil
 }
 
-fn __wc_temp_dir() {
+fn __wc_temp_dir(process: HarnessProcess) {
   return __wc_run(
+    process,
     {
-      cmd: "sh",
+      program: "sh",
       args: [
         "-c",
         "root=\"$TMPDIR\"\ntest -n \"$root\" || root=/tmp\n"
@@ -215,10 +217,11 @@ fn __wc_temp_dir() {
   )
 }
 
-fn __wc_remove_dir(path: string) {
+fn __wc_remove_dir(process: HarnessProcess, path: string) {
   return __wc_run(
+    process,
     {
-      cmd: "sh",
+      program: "sh",
       args: ["-c", "rm -rf \"$HARN_WORKTREE_SCRATCH\""],
       env: {HARN_WORKTREE_SCRATCH: path},
       stdin: "",
@@ -233,13 +236,14 @@ fn __wc_remove_dir(path: string) {
  * encoded length is proven against `git cat-file -s` so a truncated or failed
  * pipe can never masquerade as file content.
  */
-fn __wc_blob(repo_dir: string, oid: string) {
+fn __wc_blob(process: HarnessProcess, repo_dir: string, oid: string) {
   if !__wc_is_object_id(oid) {
     return __wc_err("git", "git reported a malformed blob object id `" + oid + "`")
   }
   const captured = __wc_run(
+    process,
     {
-      cmd: "sh",
+      program: "sh",
       args: [
         "-c",
         "git cat-file -s \"$HARN_WORKTREE_BLOB\" || exit 1\n"
@@ -370,8 +374,15 @@ fn __wc_deletion(path: string, oid: string, rename_to) -> GithubWorktreeChange {
   }
 }
 
-fn __wc_addition(repo_dir: string, path: string, oid: string, status: string, rename_from) {
-  const blob = __wc_blob(repo_dir, oid)
+fn __wc_addition(
+  process: HarnessProcess,
+  repo_dir: string,
+  path: string,
+  oid: string,
+  status: string,
+  rename_from,
+) {
+  const blob = __wc_blob(process, repo_dir, oid)
   if is_err(blob) {
     return blob
   }
@@ -476,7 +487,7 @@ fn __wc_mode_gate(entry) {
 }
 
 @complexity(allow)
-fn __wc_classify(repo_dir: string, entries) {
+fn __wc_classify(process: HarnessProcess, repo_dir: string, entries) {
   let changes = []
   let contents = {}
   for entry in entries {
@@ -507,6 +518,7 @@ fn __wc_classify(repo_dir: string, entries) {
       "modified"
     }
     const added = __wc_addition(
+      process,
       repo_dir,
       entry.dst_path,
       entry.dst_oid,
@@ -565,29 +577,30 @@ fn __wc_payload(changes: list<GithubWorktreeChange>, contents: dict) {
   return {additions: additions, deletions: deletions}
 }
 
-fn __wc_scratch_index(repo_dir: string, scratch: string) {
+fn __wc_scratch_index(process: HarnessProcess, repo_dir: string, scratch: string) {
   const env = {GIT_INDEX_FILE: scratch + "/index"}
-  const seeded = __wc_git(repo_dir, ["read-tree", "HEAD"], env)
+  const seeded = __wc_git(process, repo_dir, ["read-tree", "HEAD"], env)
   if is_err(seeded) {
     return seeded
   }
-  const staged = __wc_git(repo_dir, ["add", "--all"], env)
+  const staged = __wc_git(process, repo_dir, ["add", "--all"], env)
   if is_err(staged) {
     return staged
   }
   return Ok(env)
 }
 
-fn __wc_raw_diff(repo_dir: string, base_oid: string, env: dict) {
+fn __wc_raw_diff(process: HarnessProcess, repo_dir: string, base_oid: string, env: dict) {
   return __wc_git(
+    process,
     repo_dir,
     ["diff-index", "--cached", "--raw", "-z", "-M", "--no-abbrev", base_oid],
     env,
   )
 }
 
-fn __wc_base_oid(repo_dir: string, requested) {
-  const head = __wc_git_line(repo_dir, ["rev-parse", "HEAD"], {})
+fn __wc_base_oid(process: HarnessProcess, repo_dir: string, requested) {
+  const head = __wc_git_line(process, repo_dir, ["rev-parse", "HEAD"], {})
   if is_err(head) {
     return head
   }
@@ -607,28 +620,28 @@ fn __wc_base_oid(repo_dir: string, requested) {
   return Ok(observed)
 }
 
-fn __wc_delta_env(repo_dir: string, source: string, scratch) {
+fn __wc_delta_env(process: HarnessProcess, repo_dir: string, source: string, scratch) {
   if source == "index" {
     return Ok({})
   }
   if scratch == nil {
     return __wc_err("git", "worktree selection requires a scratch index directory")
   }
-  return __wc_scratch_index(repo_dir, to_string(scratch))
+  return __wc_scratch_index(process, repo_dir, to_string(scratch))
 }
 
 @complexity(allow)
-fn __wc_delta(repo_dir: string, source: string, requested_base, scratch) {
-  const base = __wc_base_oid(repo_dir, requested_base)
+fn __wc_delta(process: HarnessProcess, repo_dir: string, source: string, requested_base, scratch) {
+  const base = __wc_base_oid(process, repo_dir, requested_base)
   if is_err(base) {
     return base
   }
   const base_oid = unwrap(base)
-  const env = __wc_delta_env(repo_dir, source, scratch)
+  const env = __wc_delta_env(process, repo_dir, source, scratch)
   if is_err(env) {
     return env
   }
-  const raw = __wc_raw_diff(repo_dir, base_oid, unwrap(env))
+  const raw = __wc_raw_diff(process, repo_dir, base_oid, unwrap(env))
   if is_err(raw) {
     return raw
   }
@@ -641,7 +654,7 @@ fn __wc_delta(repo_dir: string, source: string, requested_base, scratch) {
   if is_err(paths_ok) {
     return paths_ok
   }
-  const classified = __wc_classify(repo_dir, entries)
+  const classified = __wc_classify(process, repo_dir, entries)
   if is_err(classified) {
     return classified
   }
@@ -670,6 +683,7 @@ fn __wc_delta(repo_dir: string, source: string, requested_base, scratch) {
  * entries fail here, before any caller can reach the network.
  */
 pub fn github_worktree_delta(
+  process: HarnessProcess,
   selector: GithubWorktreeSelector,
 ) -> GithubConnectorResult<GithubWorktreeDelta> {
   const repo_dir = trim(to_string(selector.repo_dir ?? ""))
@@ -686,15 +700,15 @@ pub fn github_worktree_delta(
     )
   }
   if source == "index" {
-    return __wc_delta_result(__wc_delta(repo_dir, source, selector.base_oid, nil))
+    return __wc_delta_result(__wc_delta(process, repo_dir, source, selector.base_oid, nil))
   }
-  const scratch = __wc_temp_dir()
+  const scratch = __wc_temp_dir(process)
   if is_err(scratch) {
     return Err(__wc_error_of(scratch))
   }
   const scratch_dir = trim(unwrap(scratch))
-  const delta = __wc_delta(repo_dir, source, selector.base_oid, scratch_dir)
-  __wc_remove_dir(scratch_dir)
+  const delta = __wc_delta(process, repo_dir, source, selector.base_oid, scratch_dir)
+  __wc_remove_dir(process, scratch_dir)
   return __wc_delta_result(delta)
 }
 
@@ -703,8 +717,13 @@ fn __wc_ref_path(request: GithubWorktreeCommitRequest, prefix: string) -> string
 }
 
 @complexity(allow)
-fn __wc_branch_lease(request: GithubWorktreeCommitRequest, base_oid: string, options: dict) {
-  const lookup = api_call(__wc_ref_path(request, "/git/ref/heads/"), "GET", nil, options)
+fn __wc_branch_lease(
+  harness: Harness,
+  request: GithubWorktreeCommitRequest,
+  base_oid: string,
+  options: dict,
+) {
+  const lookup = api_call(harness, __wc_ref_path(request, "/git/ref/heads/"), "GET", nil, options)
   if is_err(lookup) {
     const failure: GithubConnectorError = unwrap_err(lookup)
     if (failure.http_status ?? 0) != 404 {
@@ -718,6 +737,7 @@ fn __wc_branch_lease(request: GithubWorktreeCommitRequest, base_oid: string, opt
       )
     }
     const created = api_call(
+      harness,
       "/repos/" + request.owner + "/" + request.repo + "/git/refs",
       "POST",
       {ref: "refs/heads/" + request.branch, sha: base_oid},
@@ -742,6 +762,7 @@ fn __wc_branch_lease(request: GithubWorktreeCommitRequest, base_oid: string, opt
     )
   }
   const reset = api_call(
+    harness,
     __wc_ref_path(request, "/git/refs/heads/"),
     "PATCH",
     {sha: base_oid, force: true},
@@ -812,6 +833,7 @@ fn __wc_empty_receipt(
  */
 @complexity(allow)
 pub fn github_commit_worktree(
+  harness: Harness,
   request: GithubWorktreeCommitRequest,
   options = nil,
 ) -> GithubConnectorResult<GithubWorktreeCommitReceipt> {
@@ -821,6 +843,7 @@ pub fn github_commit_worktree(
     return Err(__wc_error_of(valid))
   }
   const derived = github_worktree_delta(
+    harness.process,
     {repo_dir: request.repo_dir, source: request.source, base_oid: request.base_oid},
   )
   if is_err(derived) {
@@ -830,12 +853,13 @@ pub fn github_commit_worktree(
   if delta.empty {
     return Ok(__wc_empty_receipt(request, delta))
   }
-  const lease = __wc_branch_lease(request, delta.base_oid, opts)
+  const lease = __wc_branch_lease(harness, request, delta.base_oid, opts)
   if is_err(lease) {
     return Err(__wc_error_of(lease))
   }
   const branch_action = to_string(unwrap(lease))
   const published = github_create_signed_commit(
+    harness,
     {
       owner: request.owner,
       repo: request.repo,

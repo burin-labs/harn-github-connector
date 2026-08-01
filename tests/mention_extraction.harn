@@ -1,7 +1,7 @@
 import { github_extract_mentions, init, shutdown } from "../src/lib"
 import { fixture_raw, github_normalize } from "./helpers"
 
-pipeline default() {
+pipeline test_mention_extraction(harness: Harness, task) {
   // 1. Pure helper: multiple mentions, command + args parsing.
   const mentions = github_extract_mentions(
     "Hey @harn-bot deploy staging now, and thanks @reviewer!",
@@ -30,9 +30,10 @@ pipeline default() {
   assert_eq(multiline[0].rest, "", "rest empty across newline")
   // 6. End-to-end: normalize an issue_comment webhook and read mention block.
   const secret = "test-signing-secret"
-  shutdown()
-  init({signing_secret: secret})
+  shutdown(harness)
+  init(harness, {signing_secret: secret})
   const normalized = github_normalize(
+    harness,
     fixture_raw(harness, "issue_comment_mention", secret, "issue_comment"),
   )
   assert_eq(normalized.type, "event", "mention event normalizes")
@@ -46,8 +47,9 @@ pipeline default() {
   assert_eq(mention.comment_id, 9001, "comment id surfaced")
   // 7. A comment with no mentions has no mention block.
   const plain = github_normalize(
+    harness,
     fixture_raw(harness, "issue_comment_created", secret, "issue_comment"),
   )
   assert_eq(plain.event.payload.mention, nil, "plain comment has no mention block")
-  shutdown()
+  shutdown(harness)
 }

@@ -11,12 +11,12 @@ import {
   repos_list_release_assets,
 } from "../src/lib"
 
-pipeline test_repo_automation_methods(task) {
-  http_mock_clear()
+pipeline test_repo_automation_methods(harness: Harness, task) {
+  harness.testing.http_mock_clear()
   const base = "https://github-api.test"
   const token = "github-installation-token"
   const auth = {api_base_url: base, installation_token: token}
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/contents/.harn-version?ref=main",
     {
@@ -34,9 +34,11 @@ pipeline test_repo_automation_methods(task) {
       headers: {"x-ratelimit-remaining": "10"},
     },
   )
-  const text = unwrap(repos_get_text("octo-org", "octo-repo", ".harn-version", "main", auth))
+  const text = unwrap(
+    repos_get_text(harness, "octo-org", "octo-repo", ".harn-version", "main", auth),
+  )
   assert_eq(trim(text.text), "v0.7.59", "repos.get_text decodes base64 content")
-  http_mock(
+  harness.testing.http_mock(
     "POST",
     base + "/repos/octo-org/octo-repo/actions/workflows/bump-harn.yml/dispatches",
     {
@@ -53,6 +55,7 @@ pipeline test_repo_automation_methods(task) {
   )
   const dispatch = unwrap(
     actions_workflow_dispatch(
+      harness,
       "octo-org",
       "octo-repo",
       "bump-harn.yml",
@@ -66,7 +69,7 @@ pipeline test_repo_automation_methods(task) {
     123,
     "workflow dispatch returns run id when GitHub provides it",
   )
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base
       + "/repos/octo-org/octo-repo/actions/workflows/bump-harn.yml/runs?event=workflow_dispatch&per_page=5",
@@ -90,13 +93,14 @@ pipeline test_repo_automation_methods(task) {
   )
   const runs = unwrap(
     actions_workflow_runs(
+      harness,
       "octo-org",
       "octo-repo",
       auth + {workflow_id: "bump-harn.yml", event: "workflow_dispatch", per_page: 5},
     ),
   )
   assert_eq(runs.workflow_runs[0].id, 123, "workflow runs list response")
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/actions/runs/123",
     {
@@ -105,9 +109,9 @@ pipeline test_repo_automation_methods(task) {
       headers: {"x-ratelimit-remaining": "7"},
     },
   )
-  const run = unwrap(actions_workflow_run("octo-org", "octo-repo", 123, auth))
+  const run = unwrap(actions_workflow_run(harness, "octo-org", "octo-repo", 123, auth))
   assert_eq(run.conclusion, "success", "workflow run get response")
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/releases/latest",
     {
@@ -130,9 +134,9 @@ pipeline test_repo_automation_methods(task) {
       headers: {"x-ratelimit-remaining": "7"},
     },
   )
-  const raw_release = unwrap(repos_get_latest_release("octo-org", "octo-repo", auth))
+  const raw_release = unwrap(repos_get_latest_release(harness, "octo-org", "octo-repo", auth))
   assert_eq(raw_release.tag_name, "v0.8.4", "raw latest release tag")
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/releases/latest",
     {
@@ -150,7 +154,7 @@ pipeline test_repo_automation_methods(task) {
       headers: {"x-ratelimit-remaining": "7"},
     },
   )
-  const latest = unwrap(github_latest_release("octo-org", "octo-repo", auth))
+  const latest = unwrap(github_latest_release(harness, "octo-org", "octo-repo", auth))
   assert_eq(latest.ok, true, "latest release envelope ok")
   assert_eq(latest.tag_name, "v0.8.4", "latest release envelope tag")
   assert_eq(
@@ -158,7 +162,7 @@ pipeline test_repo_automation_methods(task) {
     "harn-x86_64-unknown-linux-gnu.tar.gz",
     "latest release asset names",
   )
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/releases/501/assets?per_page=2",
     {
@@ -168,10 +172,10 @@ pipeline test_repo_automation_methods(task) {
     },
   )
   const raw_assets = unwrap(
-    repos_list_release_assets("octo-org", "octo-repo", 501, auth + {per_page: 2}),
+    repos_list_release_assets(harness, "octo-org", "octo-repo", 501, auth + {per_page: 2}),
   )
   assert_eq(raw_assets[0].name, "harn-aarch64-apple-darwin.tar.gz", "raw release assets")
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/releases/501/assets?per_page=2",
     {
@@ -180,10 +184,12 @@ pipeline test_repo_automation_methods(task) {
       headers: {"x-ratelimit-remaining": "7"},
     },
   )
-  const assets = unwrap(github_release_assets("octo-org", "octo-repo", 501, auth + {per_page: 2}))
+  const assets = unwrap(
+    github_release_assets(harness, "octo-org", "octo-repo", 501, auth + {per_page: 2}),
+  )
   assert_eq(assets.ok, true, "release assets envelope ok")
   assert_eq(assets.asset_names[0], "harn-x86_64-unknown-linux-gnu.tar.gz", "release assets names")
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/releases/latest",
     {
@@ -192,9 +198,11 @@ pipeline test_repo_automation_methods(task) {
       headers: {"x-ratelimit-remaining": "7"},
     },
   )
-  const raw = unwrap(api_call("/repos/octo-org/octo-repo/releases/latest", "GET", nil, auth))
+  const raw = unwrap(
+    api_call(harness, "/repos/octo-org/octo-repo/releases/latest", "GET", nil, auth),
+  )
   assert_eq(raw.tag_name, "v0.8.4", "raw api_call works as compatibility escape hatch")
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/pulls/7",
     {
@@ -210,7 +218,7 @@ pipeline test_repo_automation_methods(task) {
       headers: {"x-ratelimit-remaining": "6"},
     },
   )
-  http_mock(
+  harness.testing.http_mock(
     "POST",
     base + "/graphql",
     {
@@ -235,6 +243,7 @@ pipeline test_repo_automation_methods(task) {
   )
   const auto_merge = unwrap(
     pulls_enable_auto_merge(
+      harness,
       "octo-org",
       "octo-repo",
       7,
@@ -243,7 +252,7 @@ pipeline test_repo_automation_methods(task) {
   )
   assert_eq(auto_merge.state, "enabled", "auto-merge enabled state")
   assert_eq(auto_merge.merge_method, "SQUASH", "auto-merge merge method normalized")
-  const calls = http_mock_calls()
+  const calls = harness.testing.http_mock_calls()
   const dispatch_body = json_parse(calls[1].body)
   const mutation_body = json_parse(calls[10].body)
   const mutation_vars = mutation_body.get("variables")
@@ -258,5 +267,5 @@ pipeline test_repo_automation_methods(task) {
     contains(mutation_body.get("query"), "enablePullRequestAutoMerge"),
     "auto-merge mutation name",
   )
-  http_mock_clear()
+  harness.testing.http_mock_clear()
 }

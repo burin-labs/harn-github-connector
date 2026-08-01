@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.5.0 - 2026-08-01
+
+- Migrate the connector and its complete test surface to typed `Harness`
+  capabilities. Runtime state now flows through `harness.runtime`, HTTP,
+  process, filesystem, clock, secrets, and testing access is explicit, and
+  legacy smoke entrypoints are named test pipelines so current Harn cannot
+  silently skip them.
+- Preserve binary-exact worktree publishing tests under Harn's process
+  sandbox by constructing fixtures through typed filesystem operations rather
+  than shell redirection.
 - Add a `harn-github-connector/publish` export: a command-line front end for
   `github_commit_worktree` owning argument parsing, usage text, the changed-path
   summary a CI step appends to its job log, and exit codes that separate a bad

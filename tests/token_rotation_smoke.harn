@@ -1,7 +1,9 @@
 import { installation_token, mint_app_jwt, reset_token_cache } from "../src/lib"
 
 fn fixture_key(harness: Harness) {
-  return harness.fs.read_text(path_join(cwd(), "tests/fixtures/github_app_test_key.pem"))
+  return harness.fs.read_text(
+    path_join(harness.fs.source_dir(), "fixtures/github_app_test_key.pem"),
+  )
 }
 
 fn base_config(harness: Harness, now) {
@@ -14,11 +16,11 @@ fn base_config(harness: Harness, now) {
   }
 }
 
-pipeline default() {
-  reset_token_cache()
-  http_mock_clear()
+pipeline test_token_rotation_smoke(harness: Harness, task) {
+  reset_token_cache(harness.runtime)
+  harness.testing.http_mock_clear()
   const config = base_config(harness, 1700000000)
-  const jwt = mint_app_jwt(config)
+  const jwt = mint_app_jwt(harness.clock, harness.secrets, config)
   const parts = split(jwt, ".")
   assert_eq(len(parts), 3)
   const header = json_parse(base64url_decode(parts[0]))
@@ -28,7 +30,7 @@ pipeline default() {
   assert_eq(claims.iss, "12345")
   assert_eq(claims.iat, 1699999940)
   assert_eq(claims.exp, 1700000600)
-  http_mock(
+  harness.testing.http_mock(
     "POST",
     "https://api.github.test/app/installations/77/access_tokens",
     {
@@ -46,18 +48,18 @@ pipeline default() {
       ],
     },
   )
-  assert_eq(installation_token(config), "install-token-a")
-  assert_eq(installation_token(config), "install-token-a")
-  let calls = http_mock_calls()
+  assert_eq(installation_token(harness, config), "install-token-a")
+  assert_eq(installation_token(harness, config), "install-token-a")
+  let calls = harness.testing.http_mock_calls()
   assert_eq(len(calls), 1)
   assert_eq(calls[0].headers.authorization, "[redacted]")
   assert_eq(calls[0].headers.accept, "application/vnd.github+json")
-  assert_eq(installation_token(base_config(harness, 1700003700)), "install-token-b")
-  calls = http_mock_calls()
+  assert_eq(installation_token(harness, base_config(harness, 1700003700)), "install-token-b")
+  calls = harness.testing.http_mock_calls()
   assert_eq(len(calls), 2)
-  http_mock_clear()
-  reset_token_cache()
-  http_mock(
+  harness.testing.http_mock_clear()
+  reset_token_cache(harness.runtime)
+  harness.testing.http_mock(
     "POST",
     "https://api.github.test/app/installations/77/access_tokens",
     {
@@ -67,19 +69,19 @@ pipeline default() {
     },
   )
   const parallel_tokens = parallel 2 { _ ->
-    installation_token(config)
+    installation_token(harness, config)
   }
   assert_eq(parallel_tokens, ["install-token-locked", "install-token-locked"])
-  const cold_start_calls = len(http_mock_calls())
+  const cold_start_calls = len(harness.testing.http_mock_calls())
   assert(cold_start_calls >= 1 && cold_start_calls <= 2, "cold parallel refreshes are bounded")
-  http_mock_clear()
-  reset_token_cache()
-  http_mock(
+  harness.testing.http_mock_clear()
+  reset_token_cache(harness.runtime)
+  harness.testing.http_mock(
     "POST",
     "https://api.github.test/app/installations/77/access_tokens",
     {status: 500, body: "{\"message\":\"boom\"}"},
   )
-  const failed = installation_token(config)
+  const failed = installation_token(harness, config)
   assert(is_err(failed), "token endpoint errors should propagate")
   assert_eq(unwrap_err(failed).code, "installation_token_failed", "token endpoint error code")
   harness.stdio.println("token_rotation_smoke_ok")

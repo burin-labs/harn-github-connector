@@ -10,11 +10,11 @@ fn find_intent(intents, name) {
   return nil
 }
 
-pipeline default() {
+pipeline test_dashboard_events(harness: Harness, task) {
   const secret = "test-signing-secret"
-  shutdown()
-  init({signing_secret: secret})
-  const issue = github_normalize(fixture_raw(harness, "issues_opened", secret, "issues"))
+  shutdown(harness)
+  init(harness, {signing_secret: secret})
+  const issue = github_normalize(harness, fixture_raw(harness, "issues_opened", secret, "issues"))
   const issue_payload = issue.event.payload
   assert_eq(issue_payload.source.kind, "github.issue", "issue primary source kind")
   assert_eq(issue_payload.source.number, 7, "issue source number")
@@ -38,7 +38,10 @@ pipeline default() {
   assert_eq(issue_comment_intent.method, "github.issue.comment", "comment write intent")
   assert(issue_comment_intent.requires_approval, "comment requires approval")
   assert_eq(issue_payload.triage_event.raw, nil, "triage event keeps raw payload separate")
-  const pr = github_normalize(fixture_raw(harness, "pull_request_opened", secret, "pull_request"))
+  const pr = github_normalize(
+    harness,
+    fixture_raw(harness, "pull_request_opened", secret, "pull_request"),
+  )
   assert_eq(pr.event.payload.source.kind, "github.pull_request", "pr primary source kind")
   assert_eq(
     pr.event.payload.source.url,
@@ -51,7 +54,10 @@ pipeline default() {
   )
   assert_eq(auto_merge_intent.method, "github.pr.enable_auto_merge", "pr auto-merge intent")
   assert(auto_merge_intent.requires_approval, "pr auto-merge requires approval")
-  const check = github_normalize(fixture_raw(harness, "check_run_completed", secret, "check_run"))
+  const check = github_normalize(
+    harness,
+    fixture_raw(harness, "check_run_completed", secret, "check_run"),
+  )
   assert_eq(check.event.payload.source.kind, "github.check_run", "check source kind")
   assert_eq(check.event.payload.source_refs[1].kind, "github.pull_request", "check related pr")
   assert_eq(check.event.payload.job_event.schema, "harn.job_event.v1", "check job schema")
@@ -65,6 +71,7 @@ pipeline default() {
   assert(check_rerun_intent != nil, "check rerun intent")
   assert(check_rerun_intent.requires_approval, "check rerun requires approval")
   const workflow = github_normalize(
+    harness,
     fixture_raw(harness, "workflow_run_completed", secret, "workflow_run"),
   )
   assert_eq(workflow.event.payload.job_event.run_id, 6001, "workflow run id")
@@ -79,7 +86,10 @@ pipeline default() {
     "workflow dispatch intent",
   )
   assert(workflow_dispatch_intent.requires_approval, "workflow dispatch requires approval")
-  const release = github_normalize(fixture_raw(harness, "release_published", secret, "release"))
+  const release = github_normalize(
+    harness,
+    fixture_raw(harness, "release_published", secret, "release"),
+  )
   assert_eq(release.event.payload.source.kind, "github.release", "release source kind")
   assert_eq(release.event.payload.job_event.release_id, 501, "release job id")
   assert_eq(release.event.payload.job_event.status, "published", "release job status")
@@ -90,9 +100,9 @@ pipeline default() {
   assert(release_mutation_intent != nil, "release mutation intent")
   assert(release_mutation_intent.requires_approval, "release mutation requires approval")
   assert_eq(release.event.payload.job_event.raw, nil, "job event keeps raw payload separate")
-  http_mock_clear()
+  harness.testing.http_mock_clear()
   const base = "https://github-api.test"
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/pulls?state=open",
     {
@@ -102,6 +112,7 @@ pipeline default() {
     },
   )
   const missing_scope = call(
+    harness,
     "github.pr.list",
     {
       api_base_url: base,
@@ -113,7 +124,7 @@ pipeline default() {
   assert(is_err(missing_scope), "scope failure returns error")
   assert_eq(unwrap_err(missing_scope).code, "missing_scopes", "scope failure code")
   assert_eq(unwrap_err(missing_scope).category, "permission", "scope failure category")
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/auth-repo/pulls?state=open",
     {
@@ -123,6 +134,7 @@ pipeline default() {
     },
   )
   const auth_failure = call(
+    harness,
     "github.pr.list",
     {
       api_base_url: base,
@@ -134,7 +146,7 @@ pipeline default() {
   assert(is_err(auth_failure), "auth failure returns error")
   assert_eq(unwrap_err(auth_failure).code, "auth", "auth failure code")
   assert_eq(unwrap_err(auth_failure).category, "auth", "auth failure category")
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/hidden-repo/pulls?state=open",
     {
@@ -144,6 +156,7 @@ pipeline default() {
     },
   )
   const inaccessible = call(
+    harness,
     "github.pr.list",
     {
       api_base_url: base,
@@ -155,5 +168,5 @@ pipeline default() {
   assert(is_err(inaccessible), "inaccessible resource returns error")
   assert_eq(unwrap_err(inaccessible).code, "inaccessible_resource", "inaccessible resource code")
   assert_eq(unwrap_err(inaccessible).category, "permission", "inaccessible resource category")
-  http_mock_clear()
+  harness.testing.http_mock_clear()
 }

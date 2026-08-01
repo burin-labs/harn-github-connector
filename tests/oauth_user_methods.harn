@@ -6,13 +6,13 @@ import {
   oauth_user_refresh,
 } from "../src/lib"
 
-pipeline default() {
-  http_mock_clear()
+pipeline test_oauth_user_methods(harness: Harness, task) {
+  harness.testing.http_mock_clear()
   const oauth_base = "https://github.test"
   const client_id = "Iv1.abc123"
   const opts = {oauth_base_url: oauth_base}
   // Device code request.
-  http_mock(
+  harness.testing.http_mock(
     "POST",
     oauth_base + "/login/device/code",
     {
@@ -28,11 +28,11 @@ pipeline default() {
       ),
     },
   )
-  const device = unwrap(oauth_user_device_code(client_id, "repo", opts))
+  const device = unwrap(oauth_user_device_code(harness, client_id, "repo", opts))
   assert_eq(device.device_code, "dc-123", "device code")
   assert_eq(device.user_code, "WDJB-MJHT", "user code")
   // Device poll: pending then granted.
-  http_mock(
+  harness.testing.http_mock(
     "POST",
     oauth_base + "/login/oauth/access_token",
     {
@@ -54,13 +54,13 @@ pipeline default() {
       ],
     },
   )
-  const pending = unwrap(oauth_user_device_poll(client_id, "dc-123", opts))
+  const pending = unwrap(oauth_user_device_poll(harness, client_id, "dc-123", opts))
   assert_eq(pending.error, "authorization_pending", "poll pending")
-  const granted = unwrap(oauth_user_device_poll(client_id, "dc-123", opts))
+  const granted = unwrap(oauth_user_device_poll(harness, client_id, "dc-123", opts))
   assert_eq(granted.access_token, "ghu_user1", "granted user token")
   assert_eq(granted.refresh_token, "ghr_refresh1", "granted refresh token")
   // Web-flow code exchange.
-  http_mock(
+  harness.testing.http_mock(
     "POST",
     oauth_base + "/login/oauth/access_token",
     {
@@ -71,11 +71,11 @@ pipeline default() {
     },
   )
   const exchanged = unwrap(
-    oauth_user_exchange_code(client_id, "web-code", opts + {client_secret: "shh"}),
+    oauth_user_exchange_code(harness, client_id, "web-code", opts + {client_secret: "shh"}),
   )
   assert_eq(exchanged.access_token, "ghu_user2", "exchanged token")
   // Refresh rotates the refresh token.
-  http_mock(
+  harness.testing.http_mock(
     "POST",
     oauth_base + "/login/oauth/access_token",
     {
@@ -85,14 +85,14 @@ pipeline default() {
       ),
     },
   )
-  const refreshed = unwrap(oauth_user_refresh(client_id, "ghr_refresh2", opts))
+  const refreshed = unwrap(oauth_user_refresh(harness, client_id, "ghr_refresh2", opts))
   assert_eq(refreshed.access_token, "ghu_user3", "refreshed token")
   assert_eq(refreshed.refresh_token, "ghr_rotated", "refresh token rotates")
   // Missing client_id is rejected before any network call.
-  const bad = call("oauth.user.device_code", {})
+  const bad = call(harness, "oauth.user.device_code", {})
   assert(is_err(bad), "missing client_id rejected")
   assert_eq(unwrap_err(bad).category, "schema_drift", "missing client_id category")
-  const calls = http_mock_calls()
+  const calls = harness.testing.http_mock_calls()
   assert_eq(json_parse(calls[0].body).client_id, client_id, "device code client id")
   assert_eq(json_parse(calls[0].body).scope, "repo", "device code scope")
   assert_eq(
@@ -102,5 +102,5 @@ pipeline default() {
   )
   assert_eq(json_parse(calls[4].body).grant_type, "refresh_token", "refresh grant type")
   assert_eq(json_parse(calls[4].body).refresh_token, "ghr_refresh2", "refresh sends old token")
-  http_mock_clear()
+  harness.testing.http_mock_clear()
 }

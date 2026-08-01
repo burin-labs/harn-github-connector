@@ -12,7 +12,7 @@
  *     import { publish_main } from "harn-github-connector/publish"
  *
  *     fn main(harness: Harness) {
- *       exit(publish_main(harness, argv ?? []))
+ *       harness.runtime.exit(publish_main(harness, argv ?? []))
  *     }
  *
  * That exists because Harn packages export modules, not commands, so a
@@ -152,7 +152,7 @@ pub fn describe_receipt(receipt: GithubWorktreeCommitReceipt) -> list<string> {
 }
 
 fn publish_parsed(harness: Harness, values: dict) -> int {
-  const result = github_commit_worktree(publish_request(values))
+  const result = github_commit_worktree(harness, publish_request(values))
   if is_err(result) {
     const failure = unwrap_err(result)
     harness.stdio.eprintln(
