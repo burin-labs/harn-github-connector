@@ -112,6 +112,7 @@ pipeline test_exported_contract_imports_and_result_narrowing(harness: Harness, t
     head: {ref: "typed", sha: "head", repo: "octo-org/octo-repo", owner: "octo-org"},
     labels: ["contracts"],
     auto_merge_armed: false,
+    auto_merge_method: nil,
     in_merge_queue: false,
   }
   assert_eq(pull_number(pull), 42, "re-exported records work in downstream annotations")
@@ -123,8 +124,12 @@ pipeline test_exported_contract_imports_and_result_narrowing(harness: Harness, t
 
 pipeline test_outbound_method_catalog_is_the_executable_registry(harness: Harness, task) {
   const methods = outbound_methods()
-  assert_eq(len(methods), 87, "every executable route is discoverable")
+  assert_eq(len(methods), 88, "every executable route is discoverable")
   assert(methods.contains("github.pr.view"), "typed PR route is discoverable")
+  assert(
+    methods.contains("github.pr.disable_auto_merge"),
+    "typed auto-merge hold route is discoverable",
+  )
   assert(methods.contains("actions.runners.list"), "runner route is discoverable")
   assert(methods.contains("oauth.user.device_code"), "OAuth route is discoverable")
   assert(methods.contains("graphql"), "raw GraphQL route is discoverable")

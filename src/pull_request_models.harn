@@ -91,6 +91,11 @@ pub fn __typed_pr_summary(pull) -> GithubPullRequestSummary {
     head: __typed_ref(pull?.head),
     labels: __label_names(pull?.labels ?? []),
     auto_merge_armed: pull?.auto_merge != nil,
+    auto_merge_method: if pull?.auto_merge == nil {
+      nil
+    } else {
+      uppercase(to_string(pull?.auto_merge?.merge_method ?? ""))
+    },
     in_merge_queue: nil,
   }
   return summary

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add an exact-head `github.pr.disable_auto_merge` operation whose typed receipt
+  retains queue position and auto-merge restoration evidence.
 - Import HTTP policy from `std/connectors/http`. This requires Harn 0.10.51 or
   later.
 - Split webhook lifecycle, pull-request transport and projections, merge-queue

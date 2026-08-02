@@ -1,0 +1,126 @@
+import { pulls_disable_auto_merge } from "../src/lib"
+
+const BASE = "https://github-api.test"
+
+const HEAD = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+fn options() {
+  return {api_base_url: BASE, installation_token: "test-token"}
+}
+
+fn pull(head = HEAD, auto_merge = {merge_method: "squash"}) {
+  return {
+    number: 7,
+    node_id: "PR_node_7",
+    html_url: "https://github.com/octo-org/octo-repo/pull/7",
+    head: {sha: head},
+    auto_merge: auto_merge,
+  }
+}
+
+fn entry() {
+  return {
+    id: "MQE_7",
+    position: 3,
+    state: "QUEUED",
+    enqueuedAt: "2026-08-02T12:00:00Z",
+    jump: false,
+    solo: false,
+    headCommit: {oid: HEAD},
+    pullRequest: {
+      number: 7,
+      url: "https://github.com/octo-org/octo-repo/pull/7",
+      headRefOid: HEAD,
+      baseRefName: "main",
+    },
+  }
+}
+
+pipeline test_disable_auto_merge_retains_exact_restoration_evidence(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/pulls/7",
+    {status: 200, body: json_stringify(pull())},
+  )
+  harness.testing.http_mock(
+    "POST",
+    BASE + "/graphql",
+    {
+      responses: [
+        {
+          status: 200,
+          body: json_stringify(
+            {
+              data: {
+                repository: {
+                  pullRequest: {
+                    number: 7,
+                    autoMergeRequest: {enabledAt: "2026-08-02T12:00:00Z", mergeMethod: "SQUASH"},
+                    mergeQueueEntry: entry(),
+                  },
+                },
+              },
+            },
+          ),
+        },
+        {
+          status: 200,
+          body: json_stringify(
+            {
+              data: {
+                disablePullRequestAutoMerge: {
+                  pullRequest: {
+                    number: 7,
+                    url: "https://github.com/octo-org/octo-repo/pull/7",
+                    headRefOid: HEAD,
+                    autoMergeRequest: nil,
+                    mergeQueueEntry: nil,
+                  },
+                },
+              },
+            },
+          ),
+        },
+      ],
+    },
+  )
+  const receipt = unwrap(
+    pulls_disable_auto_merge(
+      harness,
+      "octo-org",
+      "octo-repo",
+      7,
+      options() + {expected_head_oid: HEAD, restore_merge_method: "squash"},
+    ),
+  )
+  assert_eq(receipt.state, "disabled")
+  assert_eq(receipt.expected_head_oid, HEAD)
+  assert_eq(receipt.observed_head_oid, HEAD)
+  assert_eq(receipt.merge_method, "SQUASH")
+  assert_eq(receipt.before_entry.position, 3)
+  assert_eq(receipt.after_entry, nil)
+  const calls = harness.testing.http_mock_calls()
+  const mutation = json_parse(calls[2].body)
+  assert_eq(mutation.variables.pullRequestId, "PR_node_7")
+  assert(contains(mutation.query, "disablePullRequestAutoMerge"))
+}
+
+pipeline test_disable_auto_merge_rejects_a_changed_head_before_mutation(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/pulls/7",
+    {status: 200, body: json_stringify(pull("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"))},
+  )
+  const result = pulls_disable_auto_merge(
+    harness,
+    "octo-org",
+    "octo-repo",
+    7,
+    options() + {expected_head_oid: HEAD, restore_merge_method: "squash"},
+  )
+  assert(is_err(result))
+  assert_eq(unwrap_err(result).code, "stale_head")
+  assert_eq(len(harness.testing.http_mock_calls()), 1)
+}

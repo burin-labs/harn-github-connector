@@ -46,7 +46,7 @@ drift. The table below groups the same methods for browsing.
 
 | Area | Methods |
 | --- | --- |
-| Pull requests | `github.pr.list`, `github.pr.create`, `github.pr.view`, `github.pr.edit`, `github.pr.files`, `github.pr.commits`, `github.pr.checks`, `github.pr.merge`, `github.pr.enable_auto_merge`, `github.pr.comment`, `pulls.list`, `pulls.list_with_checks`, `pulls.get`, `pulls.update`, `pulls.create`, `pulls.merge`, `pulls.merge_safe`, `pulls.create_review_comment`, `pulls.get_diff`, `pulls.list_files`, `pulls.list_reviews`, `pull_requests.resolve_mergeable`, `repos.commit_pulls` |
+| Pull requests | `github.pr.list`, `github.pr.create`, `github.pr.view`, `github.pr.edit`, `github.pr.files`, `github.pr.commits`, `github.pr.checks`, `github.pr.merge`, `github.pr.enable_auto_merge`, `github.pr.disable_auto_merge`, `github.pr.comment`, `pulls.list`, `pulls.list_with_checks`, `pulls.get`, `pulls.update`, `pulls.create`, `pulls.merge`, `pulls.merge_safe`, `pulls.create_review_comment`, `pulls.get_diff`, `pulls.list_files`, `pulls.list_reviews`, `pull_requests.resolve_mergeable`, `repos.commit_pulls` |
 | Actions and checks | `github.actions.workflow_dispatch`, `github.actions.runs`, `github.actions.run`, `github.actions.run_jobs`, `github.actions.run_cancel`, `github.actions.logs`, `actions.workflow_dispatch`, `actions.workflow_runs.list`, `actions.workflow_run.get`, `actions.workflow_run.jobs`, `actions.workflow_run.cancel`, `check_runs.create`, `check_runs.update` |
 | Self-hosted runners | `actions.runners.registration_token`, `actions.runners.remove_token`, `actions.runners.generate_jitconfig`, `actions.runners.list`, `actions.runners.get`, `actions.runners.delete`, `actions.runners.downloads`, `actions.runners.labels.list`, `actions.runners.labels.add`, `actions.runners.labels.replace`, `actions.runners.labels.remove`, `actions.runner_groups.list`, `actions.runner_groups.create`, `actions.runner_groups.get`, `actions.runner_groups.update`, `actions.runner_groups.delete` |
 | User OAuth | `oauth.user.device_code`, `oauth.user.device_poll`, `oauth.user.exchange_code`, `oauth.user.refresh` |
@@ -62,11 +62,18 @@ request or parse the raw REST response for the same operation.
 
 ## Method behavior
 
-- `github.pr.enable_auto_merge` and `github.merge_queue.enqueue` require
+- `github.pr.enable_auto_merge`, `github.pr.disable_auto_merge`, and
+  `github.merge_queue.enqueue` require
   `expected_head_oid`. A mismatched lease returns `stale_head` without mutating.
+- `github.pr.disable_auto_merge` returns the queued entry before and after the
+  hold plus the merge method needed to restore auto-merge. It fails if the head
+  changes during the mutation or GitHub retains a queue entry afterward.
 - `github.merge_queue.membership` reports `queued: true` only when GitHub
   returns a `mergeQueueEntry`. An `autoMergeRequest` is reported separately as
   `auto_merge_armed`.
+- Pull-request records expose `auto_merge_method` with `auto_merge_armed`, so a
+  caller can retain exact restoration intent without parsing GitHub's REST
+  response again.
 - `github.pr.view` keeps the base PR read when branch-protection administration
   permission is unavailable. Its `branch_protection.available` is `false` and
   retains the structured permission error.
@@ -111,6 +118,7 @@ method covers the operation. They do not replace a namespaced method.
 | `pulls_update(harness, owner, repo, number, edits, options)` | Update the supported pull request fields. |
 | `pulls_merge_safe(harness, owner, repo, number, options)` | Merge after checking branch protection. |
 | `pulls_enable_auto_merge(harness, owner, repo, number, options)` | Enable auto-merge. Requires `options.expected_head_oid`. |
+| `pulls_disable_auto_merge(harness, owner, repo, number, options)` | Disable auto-merge at an exact head and retain restoration evidence. |
 | `github_pr_commits(harness, owner, repo, number, options)` | Read every commit and signature under one pull request head. |
 | `actions_workflow_dispatch(harness, owner, repo, workflow_id, ref, inputs, options)` | Dispatch a workflow. |
 | `actions_workflow_runs(harness, owner, repo, options)` | List workflow runs. |

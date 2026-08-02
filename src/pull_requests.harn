@@ -410,6 +410,144 @@ pub fn __github_pr_enable_auto_merge(harness: Harness, args, cfg) {
   )
 }
 
+pub fn __github_pr_disable_auto_merge(harness: Harness, args, cfg) {
+  const repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  const r = unwrap(repo)
+  const number = args?.pr_number ?? args?.number ?? args?.pull_number
+  if number == nil {
+    return connector_error(
+      "schema_drift",
+      "github.pr.disable_auto_merge requires number, pr_number, or pull_number",
+    )
+  }
+  const expected_head_oid = trim(to_string(args?.expected_head_oid ?? args?.expectedHeadOid ?? ""))
+  if expected_head_oid == "" {
+    return connector_error(
+      "schema_drift",
+      "github.pr.disable_auto_merge requires expected_head_oid as an explicit publication lease",
+    )
+  }
+  const pull = __github_json(
+    harness,
+    "GET",
+    __github_api_url(cfg.api_base_url, "/repos/${r.owner}/${r.name}/pulls/${number}"),
+    nil,
+    cfg,
+  )
+  if is_err(pull) {
+    return pull
+  }
+  const valid = __validate_pull_identity(pull, "github.pr.disable_auto_merge")
+  if is_err(valid) {
+    return valid
+  }
+  const observed_head_oid = trim(to_string(pull?.head?.sha ?? ""))
+  if observed_head_oid != expected_head_oid {
+    return connector_error(
+      "stale_head",
+      "pull request head no longer matches expected_head_oid",
+      {expected_head_oid: expected_head_oid, observed_head_oid: observed_head_oid},
+    )
+  }
+  const membership = __github_merge_queue_membership(
+    harness,
+    {owner: r.owner, repo: r.name, pull_number: number, pull: pull},
+    cfg,
+  )
+  if is_err(membership) {
+    return membership
+  }
+  const before = unwrap(membership)
+  const requested_method = __graphql_merge_method(
+    args?.restore_merge_method ?? args?.merge_method ?? pull?.auto_merge?.merge_method ?? "MERGE",
+  )
+  if is_err(requested_method) {
+    return requested_method
+  }
+  const observed_method = uppercase(
+    to_string(pull?.auto_merge?.merge_method ?? unwrap(requested_method)),
+  )
+  if pull?.auto_merge == nil && !before.auto_merge_armed {
+    if before.queued {
+      return connector_error(
+        "invalid_response",
+        "GitHub reported a queued pull request without auto-merge restoration intent",
+      )
+    }
+    return {
+      repo: r.full_name,
+      pull_number: to_int(number),
+      state: "already_disabled",
+      already_disabled: true,
+      expected_head_oid: expected_head_oid,
+      observed_head_oid: observed_head_oid,
+      merge_method: observed_method,
+      url: to_string(pull?.html_url ?? pull?.url ?? ""),
+      before_entry: before.entry,
+      after_entry: before.entry,
+    }
+  }
+  const node_id = trim(to_string(pull?.node_id ?? ""))
+  if node_id == "" {
+    return connector_error(
+      "invalid_response",
+      "GitHub PR response did not include node_id for auto-merge disable",
+    )
+  }
+  const graph = __github_json(
+    harness,
+    "POST",
+    __github_api_url(cfg.api_base_url, "/graphql"),
+    {query: __disable_auto_merge_mutation(), variables: {pullRequestId: node_id}},
+    cfg,
+  )
+  if is_err(graph) {
+    return graph
+  }
+  if graph?.errors != nil && len(graph.errors) > 0 {
+    return connector_error(
+      "graphql",
+      "github GraphQL returned errors: " + json_stringify(graph.errors),
+    )
+  }
+  const disabled_pull = graph?.data?.disablePullRequestAutoMerge?.pullRequest
+  const after_head_oid = trim(to_string(disabled_pull?.headRefOid ?? ""))
+  if disabled_pull?.number == nil || after_head_oid == "" {
+    return connector_error(
+      "invalid_response",
+      "GitHub auto-merge disable response omitted pull request evidence",
+    )
+  }
+  if after_head_oid != expected_head_oid {
+    return connector_error(
+      "stale_head",
+      "pull request head changed while auto-merge was being disabled",
+      {expected_head_oid: expected_head_oid, observed_head_oid: after_head_oid},
+    )
+  }
+  if disabled_pull?.autoMergeRequest != nil || disabled_pull?.mergeQueueEntry != nil {
+    return connector_error(
+      "invalid_response",
+      "GitHub retained auto-merge or merge-queue state after the hold",
+    )
+  }
+  return {
+    repo: r.full_name,
+    pull_number: to_int(number),
+    state: "disabled",
+    already_disabled: false,
+    expected_head_oid: expected_head_oid,
+    observed_head_oid: after_head_oid,
+    merge_method: observed_method,
+    url: to_string(disabled_pull?.url ?? pull?.html_url ?? ""),
+    before_entry: before.entry,
+    after_entry: nil,
+  }
+}
+
 pub fn __pulls_list_with_checks(harness: Harness, args, cfg) {
   const graph = __github_json(
     harness,
@@ -691,6 +829,22 @@ mutation HarnGithubConnectorEnableAutoMerge($pullRequestId: ID!, $mergeMethod: P
         enabledAt
         mergeMethod
       }
+    }
+  }
+}
+"""
+}
+
+fn __disable_auto_merge_mutation() {
+  return """
+mutation HarnGithubConnectorDisableAutoMerge($pullRequestId: ID!) {
+  disablePullRequestAutoMerge(input: {pullRequestId: $pullRequestId}) {
+    pullRequest {
+      number
+      url
+      headRefOid
+      autoMergeRequest { enabledAt mergeMethod }
+      mergeQueueEntry { id }
     }
   }
 }

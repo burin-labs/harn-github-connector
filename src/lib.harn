@@ -7,6 +7,7 @@ pub import {
   reset_token_cache,
 } from "./client"
 pub import {
+  GithubAutoMergeDisableReceipt,
   GithubAutoMergeReceipt,
   GithubBranchProtection,
   GithubCheckRollup,
@@ -127,6 +128,27 @@ pub fn pulls_enable_auto_merge(
     return Err(unwrap_err(result))
   }
   const receipt: GithubAutoMergeReceipt = unwrap(result)
+  return Ok(receipt)
+}
+
+/** Hold a queued PR at an exact head while retaining its restoration method. */
+pub fn pulls_disable_auto_merge(
+  harness: Harness,
+  owner,
+  repo,
+  number,
+  options = nil,
+) -> GithubConnectorResult<GithubAutoMergeDisableReceipt> {
+  const opts = options ?? {}
+  const result = call(
+    harness,
+    "github.pr.disable_auto_merge",
+    opts + {owner: owner, repo: repo, pull_number: number},
+  )
+  if is_err(result) {
+    return Err(unwrap_err(result))
+  }
+  const receipt: GithubAutoMergeDisableReceipt = unwrap(result)
   return Ok(receipt)
 }
 

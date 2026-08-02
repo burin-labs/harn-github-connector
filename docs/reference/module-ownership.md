@@ -13,7 +13,7 @@ semantic decision in one module and expose it through [`src/lib.harn`](../../src
 | [`actions.harn`](../../src/actions.harn) | Workflow runs, jobs, logs, cancellation, and self-hosted runners. |
 | [`pull_requests.harn`](../../src/pull_requests.harn) | Pull-request reads, edits, checks, merges, comments, and branch-protection evidence. |
 | [`pull_request_models.harn`](../../src/pull_request_models.harn) | Conversion from GitHub responses to closed pull-request and check records. |
-| [`merge_queue.harn`](../../src/merge_queue.harn) | Merge-queue entries, membership, and enqueue leases. |
+| [`merge_queue.harn`](../../src/merge_queue.harn) | Merge-queue entries, membership, and enqueue leases. Auto-merge holds stay with pull-request mutations. |
 | [`mergeability.harn`](../../src/mergeability.harn) | Bounded polling for GitHub's asynchronous mergeability state. |
 | [`commits.harn`](../../src/commits.harn) | Pull-request commit evidence, signature validation, commit-to-PR lookup, and atomic signed commits. |
 | [`repository.harn`](../../src/repository.harn) | Repository identity, access checks, and exact file reads. |

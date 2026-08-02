@@ -57,6 +57,21 @@ pub fn pulls_enable_auto_merge(
 }
 ```
 
+### fn `pulls_disable_auto_merge`
+
+Hold a queued PR at an exact head while retaining its restoration method.
+
+```harn
+pub fn pulls_disable_auto_merge(
+  harness: Harness,
+  owner,
+  repo,
+  number,
+  options = nil,
+) -> GithubConnectorResult<GithubAutoMergeDisableReceipt> {
+}
+```
+
 ### fn `github_pr_commits`
 
 Read every commit on one stable pull-request head, including normalized
@@ -332,6 +347,25 @@ Policy for allowing the GitHub CLI when direct connector credentials are absent.
 
 ```harn
 pub type GithubAuthFallbackPolicy = {allow_gh_auth_fallback?: bool}
+```
+
+### type `GithubAutoMergeDisableReceipt`
+
+Auto-merge hold evidence tied to the pull request's exact head commit.
+
+```harn
+pub type GithubAutoMergeDisableReceipt = {
+  repo: string,
+  pull_number: int,
+  state: "disabled" | "already_disabled",
+  already_disabled: bool,
+  expected_head_oid: string,
+  observed_head_oid: string,
+  merge_method: string,
+  url: string,
+  before_entry: GithubMergeQueueEntry?,
+  after_entry: GithubMergeQueueEntry?,
+}
 ```
 
 ### type `GithubAutoMergeReceipt`
@@ -687,6 +721,7 @@ pub type GithubPullRequestSummary = {
   head: GithubPullRequestRef,
   labels: list<string>,
   auto_merge_armed: bool,
+  auto_merge_method: string?,
   in_merge_queue: bool?,
 }
 ```
