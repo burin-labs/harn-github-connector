@@ -6,6 +6,9 @@
   later.
 - Split webhook lifecycle, normalization, errors, and small shared utilities
   out of the outbound connector module. The default export stays unchanged.
+- Replace the duplicated outbound allow-list and conditional dispatcher with
+  one executable route registry. `outbound_methods()` now exposes that registry
+  for discovery, and small REST adapters live in their own module.
 - Remove the deprecated `gh_auth_fallback` option. Use
   `allow_gh_auth_fallback`.
 - Add task-focused setup and publishing guides, policy and protocol references,

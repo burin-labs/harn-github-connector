@@ -40,6 +40,10 @@ downstream annotations and compose through `GithubConnectorResult<T>`.
 
 ## Methods
 
+Call `outbound_methods()` when code needs the supported-method catalog. It is a
+direct view of the executable route registry, so discovery and dispatch cannot
+drift. The table below groups the same methods for browsing.
+
 | Area | Methods |
 | --- | --- |
 | Pull requests | `github.pr.list`, `github.pr.create`, `github.pr.view`, `github.pr.edit`, `github.pr.files`, `github.pr.commits`, `github.pr.checks`, `github.pr.merge`, `github.pr.enable_auto_merge`, `github.pr.comment`, `pulls.list`, `pulls.list_with_checks`, `pulls.get`, `pulls.update`, `pulls.create`, `pulls.merge`, `pulls.merge_safe`, `pulls.create_review_comment`, `pulls.get_diff`, `pulls.list_files`, `pulls.list_reviews`, `pull_requests.resolve_mergeable`, `repos.commit_pulls` |

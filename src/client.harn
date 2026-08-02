@@ -7,7 +7,8 @@ import { connector_error } from "./errors"
 import { GITHUB_API_BASE_URL, GITHUB_API_VERSION, GITHUB_USER_AGENT } from "./provider"
 import { text_index_of } from "./text"
 
-type GithubAuthFallbackPolicy = {allow_gh_auth_fallback?: bool}
+/** Policy for allowing the GitHub CLI when direct connector credentials are absent. */
+pub type GithubAuthFallbackPolicy = {allow_gh_auth_fallback?: bool}
 
 const TOKEN_CACHE_KEY = "harn-github-connector.token_cache"
 

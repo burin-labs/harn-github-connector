@@ -8,7 +8,18 @@ Version: `0.5.0`
 
 `src/lib.harn`
 
+### fn `outbound_methods`
+
+Return every method accepted by `call`, from the executable route registry.
+
+```harn
+pub fn outbound_methods() -> list<string> {
+}
+```
+
 ### fn `call`
+
+Dispatch a supported GitHub method through one explicit Result boundary.
 
 ```harn
 pub fn call(harness: Harness, method: string, args: dict = {}) -> GithubConnectorResult<unknown> {
@@ -484,6 +495,14 @@ pub fn github_resolve_mergeable(
   options = nil,
 ) -> GithubConnectorResult<GithubMergeability> {
 }
+```
+
+### type `GithubAuthFallbackPolicy`
+
+Policy for allowing the GitHub CLI when direct connector credentials are absent.
+
+```harn
+pub type GithubAuthFallbackPolicy = {allow_gh_auth_fallback?: bool}
 ```
 
 ### type `GithubAutoMergeReceipt`
@@ -1121,6 +1140,8 @@ pub fn github_auth_fallback_enabled(
 
 ### fn `github_extract_mentions`
 
+Extract `@user`, `@user/repo`, and `@user#number` references from webhook text.
+
 ```harn
 pub fn github_extract_mentions(body) {
 }
@@ -1172,6 +1193,8 @@ pub fn mint_app_jwt(clock: HarnessClock, secrets: HarnessSecrets, config) {
 ```
 
 ### fn `normalize_inbound`
+
+Verify and normalize a raw GitHub webhook request into NormalizeResult v1.
 
 ```harn
 pub fn normalize_inbound(harness: Harness, raw) {
@@ -1306,6 +1329,15 @@ pub fn github_worktree_delta(
 ```
 
 ### fn `github_commit_worktree`
+
+Publish one exact local Git state to `branch` as a GitHub-signed commit.
+The payload is derived first and entirely locally, so an unsupported file
+mode fails before any network request. The branch is then created or reset
+only to `base_oid` (which must equal the local `HEAD`), and the commit is
+published through `github_create_signed_commit`, which rejects any response
+without a valid GitHub-generated signature.
+An empty delta returns `committed: false` with `branch_action: "skipped"` and
+performs no network call at all.
 
 ```harn
 pub fn github_commit_worktree(

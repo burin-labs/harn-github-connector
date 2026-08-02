@@ -1,19 +1,22 @@
-import { github_auth_fallback_enabled } from "../src/lib"
+import { GithubAuthFallbackPolicy, github_auth_fallback_enabled } from "../src/lib"
 
 pipeline test_explicit_canonical_policy_dominates_environment(task) {
+  const disabled: GithubAuthFallbackPolicy = {allow_gh_auth_fallback: false}
+  const enabled: GithubAuthFallbackPolicy = {allow_gh_auth_fallback: true}
   assert_eq(
-    github_auth_fallback_enabled({allow_gh_auth_fallback: false}, true),
+    github_auth_fallback_enabled(disabled, true),
     false,
     "explicit opt-out dominates an enabled environment default",
   )
   assert_eq(
-    github_auth_fallback_enabled({allow_gh_auth_fallback: true}, false),
+    github_auth_fallback_enabled(enabled, false),
     true,
     "explicit opt-in dominates a disabled environment default",
   )
 }
 
 pipeline test_environment_is_only_the_absent_option_default(task) {
-  assert_eq(github_auth_fallback_enabled({}, true), true, "enabled environment default")
-  assert_eq(github_auth_fallback_enabled({}, false), false, "disabled environment default")
+  const absent: GithubAuthFallbackPolicy = {}
+  assert_eq(github_auth_fallback_enabled(absent, true), true, "enabled environment default")
+  assert_eq(github_auth_fallback_enabled(absent, false), false, "disabled environment default")
 }

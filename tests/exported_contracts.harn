@@ -41,6 +41,7 @@ import {
   GithubWorkflowStep,
   call,
   call_typed,
+  outbound_methods,
 } from "../src/lib"
 
 type ExportedContractCatalog = {
@@ -118,6 +119,15 @@ pipeline test_exported_contract_imports_and_result_narrowing(harness: Harness, t
   assert(is_err(failed), "unsupported methods return one Result failure")
   const error: GithubConnectorError = unwrap_err(failed)
   assert_eq(error.code, "method_not_found", "Result narrowing exposes the typed error")
+}
+
+pipeline test_outbound_method_catalog_is_the_executable_registry(harness: Harness, task) {
+  const methods = outbound_methods()
+  assert_eq(len(methods), 87, "every executable route is discoverable")
+  assert(methods.contains("github.pr.view"), "typed PR route is discoverable")
+  assert(methods.contains("actions.runners.list"), "runner route is discoverable")
+  assert(methods.contains("oauth.user.device_code"), "OAuth route is discoverable")
+  assert(methods.contains("graphql"), "raw GraphQL route is discoverable")
 }
 
 pipeline test_call_typed_validates_dynamic_escape_hatches(harness: Harness, task) {

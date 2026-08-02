@@ -145,8 +145,8 @@ pub fn shutdown(_harness: Harness) {
   return {provider: GITHUB_PROVIDER_ID, active: false}
 }
 
-@complexity(allow)
 /** Verify and normalize a raw GitHub webhook request into NormalizeResult v1. */
+@complexity(allow)
 pub fn normalize_inbound(harness: Harness, raw) {
   const body_text = raw?.body_text ?? raw?.body ?? ""
   if len(body_text) > MAX_BODY_BYTES {

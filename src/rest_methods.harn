@@ -1,0 +1,243 @@
+import {
+  __body_without,
+  __config_keys,
+  __github_api_url,
+  __github_json,
+  __github_text,
+  __pagination_query,
+  __pulls_list_query,
+  __ref_query,
+  __trim_leading_slash,
+} from "./client"
+import { connector_error } from "./errors"
+
+/** Return the installation token already resolved by the shared client boundary. */
+pub fn __installation_token_result(harness: Harness, args, cfg) {
+  return {
+    token: cfg.installation_token,
+    token_mode: cfg.token_mode,
+    installation_id: cfg.installation_id,
+    api_base_url: cfg.api_base_url,
+  }
+}
+
+pub fn __issues_create_comment(harness: Harness, args, cfg) {
+  return __github_json(
+    harness,
+    "POST",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/issues/" + to_string(args.issue_number)
+        + "/comments",
+    ),
+    {body: args.body},
+    cfg,
+  )
+}
+
+pub fn __issues_create(harness: Harness, args, cfg) {
+  return __github_json(
+    harness,
+    "POST",
+    __github_api_url(cfg.api_base_url, "/repos/" + args.owner + "/" + args.repo + "/issues"),
+    __body_without(args, __config_keys() + ["owner", "repo"]),
+    cfg,
+  )
+}
+
+pub fn __issues_update(harness: Harness, args, cfg) {
+  return __github_json(
+    harness,
+    "PATCH",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/issues/" + to_string(args.issue_number),
+    ),
+    __body_without(args, __config_keys() + ["owner", "repo", "issue_number"]),
+    cfg,
+  )
+}
+
+pub fn __issues_add_labels(harness: Harness, args, cfg) {
+  return __github_json(
+    harness,
+    "POST",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/issues/" + to_string(args.issue_number)
+        + "/labels",
+    ),
+    {labels: args.labels ?? []},
+    cfg,
+  )
+}
+
+pub fn __pulls_list(harness: Harness, args, cfg) {
+  return __github_json(
+    harness,
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/pulls" + __pulls_list_query(args),
+    ),
+    nil,
+    cfg,
+  )
+}
+
+pub fn __pulls_get(harness: Harness, args, cfg) {
+  return __github_json(
+    harness,
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/pulls/" + to_string(args.pull_number),
+    ),
+    nil,
+    cfg,
+  )
+}
+
+pub fn __pulls_create_review_comment(harness: Harness, args, cfg) {
+  return __github_json(
+    harness,
+    "POST",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/pulls/" + to_string(args.pull_number)
+        + "/comments",
+    ),
+    __body_without(args, __config_keys() + ["owner", "repo", "pull_number"]),
+    cfg,
+  )
+}
+
+pub fn __pulls_get_diff(harness: Harness, args, cfg) {
+  return __github_text(
+    harness,
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/pulls/" + to_string(args.pull_number),
+    ),
+    cfg,
+    "application/vnd.github.v3.diff",
+  )
+}
+
+pub fn __pulls_list_files(harness: Harness, args, cfg) {
+  return __github_json(
+    harness,
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/pulls/" + to_string(args.pull_number)
+        + "/files"
+        + __pagination_query(args),
+    ),
+    nil,
+    cfg,
+  )
+}
+
+pub fn __pulls_list_reviews(harness: Harness, args, cfg) {
+  return __github_json(
+    harness,
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/pulls/" + to_string(args.pull_number)
+        + "/reviews"
+        + __pagination_query(args),
+    ),
+    nil,
+    cfg,
+  )
+}
+
+pub fn __repos_get_content(harness: Harness, args, cfg) {
+  return __github_json(
+    harness,
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/contents/"
+        + __trim_leading_slash(args.path ?? "")
+        + __ref_query(args),
+    ),
+    nil,
+    cfg,
+  )
+}
+
+pub fn __repos_get_branch_protection(harness: Harness, args, cfg) {
+  return __github_json(
+    harness,
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/branches/"
+        + url_encode(to_string(args.branch))
+        + "/protection",
+    ),
+    nil,
+    cfg,
+  )
+}
+
+pub fn __git_delete_ref(harness: Harness, args, cfg) {
+  return __github_json(
+    harness,
+    "DELETE",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/git/refs/"
+        + __trim_leading_slash(args.ref ?? ""),
+    ),
+    nil,
+    cfg,
+  )
+}
+
+pub fn __check_runs_create(harness: Harness, args, cfg) {
+  return __github_json(
+    harness,
+    "POST",
+    __github_api_url(cfg.api_base_url, "/repos/" + args.owner + "/" + args.repo + "/check-runs"),
+    __body_without(args, __config_keys() + ["owner", "repo"]),
+    cfg,
+  )
+}
+
+pub fn __check_runs_update(harness: Harness, args, cfg) {
+  return __github_json(
+    harness,
+    "PATCH",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/check-runs/" + to_string(args.check_run_id),
+    ),
+    __body_without(args, __config_keys() + ["owner", "repo", "check_run_id"]),
+    cfg,
+  )
+}
+
+pub fn __graphql(harness: Harness, args, cfg) {
+  const graph = __github_json(
+    harness,
+    "POST",
+    __github_api_url(cfg.api_base_url, "/graphql"),
+    {query: args.query, variables: args.variables ?? {}},
+    cfg,
+  )
+  if is_err(graph) {
+    return graph
+  }
+  if graph?.errors != nil && len(graph.errors) > 0 {
+    return connector_error(
+      "graphql",
+      "github GraphQL returned errors: " + json_stringify(graph.errors),
+    )
+  }
+  return graph
+}

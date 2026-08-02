@@ -9,6 +9,14 @@ import {
   __typed_workflow_job,
   __typed_workflow_run,
 } from "./actions"
+pub import {
+  GithubAuthFallbackPolicy,
+  github_auth_fallback_enabled,
+  installation_token,
+  invalidate_installation_token,
+  mint_app_jwt,
+  reset_token_cache,
+} from "./client"
 import {
   __body_without,
   __config_keys,
@@ -21,13 +29,6 @@ import {
   __pulls_list_query,
   __ref_query,
   __trim_leading_slash,
-} from "./client"
-pub import {
-  github_auth_fallback_enabled,
-  installation_token,
-  invalidate_installation_token,
-  mint_app_jwt,
-  reset_token_cache,
 } from "./client"
 import { first_or_nil } from "./collections"
 pub import {
@@ -75,6 +76,25 @@ pub import {
 import { connector_error } from "./errors"
 import { __oauth_user_dispatch } from "./oauth"
 import { pr_edit_body, pr_edit_result } from "./pr_edit"
+import {
+  __check_runs_create,
+  __check_runs_update,
+  __git_delete_ref,
+  __graphql,
+  __installation_token_result,
+  __issues_add_labels,
+  __issues_create,
+  __issues_create_comment,
+  __issues_update,
+  __pulls_create_review_comment,
+  __pulls_get,
+  __pulls_get_diff,
+  __pulls_list,
+  __pulls_list_files,
+  __pulls_list_reviews,
+  __repos_get_branch_protection,
+  __repos_get_content,
+} from "./rest_methods"
 import { __actions_run_id, __nonnegative_decimal, __positive_decimal } from "./validation"
 pub import {
   activate,
@@ -87,100 +107,107 @@ pub import {
   shutdown,
 } from "./webhooks"
 
-const GITHUB_OUTBOUND_METHODS = [
-  "github.pr.list",
-  "github.pr.create",
-  "github.pr.view",
-  "github.pr.edit",
-  "github.pr.files",
-  "github.pr.commits",
-  "github.pr.checks",
-  "github.pr.merge",
-  "github.pr.enable_auto_merge",
-  "github.pr.comment",
-  "github.actions.workflow_dispatch",
-  "github.actions.runs",
-  "github.actions.run",
-  "github.actions.run_jobs",
-  "github.actions.run_cancel",
-  "github.actions.logs",
-  "github.release.view",
-  "github.release.edit_body",
-  "github.release.latest",
-  "github.release.assets",
-  "github.merge_queue.entries",
-  "github.merge_queue.membership",
-  "github.merge_queue.enqueue",
-  "github.issue.create",
-  "github.issue.comment",
-  "github.branch.protection",
-  "github.branch.create_signed_commit",
-  "github.commit.signature",
-  "github.file.view",
-  "github.app.installation_token",
-  "api_call",
-  "issues.create_comment",
-  "issues.create",
-  "issues.create_with_template",
-  "issues.update",
-  "issues.add_labels",
-  "pulls.list",
-  "pulls.list_with_checks",
-  "pulls.get",
-  "pulls.update",
-  "pulls.create",
-  "pulls.merge",
-  "pulls.merge_safe",
-  "pulls.create_review_comment",
-  "pulls.get_diff",
-  "pulls.list_files",
-  "pulls.list_reviews",
-  "repos.get_content",
-  "repos.get_text",
-  "repos.create_or_update_file",
-  "repos.put_content",
-  "repos.delete_file",
-  "repos.get_latest_release",
-  "repos.list_release_assets",
-  "repos.get_branch_protection",
-  "git.create_commit",
-  "git.delete_ref",
-  "actions.workflow_dispatch",
-  "actions.workflow_runs.list",
-  "actions.workflow_run.get",
-  "actions.workflow_run.jobs",
-  "actions.workflow_run.cancel",
-  "actions.runners.registration_token",
-  "actions.runners.remove_token",
-  "actions.runners.generate_jitconfig",
-  "actions.runners.list",
-  "actions.runners.get",
-  "actions.runners.delete",
-  "actions.runners.downloads",
-  "actions.runners.labels.list",
-  "actions.runners.labels.add",
-  "actions.runners.labels.replace",
-  "actions.runners.labels.remove",
-  "actions.runner_groups.list",
-  "actions.runner_groups.create",
-  "actions.runner_groups.get",
-  "actions.runner_groups.update",
-  "actions.runner_groups.delete",
-  "check_runs.create",
-  "check_runs.update",
-  "repos.commit_pulls",
-  "pull_requests.resolve_mergeable",
-  "oauth.user.device_code",
-  "oauth.user.device_poll",
-  "oauth.user.exchange_code",
-  "oauth.user.refresh",
-  "graphql",
-]
+fn __outbound_routes() {
+  return {
+    "github.pr.list": {handler: __github_pr_list},
+    "github.pr.create": {handler: __github_pr_create},
+    "github.pr.view": {handler: __github_pr_view},
+    "github.pr.edit": {handler: __github_pr_edit},
+    "github.pr.files": {handler: __github_pr_files},
+    "github.pr.commits": {handler: __github_pr_commits},
+    "github.pr.checks": {handler: __github_pr_checks},
+    "github.pr.merge": {handler: __github_pr_merge},
+    "github.pr.enable_auto_merge": {handler: __github_pr_enable_auto_merge},
+    "github.pr.comment": {handler: __github_pr_comment},
+    "github.actions.workflow_dispatch": {handler: __github_actions_workflow_dispatch},
+    "github.actions.runs": {handler: __github_actions_runs},
+    "github.actions.run": {handler: __github_actions_run},
+    "github.actions.run_jobs": {handler: __github_actions_run_jobs},
+    "github.actions.run_cancel": {handler: __github_actions_run_cancel},
+    "github.actions.logs": {handler: __github_actions_logs},
+    "github.release.view": {handler: __github_release_view},
+    "github.release.edit_body": {handler: __github_release_edit_body},
+    "github.release.latest": {handler: __github_release_latest},
+    "github.release.assets": {handler: __github_release_assets},
+    "github.merge_queue.entries": {handler: __github_merge_queue_entries},
+    "github.merge_queue.membership": {handler: __github_merge_queue_membership},
+    "github.merge_queue.enqueue": {handler: __github_merge_queue_enqueue},
+    "github.issue.create": {handler: __github_issue_create},
+    "github.issue.comment": {handler: __github_issue_comment},
+    "github.branch.protection": {handler: __github_branch_protection},
+    "github.branch.create_signed_commit": {handler: __github_create_signed_commit},
+    "github.commit.signature": {handler: __github_commit_signature},
+    "github.file.view": {handler: __github_file_view},
+    "github.app.installation_token": {handler: __installation_token_result},
+    api_call: {handler: __api_call},
+    "issues.create_comment": {handler: __issues_create_comment},
+    "issues.create": {handler: __issues_create},
+    "issues.create_with_template": {handler: __issues_create_with_template},
+    "issues.update": {handler: __issues_update},
+    "issues.add_labels": {handler: __issues_add_labels},
+    "pulls.list": {handler: __pulls_list},
+    "pulls.list_with_checks": {handler: __pulls_list_with_checks},
+    "pulls.get": {handler: __pulls_get},
+    "pulls.update": {handler: __pulls_update},
+    "pulls.create": {handler: __pulls_create},
+    "pulls.merge": {handler: __pulls_merge},
+    "pulls.merge_safe": {handler: __pulls_merge_safe},
+    "pulls.create_review_comment": {handler: __pulls_create_review_comment},
+    "pulls.get_diff": {handler: __pulls_get_diff},
+    "pulls.list_files": {handler: __pulls_list_files},
+    "pulls.list_reviews": {handler: __pulls_list_reviews},
+    "repos.get_content": {handler: __repos_get_content},
+    "repos.get_text": {handler: __repos_get_text},
+    "repos.create_or_update_file": {handler: __repos_create_or_update_file},
+    "repos.put_content": {handler: __repos_create_or_update_file},
+    "repos.delete_file": {handler: __repos_delete_file},
+    "repos.get_latest_release": {handler: __repos_get_latest_release},
+    "repos.list_release_assets": {handler: __repos_list_release_assets},
+    "repos.get_branch_protection": {handler: __repos_get_branch_protection},
+    "git.create_commit": {handler: __git_create_commit},
+    "git.delete_ref": {handler: __git_delete_ref},
+    "actions.workflow_dispatch": {handler: __actions_workflow_dispatch},
+    "actions.workflow_runs.list": {handler: __actions_workflow_runs_list},
+    "actions.workflow_run.get": {handler: __actions_workflow_run_get},
+    "actions.workflow_run.jobs": {handler: __actions_workflow_run_jobs},
+    "actions.workflow_run.cancel": {handler: __actions_workflow_run_cancel},
+    "actions.runners.registration_token": {kind: "runner"},
+    "actions.runners.remove_token": {kind: "runner"},
+    "actions.runners.generate_jitconfig": {kind: "runner"},
+    "actions.runners.list": {kind: "runner"},
+    "actions.runners.get": {kind: "runner"},
+    "actions.runners.delete": {kind: "runner"},
+    "actions.runners.downloads": {kind: "runner"},
+    "actions.runners.labels.list": {kind: "runner"},
+    "actions.runners.labels.add": {kind: "runner"},
+    "actions.runners.labels.replace": {kind: "runner"},
+    "actions.runners.labels.remove": {kind: "runner"},
+    "actions.runner_groups.list": {kind: "runner"},
+    "actions.runner_groups.create": {kind: "runner"},
+    "actions.runner_groups.get": {kind: "runner"},
+    "actions.runner_groups.update": {kind: "runner"},
+    "actions.runner_groups.delete": {kind: "runner"},
+    "check_runs.create": {handler: __check_runs_create},
+    "check_runs.update": {handler: __check_runs_update},
+    "repos.commit_pulls": {handler: __repos_commit_pulls},
+    "pull_requests.resolve_mergeable": {handler: __pull_requests_resolve_mergeable},
+    "oauth.user.device_code": {kind: "oauth"},
+    "oauth.user.device_poll": {kind: "oauth"},
+    "oauth.user.exchange_code": {kind: "oauth"},
+    "oauth.user.refresh": {kind: "oauth"},
+    graphql: {handler: __graphql},
+  }
+}
+
+/** Return every method accepted by `call`, from the executable route registry. */
+pub fn outbound_methods() -> list<string> {
+  return __outbound_routes().keys()
+}
 
 const MAX_PULL_REQUEST_COMMIT_PAGES = 250
 
-@complexity(allow)
 /** Dispatch a supported GitHub method through one explicit Result boundary. */
+@complexity(allow)
 pub fn call(harness: Harness, method: string, args: dict = {}) -> GithubConnectorResult<unknown> {
   const value = __call_raw(harness, method, args)
   if is_err(value) {
@@ -211,15 +238,15 @@ pub fn call_typed<T>(
   )
 }
 
-@complexity(allow)
 fn __call_raw(harness: Harness, method, args = {}) {
-  if !contains(GITHUB_OUTBOUND_METHODS, method) {
+  const route = __outbound_routes()[method]
+  if route == nil {
     return connector_error(
       "method_not_found",
       "github connector does not implement outbound method `" + method + "`",
     )
   }
-  if starts_with(method, "oauth.user.") {
+  if route?.kind == "oauth" {
     return __oauth_user_dispatch(harness, method, args ?? {})
   }
   const config = __outbound_config(harness, args ?? {})
@@ -227,392 +254,17 @@ fn __call_raw(harness: Harness, method, args = {}) {
     return config
   }
   const cfg = unwrap(config)
-  if method == "github.app.installation_token" {
-    // Resolving `cfg` above already self-minted the installation token in
-    // app-credential mode (app_id + installation_id + private_key_pem/secret),
-    // or carried through a direct/gh-auth token. Expose it so an orchestrator
-    // can obtain a bearer token for its own git operations
-    // without re-implementing RS256 JWT minting. The caller must already hold
-    // the credentials, so this grants no privilege it did not already have.
-    return {
-      token: cfg.installation_token,
-      token_mode: cfg.token_mode,
-      installation_id: cfg.installation_id,
-      api_base_url: cfg.api_base_url,
-    }
-  }
-  if method == "github.pr.list" {
-    return __github_pr_list(harness, args, cfg)
-  }
-  if method == "github.pr.create" {
-    return __github_pr_create(harness, args, cfg)
-  }
-  if method == "github.pr.view" {
-    return __github_pr_view(harness, args, cfg)
-  }
-  if method == "github.pr.edit" {
-    return __github_pr_edit(harness, args, cfg)
-  }
-  if method == "github.pr.files" {
-    return __github_pr_files(harness, args, cfg)
-  }
-  if method == "github.pr.commits" {
-    return __github_pr_commits(harness, args, cfg)
-  }
-  if method == "github.pr.checks" {
-    return __github_pr_checks(harness, args, cfg)
-  }
-  if method == "github.pr.merge" {
-    return __github_pr_merge(harness, args, cfg)
-  }
-  if method == "github.pr.enable_auto_merge" {
-    return __github_pr_enable_auto_merge(harness, args, cfg)
-  }
-  if method == "github.pr.comment" {
-    return __github_pr_comment(harness, args, cfg)
-  }
-  if method == "github.actions.workflow_dispatch" {
-    return __github_actions_workflow_dispatch(harness, args, cfg)
-  }
-  if method == "github.actions.runs" {
-    return __github_actions_runs(harness, args, cfg)
-  }
-  if method == "github.actions.run" {
-    return __github_actions_run(harness, args, cfg)
-  }
-  if method == "github.actions.run_jobs" {
-    return __github_actions_run_jobs(harness, args, cfg)
-  }
-  if method == "github.actions.run_cancel" {
-    return __github_actions_run_cancel(harness, args, cfg)
-  }
-  if method == "github.actions.logs" {
-    return __github_actions_logs(harness, args, cfg)
-  }
-  if method == "github.release.view" {
-    return __github_release_view(harness, args, cfg)
-  }
-  if method == "github.release.edit_body" {
-    return __github_release_edit_body(harness, args, cfg)
-  }
-  if method == "github.release.latest" {
-    return __github_release_latest(harness, args, cfg)
-  }
-  if method == "github.release.assets" {
-    return __github_release_assets(harness, args, cfg)
-  }
-  if method == "github.merge_queue.entries" {
-    return __github_merge_queue_entries(harness, args, cfg)
-  }
-  if method == "github.merge_queue.membership" {
-    return __github_merge_queue_membership(harness, args, cfg)
-  }
-  if method == "github.merge_queue.enqueue" {
-    return __github_merge_queue_enqueue(harness, args, cfg)
-  }
-  if method == "github.issue.create" {
-    return __github_issue_create(harness, args, cfg)
-  }
-  if method == "github.issue.comment" {
-    return __github_issue_comment(harness, args, cfg)
-  }
-  if method == "github.branch.protection" {
-    return __github_branch_protection(harness, args, cfg)
-  }
-  if method == "github.branch.create_signed_commit" {
-    return __github_create_signed_commit(harness, args, cfg)
-  }
-  if method == "github.commit.signature" {
-    return __github_commit_signature(harness, args, cfg)
-  }
-  if method == "github.file.view" {
-    return __github_file_view(harness, args, cfg)
-  }
-  if method == "api_call" {
-    return __api_call(harness, args, cfg)
-  }
-  if method == "issues.create_comment" {
-    return __github_json(
-      harness,
-      "POST",
-      __github_api_url(
-        cfg.api_base_url,
-        "/repos/" + args.owner + "/" + args.repo + "/issues/" + to_string(args.issue_number)
-          + "/comments",
-      ),
-      {body: args.body},
-      cfg,
-    )
-  }
-  if method == "issues.create" {
-    return __github_json(
-      harness,
-      "POST",
-      __github_api_url(cfg.api_base_url, "/repos/" + args.owner + "/" + args.repo + "/issues"),
-      __body_without(args, __config_keys() + ["owner", "repo"]),
-      cfg,
-    )
-  }
-  if method == "issues.create_with_template" {
-    return __issues_create_with_template(harness, args, cfg)
-  }
-  if method == "issues.update" {
-    return __github_json(
-      harness,
-      "PATCH",
-      __github_api_url(
-        cfg.api_base_url,
-        "/repos/" + args.owner + "/" + args.repo + "/issues/" + to_string(args.issue_number),
-      ),
-      __body_without(args, __config_keys() + ["owner", "repo", "issue_number"]),
-      cfg,
-    )
-  }
-  if method == "issues.add_labels" {
-    return __github_json(
-      harness,
-      "POST",
-      __github_api_url(
-        cfg.api_base_url,
-        "/repos/" + args.owner + "/" + args.repo + "/issues/" + to_string(args.issue_number)
-          + "/labels",
-      ),
-      {labels: args.labels ?? []},
-      cfg,
-    )
-  }
-  if method == "pulls.list" {
-    return __github_json(
-      harness,
-      "GET",
-      __github_api_url(
-        cfg.api_base_url,
-        "/repos/" + args.owner + "/" + args.repo + "/pulls" + __pulls_list_query(args),
-      ),
-      nil,
-      cfg,
-    )
-  }
-  if method == "pulls.list_with_checks" {
-    return __pulls_list_with_checks(harness, args, cfg)
-  }
-  if method == "pulls.get" {
-    return __github_json(
-      harness,
-      "GET",
-      __github_api_url(
-        cfg.api_base_url,
-        "/repos/" + args.owner + "/" + args.repo + "/pulls/" + to_string(args.pull_number),
-      ),
-      nil,
-      cfg,
-    )
-  }
-  if method == "pulls.update" {
-    return __pulls_update(harness, args, cfg)
-  }
-  if method == "pulls.create" {
-    return __pulls_create(harness, args, cfg)
-  }
-  if method == "pulls.merge" {
-    const merged = __github_json(
-      harness,
-      "PUT",
-      __github_api_url(
-        cfg.api_base_url,
-        "/repos/" + args.owner + "/" + args.repo + "/pulls/" + to_string(args.pull_number)
-          + "/merge",
-      ),
-      __body_without(
-        args,
-        __config_keys() + ["owner", "repo", "pull_number", "admin_override", "delete_branch"],
-      ),
-      cfg,
-    )
-    if is_err(merged) {
-      return merged
-    }
-    return __merge_annotation(merged, args)
-  }
-  if method == "pulls.merge_safe" {
-    return __pulls_merge_safe(harness, args, cfg)
-  }
-  if method == "pulls.create_review_comment" {
-    return __github_json(
-      harness,
-      "POST",
-      __github_api_url(
-        cfg.api_base_url,
-        "/repos/" + args.owner + "/" + args.repo + "/pulls/" + to_string(args.pull_number)
-          + "/comments",
-      ),
-      __body_without(args, __config_keys() + ["owner", "repo", "pull_number"]),
-      cfg,
-    )
-  }
-  if method == "pulls.get_diff" {
-    return __github_text(
-      harness,
-      "GET",
-      __github_api_url(
-        cfg.api_base_url,
-        "/repos/" + args.owner + "/" + args.repo + "/pulls/" + to_string(args.pull_number),
-      ),
-      cfg,
-      "application/vnd.github.v3.diff",
-    )
-  }
-  if method == "pulls.list_files" {
-    return __github_json(
-      harness,
-      "GET",
-      __github_api_url(
-        cfg.api_base_url,
-        "/repos/" + args.owner + "/" + args.repo + "/pulls/" + to_string(args.pull_number)
-          + "/files"
-          + __pagination_query(args),
-      ),
-      nil,
-      cfg,
-    )
-  }
-  if method == "pulls.list_reviews" {
-    return __github_json(
-      harness,
-      "GET",
-      __github_api_url(
-        cfg.api_base_url,
-        "/repos/" + args.owner + "/" + args.repo + "/pulls/" + to_string(args.pull_number)
-          + "/reviews"
-          + __pagination_query(args),
-      ),
-      nil,
-      cfg,
-    )
-  }
-  if method == "repos.get_content" {
-    return __github_json(
-      harness,
-      "GET",
-      __github_api_url(
-        cfg.api_base_url,
-        "/repos/" + args.owner + "/" + args.repo + "/contents/"
-          + __trim_leading_slash(
-          args.path ?? "",
-        )
-          + __ref_query(args),
-      ),
-      nil,
-      cfg,
-    )
-  }
-  if method == "repos.get_text" {
-    return __repos_get_text(harness, args, cfg)
-  }
-  if method == "repos.create_or_update_file" || method == "repos.put_content" {
-    return __repos_create_or_update_file(harness, args, cfg)
-  }
-  if method == "repos.delete_file" {
-    return __repos_delete_file(harness, args, cfg)
-  }
-  if method == "repos.get_latest_release" {
-    return __repos_get_latest_release(harness, args, cfg)
-  }
-  if method == "repos.list_release_assets" {
-    return __repos_list_release_assets(harness, args, cfg)
-  }
-  if method == "repos.get_branch_protection" {
-    return __github_json(
-      harness,
-      "GET",
-      __github_api_url(
-        cfg.api_base_url,
-        "/repos/" + args.owner + "/" + args.repo + "/branches/"
-          + url_encode(to_string(args.branch))
-          + "/protection",
-      ),
-      nil,
-      cfg,
-    )
-  }
-  if method == "git.create_commit" {
-    return __git_create_commit(harness, args, cfg)
-  }
-  if method == "git.delete_ref" {
-    return __github_json(
-      harness,
-      "DELETE",
-      __github_api_url(
-        cfg.api_base_url,
-        "/repos/" + args.owner + "/" + args.repo + "/git/refs/"
-          + __trim_leading_slash(args.ref ?? ""),
-      ),
-      nil,
-      cfg,
-    )
-  }
-  if method == "actions.workflow_dispatch" {
-    return __actions_workflow_dispatch(harness, args, cfg)
-  }
-  if method == "actions.workflow_runs.list" {
-    return __actions_workflow_runs_list(harness, args, cfg)
-  }
-  if method == "actions.workflow_run.get" {
-    return __actions_workflow_run_get(harness, args, cfg)
-  }
-  if method == "actions.workflow_run.jobs" {
-    return __actions_workflow_run_jobs(harness, args, cfg)
-  }
-  if method == "actions.workflow_run.cancel" {
-    return __actions_workflow_run_cancel(harness, args, cfg)
-  }
-  if starts_with(method, "actions.runners.") || starts_with(method, "actions.runner_groups.") {
+  if route?.kind == "runner" {
     return __actions_runners_dispatch(harness, method, args, cfg)
   }
-  if method == "repos.commit_pulls" {
-    return __repos_commit_pulls(harness, args, cfg)
-  }
-  if method == "pull_requests.resolve_mergeable" {
-    return __pull_requests_resolve_mergeable(harness, args, cfg)
-  }
-  if method == "check_runs.create" {
-    return __github_json(
-      harness,
-      "POST",
-      __github_api_url(cfg.api_base_url, "/repos/" + args.owner + "/" + args.repo + "/check-runs"),
-      __body_without(args, __config_keys() + ["owner", "repo"]),
-      cfg,
-    )
-  }
-  if method == "check_runs.update" {
-    return __github_json(
-      harness,
-      "PATCH",
-      __github_api_url(
-        cfg.api_base_url,
-        "/repos/" + args.owner + "/" + args.repo + "/check-runs/" + to_string(args.check_run_id),
-      ),
-      __body_without(args, __config_keys() + ["owner", "repo", "check_run_id"]),
-      cfg,
-    )
-  }
-  const graph = __github_json(
-    harness,
-    "POST",
-    __github_api_url(cfg.api_base_url, "/graphql"),
-    {query: args.query, variables: args.variables ?? {}},
-    cfg,
-  )
-  if is_err(graph) {
-    return graph
-  }
-  if graph?.errors != nil && len(graph.errors) > 0 {
+  const handler = route?.handler
+  if handler == nil {
     return connector_error(
-      "graphql",
-      "github GraphQL returned errors: " + json_stringify(graph.errors),
+      "invalid_response",
+      "github connector method `" + method + "` has no executable route",
     )
   }
-  return graph
+  return handler(harness, args, cfg)
 }
 
 /** List PRs in the same shape consumed by managed merge_captain. */
@@ -3416,6 +3068,27 @@ fn __pulls_list_with_checks(harness: Harness, args, cfg) {
     pulls = pulls + [__normalize_graphql_pr(node)]
   }
   return pulls
+}
+
+fn __pulls_merge(harness: Harness, args, cfg) {
+  const merged = __github_json(
+    harness,
+    "PUT",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/pulls/" + to_string(args.pull_number)
+        + "/merge",
+    ),
+    __body_without(
+      args,
+      __config_keys() + ["owner", "repo", "pull_number", "admin_override", "delete_branch"],
+    ),
+    cfg,
+  )
+  if is_err(merged) {
+    return merged
+  }
+  return __merge_annotation(merged, args)
 }
 
 fn __pulls_merge_safe(harness: Harness, args, cfg) {

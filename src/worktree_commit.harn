@@ -819,7 +819,6 @@ fn __wc_empty_receipt(
   }
 }
 
-@complexity(allow)
 /**
  * Publish one exact local Git state to `branch` as a GitHub-signed commit.
  *
@@ -832,6 +831,7 @@ fn __wc_empty_receipt(
  * An empty delta returns `committed: false` with `branch_action: "skipped"` and
  * performs no network call at all.
  */
+@complexity(allow)
 pub fn github_commit_worktree(
   harness: Harness,
   request: GithubWorktreeCommitRequest,

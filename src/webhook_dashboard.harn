@@ -5,6 +5,7 @@ import { __source_refs } from "./webhook_sources"
 
 const MENTION_HANDLE_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_/"
 
+/** Extract `@user`, `@user/repo`, and `@user#number` references from webhook text. */
 pub fn github_extract_mentions(body) {
   const text = to_string(body ?? "")
   const n = len(text)
