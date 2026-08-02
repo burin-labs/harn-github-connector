@@ -1,0 +1,206 @@
+import { __body_without, __config_keys } from "./client"
+import { connector_error } from "./errors"
+
+fn __choice(args) -> dict {
+  const choice = args?.github_author_choice ?? args?.author_choice
+  if type_of(choice) == "dict" {
+    return choice
+  }
+  return {}
+}
+
+fn __author_mode(args) {
+  const choice = __choice(args)
+  const raw = args?.author_mode ?? choice?.author_mode
+  if raw == nil || trim(to_string(raw)) == "" {
+    return nil
+  }
+  const mode = lowercase(trim(to_string(raw)))
+  if mode == "human" || mode == "bot" {
+    return mode
+  }
+  return connector_error("author_mode", "author_mode must be `human` or `bot`, got `" + mode + "`")
+}
+
+fn __git_signature(value, label) {
+  if value == nil {
+    return nil
+  }
+  const name = trim(to_string(value?.name ?? ""))
+  const email = trim(to_string(value?.email ?? ""))
+  if name == "" || email == "" {
+    return connector_error("author_mode", label + " must include name and email")
+  }
+  return Ok({name: name, email: email})
+}
+
+fn __human_commit_author(args) {
+  const choice = __choice(args)
+  const value = args?.author ?? choice?.commit_author ?? choice?.author
+  if value == nil {
+    return connector_error(
+      "author_mode",
+      "author_mode=human requires a commit author from args.author or github_author_choice.commit_author",
+    )
+  }
+  return __git_signature(value, "author_mode=human commit author")
+}
+
+fn __custom_committer(args) {
+  if args?.committer == nil {
+    return Ok(nil)
+  }
+  return __git_signature(args.committer, "custom committer")
+}
+
+fn __author_mode_requires_identity(mode, cfg, required, surface) {
+  if mode == nil {
+    return Ok(true)
+  }
+  if cfg?.auth_identity == required {
+    return Ok(true)
+  }
+  return connector_error(
+    "author_mode",
+    surface + " with author_mode=" + mode + " requires `" + required + "` authentication, got `"
+      + to_string(
+      cfg?.auth_identity ?? cfg?.token_mode ?? "unknown",
+    )
+      + "`",
+  )
+}
+
+fn __line_present(text, line) -> bool {
+  const want = trim(line)
+  if want == "" {
+    return true
+  }
+  for existing in split(text ?? "", "\n") {
+    if trim(existing) == want {
+      return true
+    }
+  }
+  return false
+}
+
+fn __append_author_trailers(text, trailers) -> string {
+  const out = trim(to_string(text ?? ""))
+  let lines = []
+  for line in split(trim(to_string(trailers ?? "")), "\n") {
+    const cleaned = trim(line)
+    if cleaned != "" && !__line_present(out, cleaned) && !contains(lines, cleaned) {
+      lines = lines + [cleaned]
+    }
+  }
+  if len(lines) == 0 {
+    return out
+  }
+  if out == "" {
+    return join(lines, "\n")
+  }
+  return out + "\n\n" + join(lines, "\n")
+}
+
+fn __author_trailers(args) -> string {
+  return to_string(args?.trailers ?? __choice(args)?.trailers ?? "")
+}
+
+pub fn __commit_write_body(args, strip_keys, cfg) {
+  const mode_result = __author_mode(args)
+  if is_err(mode_result) {
+    return mode_result
+  }
+  const mode = mode_result
+  let body = __body_without(args, __config_keys() + strip_keys + ["trailers"])
+  if mode == nil {
+    return Ok(body)
+  }
+  if mode == "bot" {
+    const identity = __author_mode_requires_identity(mode, cfg, "github_app", "GitHub commit write")
+    if is_err(identity) {
+      return identity
+    }
+    if args?.author != nil || args?.committer != nil {
+      return connector_error(
+        "author_mode",
+        "author_mode=bot must omit custom author and committer fields so GitHub uses the App [bot] identity",
+      )
+    }
+    body.remove("author")
+    body.remove("committer")
+    return Ok(body)
+  }
+  const author = __human_commit_author(args)
+  if is_err(author) {
+    return author
+  }
+  const committer = __custom_committer(args)
+  if is_err(committer) {
+    return committer
+  }
+  body["author"] = unwrap(author)
+  const committer_value = unwrap(committer)
+  if committer_value != nil {
+    body["committer"] = committer_value
+  }
+  if body?.message != nil {
+    body["message"] = __append_author_trailers(body.message, __author_trailers(args))
+  }
+  return Ok(body)
+}
+
+pub fn __pull_create_body(args, cfg) {
+  const mode_result = __author_mode(args)
+  if is_err(mode_result) {
+    return mode_result
+  }
+  const mode = mode_result
+  let body = __body_without(args, __config_keys() + ["owner", "repo", "trailers"])
+  if mode == nil {
+    return Ok(body)
+  }
+  if mode == "bot" {
+    const identity = __author_mode_requires_identity(
+      mode,
+      cfg,
+      "github_app",
+      "GitHub pull request create",
+    )
+    if is_err(identity) {
+      return identity
+    }
+    return Ok(body)
+  }
+  const identity = __author_mode_requires_identity(mode, cfg, "user", "GitHub pull request create")
+  if is_err(identity) {
+    return identity
+  }
+  body["body"] = __append_author_trailers(body?.body ?? "", __author_trailers(args))
+  return Ok(body)
+}
+
+pub fn __api_call_author_mode_body(args, method, path, cfg) {
+  const mode_result = __author_mode(args)
+  if is_err(mode_result) {
+    return mode_result
+  }
+  if mode_result == nil {
+    return Ok(args?.body)
+  }
+  const normalized_path = lowercase(to_string(path ?? ""))
+  const raw_body = if type_of(args?.body) == "dict" {
+    args.body
+  } else {
+    {}
+  }
+  if method == "POST" && ends_with(normalized_path, "/pulls") {
+    return __pull_create_body(args + raw_body, cfg)
+  }
+  if (method == "PUT" || method == "DELETE") && contains(normalized_path, "/contents/") {
+    return __commit_write_body(args + raw_body, ["path", "method", "body"], cfg)
+  }
+  if method == "POST" && ends_with(normalized_path, "/git/commits") {
+    return __commit_write_body(args + raw_body, ["path", "method", "body"], cfg)
+  }
+  return Ok(args?.body)
+}
