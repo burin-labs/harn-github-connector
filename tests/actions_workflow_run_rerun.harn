@@ -1,0 +1,95 @@
+import { actions_workflow_run_rerun, call } from "../src/lib"
+
+const BASE = "https://github-api.test"
+
+const TOKEN = "github-installation-token"
+
+const RUN_ID = 29679449
+
+type RerunRequestBody = {enable_debug_logging: bool}
+
+fn auth() {
+  return {api_base_url: BASE, installation_token: TOKEN}
+}
+
+fn rerun_url() -> string {
+  return BASE + "/repos/octo-org/octo-repo/actions/runs/${RUN_ID}/rerun"
+}
+
+pipeline test_actions_workflow_run_rerun_requests_exact_run(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock("POST", rerun_url(), {status: 201, body: ""})
+  const result = actions_workflow_run_rerun(
+    harness,
+    "octo-org",
+    "octo-repo",
+    RUN_ID,
+    auth() + {enable_debug_logging: true},
+  )
+  assert(is_ok(result), "accepted rerun returns Ok")
+  const calls = harness.testing.http_mock_calls()
+  assert_eq(len(calls), 1)
+  assert_eq(calls[0].url, rerun_url())
+  assert_eq(calls[0].method, "POST")
+  const body: RerunRequestBody = json_parse(calls[0].body)
+  assert_eq(body, {enable_debug_logging: true})
+  harness.testing.http_mock_clear()
+}
+
+pipeline test_github_actions_run_rerun_returns_closed_receipt(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock("POST", rerun_url(), {status: 201, body: ""})
+  const result = call(
+    harness,
+    "github.actions.run_rerun",
+    auth() + {repo: "octo-org/octo-repo", run_id: RUN_ID},
+  )
+  assert(is_ok(result), "canonical rerun returns Ok")
+  assert_eq(
+    unwrap(result),
+    {repo: "octo-org/octo-repo", run_id: RUN_ID, accepted: true, state: "rerun_requested"},
+  )
+  harness.testing.http_mock_clear()
+}
+
+pipeline test_actions_workflow_run_rerun_rejects_invalid_input(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  const invalid_id = actions_workflow_run_rerun(harness, "octo-org", "octo-repo", "1/force", auth())
+  assert(is_err(invalid_id), "invalid run id fails before HTTP")
+  assert_eq(unwrap_err(invalid_id).code, "schema_drift")
+  const invalid_debug = actions_workflow_run_rerun(
+    harness,
+    "octo-org",
+    "octo-repo",
+    RUN_ID,
+    auth() + {enable_debug_logging: "yes"},
+  )
+  assert(is_err(invalid_debug), "invalid debug flag fails before HTTP")
+  assert_eq(unwrap_err(invalid_debug).code, "schema_drift")
+  assert_eq(len(harness.testing.http_mock_calls()), 0)
+  harness.testing.http_mock_clear()
+}
+
+pipeline test_actions_workflow_run_rerun_preserves_auth_failures(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
+    "POST",
+    rerun_url(),
+    {
+      status: 403,
+      body: json_stringify({message: "Resource not accessible by integration"}),
+      headers: {"x-ratelimit-remaining": "20"},
+    },
+  )
+  const result = call(
+    harness,
+    "github.actions.run_rerun",
+    auth() + {repo: "octo-org/octo-repo", run_id: RUN_ID},
+  )
+  assert(is_err(result), "provider rejection remains typed")
+  const error = unwrap_err(result)
+  assert_eq(error.code, "missing_scopes")
+  assert_eq(error.category, "permission")
+  assert_eq(error.http_status, 403)
+  harness.testing.http_mock_clear()
+}

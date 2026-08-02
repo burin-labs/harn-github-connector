@@ -41,6 +41,7 @@ pub import {
   GithubWorkflowDispatchReceipt,
   GithubWorkflowJob,
   GithubWorkflowJobs,
+  GithubWorkflowRerunReceipt,
   GithubWorkflowRun,
   GithubWorkflowRuns,
   GithubWorkflowStep,
@@ -71,6 +72,7 @@ const GITHUB_OUTBOUND_METHODS = [
   "github.actions.run",
   "github.actions.run_jobs",
   "github.actions.run_cancel",
+  "github.actions.run_rerun",
   "github.actions.logs",
   "github.release.view",
   "github.release.edit_body",
@@ -118,6 +120,7 @@ const GITHUB_OUTBOUND_METHODS = [
   "actions.workflow_run.get",
   "actions.workflow_run.jobs",
   "actions.workflow_run.cancel",
+  "actions.workflow_run.rerun",
   "actions.runners.registration_token",
   "actions.runners.remove_token",
   "actions.runners.generate_jitconfig",
@@ -442,6 +445,9 @@ fn __call_raw(harness: Harness, method, args = {}) {
   if method == "github.actions.run_cancel" {
     return __github_actions_run_cancel(harness, args, cfg)
   }
+  if method == "github.actions.run_rerun" {
+    return __github_actions_run_rerun(harness, args, cfg)
+  }
   if method == "github.actions.logs" {
     return __github_actions_logs(harness, args, cfg)
   }
@@ -722,6 +728,9 @@ fn __call_raw(harness: Harness, method, args = {}) {
   if method == "actions.workflow_run.cancel" {
     return __actions_workflow_run_cancel(harness, args, cfg)
   }
+  if method == "actions.workflow_run.rerun" {
+    return __actions_workflow_run_rerun(harness, args, cfg)
+  }
   if starts_with(method, "actions.runners.") || starts_with(method, "actions.runner_groups.") {
     return __actions_runners_dispatch(harness, method, args, cfg)
   }
@@ -935,6 +944,16 @@ pub fn actions_workflow_run_cancel(harness: Harness, owner, repo, run_id, option
   return call(
     harness,
     "actions.workflow_run.cancel",
+    opts + {owner: owner, repo: repo, run_id: run_id},
+  )
+}
+
+/** Request a new attempt for one exact workflow run. */
+pub fn actions_workflow_run_rerun(harness: Harness, owner, repo, run_id, options = nil) {
+  const opts = options ?? {}
+  return call(
+    harness,
+    "actions.workflow_run.rerun",
     opts + {owner: owner, repo: repo, run_id: run_id},
   )
 }
@@ -2704,6 +2723,33 @@ fn __github_actions_run_cancel(harness: Harness, args, cfg) {
   return receipt
 }
 
+fn __github_actions_run_rerun(harness: Harness, args, cfg) {
+  const repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  const r = unwrap(repo)
+  const run_id = __actions_run_id(args?.run_id)
+  if run_id == nil {
+    return __err("schema_drift", "github.actions.run_rerun requires a positive run_id")
+  }
+  const rerun = __actions_workflow_run_rerun(
+    harness,
+    args + {owner: r.owner, repo: r.name, run_id: run_id},
+    cfg,
+  )
+  if is_err(rerun) {
+    return rerun
+  }
+  const receipt: GithubWorkflowRerunReceipt = {
+    repo: r.full_name,
+    run_id: run_id,
+    accepted: true,
+    state: "rerun_requested",
+  }
+  return receipt
+}
+
 fn __github_actions_logs(harness: Harness, args, cfg) {
   const repo = __repo_parts(args)
   if is_err(repo) {
@@ -3856,6 +3902,32 @@ fn __actions_workflow_run_cancel(harness: Harness, args, cfg) {
         + "/cancel",
     ),
     nil,
+    cfg,
+  )
+}
+
+fn __actions_workflow_run_rerun(harness: Harness, args, cfg) {
+  const run_id = __actions_run_id(args?.run_id)
+  if run_id == nil {
+    return __err("schema_drift", "actions.workflow_run.rerun requires a positive run_id")
+  }
+  const debug = args?.enable_debug_logging
+  if debug != nil && type_of(debug) != "bool" {
+    return __err("schema_drift", "actions.workflow_run.rerun enable_debug_logging must be bool")
+  }
+  return __github_json(
+    harness,
+    "POST",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/actions/runs/" + to_string(run_id)
+        + "/rerun",
+    ),
+    if debug == nil {
+      nil
+    } else {
+      {enable_debug_logging: debug}
+    },
     cfg,
   )
 }

@@ -276,6 +276,13 @@ pub type GithubWorkflowCancelReceipt = {
   state: "cancel_requested",
 }
 
+pub type GithubWorkflowRerunReceipt = {
+  repo: string,
+  run_id: int,
+  accepted: bool,
+  state: "rerun_requested",
+}
+
 pub type GithubReleaseAsset = {
   id: int,
   name: string,

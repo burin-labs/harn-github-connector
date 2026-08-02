@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.6.0 - 2026-08-02
+
+- Add typed `github.actions.run_rerun` and `actions.workflow_run.rerun`
+  operations for retrying one exact workflow run. Invalid run ids and debug
+  flags fail before transport, accepted requests return a closed receipt, and
+  provider failures retain the connector's typed error contract.
+
 ## 0.5.0 - 2026-08-01
 
 - Migrate the connector and its complete test surface to typed `Harness`
