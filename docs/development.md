@@ -39,6 +39,8 @@ keep them free of live GitHub secrets and private repository data.
 - [`src/actions.harn`](../src/actions.harn) and
   [`src/rest_methods.harn`](../src/rest_methods.harn) own direct GitHub API
   operations.
+- [`src/writes.harn`](../src/writes.harn) owns pull-request, file, and commit
+  mutations after author identity has been resolved.
 - [`src/contracts.harn`](../src/contracts.harn) owns the closed records returned
   by the public API.
 - [`src/webhooks.harn`](../src/webhooks.harn) owns inbound webhook validation

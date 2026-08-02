@@ -1,0 +1,107 @@
+import { __commit_write_body, __pull_create_body } from "./authoring"
+import { __config_keys, __github_api_url, __github_json, __trim_leading_slash } from "./client"
+import { connector_error } from "./errors"
+import { pr_edit_body } from "./pr_edit"
+
+fn __pulls_update_body(args) {
+  const context_fields = __config_keys()
+    + [
+    "owner",
+    "repo",
+    "repository",
+    "repo_ref",
+    "repo_full_name",
+    "number",
+    "pr_number",
+    "pull_number",
+  ]
+  return pr_edit_body(args, context_fields)
+}
+
+pub fn __pulls_update(harness: Harness, args, cfg) {
+  const number = args?.pull_number ?? args?.number ?? args?.pr_number
+  if number == nil {
+    return connector_error(
+      "schema_drift",
+      "pulls.update requires pull_number, number, or pr_number",
+    )
+  }
+  const body = __pulls_update_body(args)
+  if is_err(body) {
+    return body
+  }
+  return __github_json(
+    harness,
+    "PATCH",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/pulls/" + to_string(number),
+    ),
+    unwrap(body),
+    cfg,
+  )
+}
+
+pub fn __pulls_create(harness: Harness, args, cfg) {
+  const body = __pull_create_body(args, cfg)
+  if is_err(body) {
+    return body
+  }
+  return __github_json(
+    harness,
+    "POST",
+    __github_api_url(cfg.api_base_url, "/repos/" + args.owner + "/" + args.repo + "/pulls"),
+    unwrap(body),
+    cfg,
+  )
+}
+
+pub fn __repos_create_or_update_file(harness: Harness, args, cfg) {
+  const body = __commit_write_body(args, ["owner", "repo", "path"], cfg)
+  if is_err(body) {
+    return body
+  }
+  return __github_json(
+    harness,
+    "PUT",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/contents/"
+        + __trim_leading_slash(args.path ?? ""),
+    ),
+    unwrap(body),
+    cfg,
+  )
+}
+
+pub fn __repos_delete_file(harness: Harness, args, cfg) {
+  const body = __commit_write_body(args, ["owner", "repo", "path"], cfg)
+  if is_err(body) {
+    return body
+  }
+  return __github_json(
+    harness,
+    "DELETE",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/contents/"
+        + __trim_leading_slash(args.path ?? ""),
+    ),
+    unwrap(body),
+    cfg,
+  )
+}
+
+pub fn __git_create_commit(harness: Harness, args, cfg) {
+  const body = __commit_write_body(args, ["owner", "repo"], cfg)
+  if is_err(body) {
+    return body
+  }
+  return __github_json(
+    harness,
+    "POST",
+    __github_api_url(cfg.api_base_url, "/repos/" + args.owner + "/" + args.repo + "/git/commits"),
+    unwrap(body),
+    cfg,
+  )
+}
