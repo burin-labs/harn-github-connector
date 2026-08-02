@@ -236,20 +236,26 @@ pipeline test_call_smoke(harness: Harness, task) {
   assert(is_err(capped), "rate-limit cap rejects")
   assert_eq(unwrap_err(capped).code, "rate_limited", "rate-limit cap code")
   const calls = harness.testing.http_mock_calls()
+  const comment_body: {body: string} = json_parse(calls[0].body)
+  const graphql_body: {query: string} = json_parse(calls[1].body)
+  const issue_body: {state: string} = json_parse(calls[2].body)
+  const review_body: {path: string} = json_parse(calls[3].body)
+  const check_create_body: {name: string} = json_parse(calls[6].body)
+  const check_update_body: {conclusion: string} = json_parse(calls[7].body)
   assert_eq(calls[0].method, "POST", "create comment method")
   assert_eq(calls[0].headers.authorization, "[redacted]", "authorization header is redacted")
   assert_eq(calls[0].headers["x-github-api-version"], "2022-11-28", "api version header")
-  assert_eq(json_parse(calls[0].body).body, "hello", "comment body")
+  assert_eq(comment_body.body, "hello", "comment body")
   assert_eq(calls[1].url, base + "/graphql", "graphql URL")
-  assert_eq(json_parse(calls[1].body).query, "query { viewer { login } }", "graphql query body")
+  assert_eq(graphql_body.query, "query { viewer { login } }", "graphql query body")
   assert_eq(calls[2].method, "PATCH", "issues.update method")
-  assert_eq(json_parse(calls[2].body).state, "closed", "issues.update body")
+  assert_eq(issue_body.state, "closed", "issues.update body")
   assert_eq(
     calls[3].url,
     base + "/repos/octo-org/octo-repo/pulls/42/comments",
     "review comment URL",
   )
-  assert_eq(json_parse(calls[3].body).path, "src/lib.rs", "review comment body")
+  assert_eq(review_body.path, "src/lib.rs", "review comment body")
   assert_eq(calls[4].url, base + "/repos/octo-org/octo-repo/pulls/42", "pulls.get URL")
   assert_eq(calls[4].headers.accept, "application/vnd.github+json", "pulls.get accept header")
   assert_eq(calls[5].url, base + "/repos/octo-org/octo-repo/pulls/42", "pulls.get_diff URL")
@@ -259,13 +265,13 @@ pipeline test_call_smoke(harness: Harness, task) {
     "pulls.get_diff accept header",
   )
   assert_eq(calls[6].url, base + "/repos/octo-org/octo-repo/check-runs", "check run create URL")
-  assert_eq(json_parse(calls[6].body).name, "Harn CI", "check run create body")
+  assert_eq(check_create_body.name, "Harn CI", "check run create body")
   assert_eq(
     calls[7].url,
     base + "/repos/octo-org/octo-repo/check-runs/8001",
     "check run update URL",
   )
-  assert_eq(json_parse(calls[7].body).conclusion, "success", "check run update body")
+  assert_eq(check_update_body.conclusion, "success", "check run update body")
   assert_eq(
     calls[8].url,
     base + "/repos/octo-org/octo-repo/pulls/42/files?per_page=2",

@@ -255,30 +255,29 @@ pipeline test_merge_captain_methods(harness: Harness, task) {
   )
   assert(direct_merge.merged, "pulls.merge response")
   const calls = harness.testing.http_mock_calls()
+  const list_body: {query: string, variables: {limit: int}} = json_parse(calls[0].body)
+  const conflict_body: {title: string, body: string} = json_parse(calls[2].body)
+  const labels_body: {labels: list<string>} = json_parse(calls[4].body)
+  const safe_merge_body: {merge_method: string, sha: string} = json_parse(calls[10].body)
+  const direct_merge_body: {merge_method: string} = json_parse(calls[12].body)
   assert_eq(calls[0].url, base + "/graphql", "list_with_checks uses GraphQL")
-  assert_eq(json_parse(calls[0].body).variables.limit, 2, "GraphQL limit variable")
-  assert(
-    contains(json_parse(calls[0].body).query, "mergeStateStatus"),
-    "GraphQL query includes merge state",
-  )
-  assert(
-    contains(json_parse(calls[0].body).query, "statusCheckRollup"),
-    "GraphQL query includes checks",
-  )
-  assert_eq(json_parse(calls[2].body).title, "Conflict in #101", "template title rendered")
+  assert_eq(list_body.variables.limit, 2, "GraphQL limit variable")
+  assert(contains(list_body.query, "mergeStateStatus"), "GraphQL query includes merge state")
+  assert(contains(list_body.query, "statusCheckRollup"), "GraphQL query includes checks")
+  assert_eq(conflict_body.title, "Conflict in #101", "template title rendered")
   assert_eq(
-    json_parse(calls[2].body).body,
+    conflict_body.body,
     "PR 101 needs a human for semantic conflict.",
     "template body rendered",
   )
-  assert_eq(json_parse(calls[4].body).labels[0], "merge-captain", "labels request body")
-  assert_eq(json_parse(calls[10].body).merge_method, "squash", "merge_safe merge method")
+  assert_eq(labels_body.labels[0], "merge-captain", "labels request body")
+  assert_eq(safe_merge_body.merge_method, "squash", "merge_safe merge method")
   assert_eq(
-    json_parse(calls[10].body).sha,
+    safe_merge_body.sha,
     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "merge_safe expected SHA",
   )
-  assert_eq(json_parse(calls[12].body).merge_method, "merge", "pulls.merge body")
+  assert_eq(direct_merge_body.merge_method, "merge", "pulls.merge body")
   assert_eq(calls[0].headers.authorization, "[redacted]", "authorization header redacted")
   harness.testing.http_mock_clear()
 }

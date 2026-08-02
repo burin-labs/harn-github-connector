@@ -93,14 +93,17 @@ pipeline test_oauth_user_methods(harness: Harness, task) {
   assert(is_err(bad), "missing client_id rejected")
   assert_eq(unwrap_err(bad).category, "schema_drift", "missing client_id category")
   const calls = harness.testing.http_mock_calls()
-  assert_eq(json_parse(calls[0].body).client_id, client_id, "device code client id")
-  assert_eq(json_parse(calls[0].body).scope, "repo", "device code scope")
+  const device_body: {client_id: string, scope: string} = json_parse(calls[0].body)
+  const poll_body: {grant_type: string} = json_parse(calls[1].body)
+  const refresh_body: {grant_type: string, refresh_token: string} = json_parse(calls[4].body)
+  assert_eq(device_body.client_id, client_id, "device code client id")
+  assert_eq(device_body.scope, "repo", "device code scope")
   assert_eq(
-    json_parse(calls[1].body).grant_type,
+    poll_body.grant_type,
     "urn:ietf:params:oauth:grant-type:device_code",
     "device poll grant type",
   )
-  assert_eq(json_parse(calls[4].body).grant_type, "refresh_token", "refresh grant type")
-  assert_eq(json_parse(calls[4].body).refresh_token, "ghr_refresh2", "refresh sends old token")
+  assert_eq(refresh_body.grant_type, "refresh_token", "refresh grant type")
+  assert_eq(refresh_body.refresh_token, "ghr_refresh2", "refresh sends old token")
   harness.testing.http_mock_clear()
 }

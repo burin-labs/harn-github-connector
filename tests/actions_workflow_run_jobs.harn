@@ -4,16 +4,14 @@ fn auth(base) {
   return {api_base_url: base, installation_token: "test-token"}
 }
 
-fn jobs_fixture(harness: Harness) {
-  return json_parse(
-    harness.fs.read_text(harness.fs.source_dir() + "/fixtures/actions_workflow_run_jobs.json"),
-  )
+fn jobs_fixture(fs: HarnessFs) {
+  return json_parse(fs.read_text(fs.source_dir() + "/fixtures/actions_workflow_run_jobs.json"))
 }
 
 pipeline test_actions_workflow_run_jobs_returns_canonical_payload(harness: Harness, task) {
   harness.testing.http_mock_clear()
   const base = "https://github-api.test"
-  const fixture = jobs_fixture(harness)
+  const fixture = jobs_fixture(harness.fs)
   const url = base
     + "/repos/octo-org/octo-repo/actions/runs/29679449/jobs?filter=all&per_page=25&page=2"
   harness.testing.http_mock(

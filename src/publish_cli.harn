@@ -30,6 +30,7 @@ import {
   github_commit_worktree,
 } from "./worktree_commit"
 
+/** Stable command synopsis for the worktree publication CLI. */
 pub const PUBLISH_USAGE =
   """Publish a local Git state to a GitHub branch as one GitHub-signed commit.
 

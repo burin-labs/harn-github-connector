@@ -137,21 +137,25 @@ pipeline test_author_mode(harness: Harness, task) {
     "restricted author error message",
   )
   const calls = harness.testing.http_mock_calls()
-  const human_body = json_parse(calls[0].body)
+  const human_body: {author: {name: string, email: string}, message: string} = json_parse(
+    calls[0].body,
+  )
   assert_eq(human_body.author.name, "Kenneth Sinder", "human content write author name")
   assert_eq(human_body.author.email, "kenneth@example.com", "human content write author email")
   assert(
     contains(human_body.message, "Co-Authored-By: Merge Captain <merge-captain@bots.example>"),
     "human content write appends trailers",
   )
-  const bot_body = json_parse(calls[1].body)
+  const bot_body: {author: unknown?, committer: unknown?, message: string} = json_parse(
+    calls[1].body,
+  )
   assert(bot_body.author == nil, "bot content write omits custom author")
   assert(bot_body.committer == nil, "bot content write omits custom committer")
   assert(
     !contains(bot_body.message, "Co-Authored-By"),
     "bot content write leaves commit identity to GitHub App",
   )
-  const pr_body = json_parse(calls[2].body)
+  const pr_body: {body: string} = json_parse(calls[2].body)
   assert(
     contains(pr_body.body, "Co-Authored-By: Merge Captain <merge-captain@bots.example>"),
     "human PR body appends trailers",
