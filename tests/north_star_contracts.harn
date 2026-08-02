@@ -202,6 +202,7 @@ pipeline test_pr_view_survives_missing_branch_admin_permission_and_armed_is_not_
     "permission evidence is retained",
   )
   assert_eq(viewed.auto_merge_armed, true, "auto-merge state is retained")
+  assert_eq(viewed.auto_merge_method, "SQUASH", "restoration intent is retained")
   assert_eq(viewed.in_merge_queue, false, "armed PR is not reported queued")
   assert_eq(viewed.state, "green", "armed PR is not classified as queued")
 }

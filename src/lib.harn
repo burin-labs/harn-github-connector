@@ -2244,6 +2244,7 @@ fn __github_pr_view(harness: Harness, args, cfg) {
       number,
       unwrap_err(membership),
       pull?.auto_merge != nil,
+      pull?.auto_merge?.merge_method,
     )
   } else {
     membership
@@ -3356,6 +3357,13 @@ fn __github_merge_queue_membership(harness: Harness, args, cfg) {
     available: true,
     queued: entry != nil,
     auto_merge_armed: node?.autoMergeRequest != nil || pull?.auto_merge != nil,
+    auto_merge_method: if node?.autoMergeRequest?.mergeMethod != nil {
+      uppercase(to_string(node.autoMergeRequest.mergeMethod))
+    } else if pull?.auto_merge?.merge_method != nil {
+      uppercase(to_string(pull.auto_merge.merge_method))
+    } else {
+      nil
+    },
     entry: entry,
     error: nil,
   }
@@ -5268,6 +5276,11 @@ fn __typed_pr_summary(pull) -> GithubPullRequestSummary {
     head: __typed_ref(pull?.head),
     labels: __label_names(pull?.labels ?? []),
     auto_merge_armed: pull?.auto_merge != nil,
+    auto_merge_method: if pull?.auto_merge?.merge_method == nil {
+      nil
+    } else {
+      uppercase(to_string(pull.auto_merge.merge_method))
+    },
     in_merge_queue: nil,
   }
   return summary
@@ -5288,6 +5301,7 @@ fn __typed_pr_details(pull) -> GithubPullRequestDetails {
 fn __typed_pr_view(pull, protection, queue) -> GithubPullRequestView {
   let summary = __typed_pr_details(pull)
   summary["auto_merge_armed"] = queue.auto_merge_armed
+  summary["auto_merge_method"] = queue.auto_merge_method
   summary["in_merge_queue"] = if queue.available {
     queue.queued
   } else {
@@ -5731,13 +5745,18 @@ fn __branch_protection_unavailable(branch, error) {
   }
 }
 
-fn __queue_membership_unavailable(repo, number, error, auto_merge_armed) {
+fn __queue_membership_unavailable(repo, number, error, auto_merge_armed, auto_merge_method) {
   return {
     repo: repo,
     pull_number: to_int(number),
     available: false,
     queued: false,
     auto_merge_armed: auto_merge_armed,
+    auto_merge_method: if auto_merge_method == nil {
+      nil
+    } else {
+      uppercase(to_string(auto_merge_method))
+    },
     entry: nil,
     error: error,
   }
