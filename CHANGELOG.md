@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add exact, typed branch-tree comparison and pull-request upsert operations
+  for package-backed automation. Upserts lease the expected head, reject
+  ambiguous matches, and project a closed created/updated receipt. Pull-request
+  create bodies now use an allow-list so caller-only lease or context fields
+  cannot leak into GitHub requests.
+
 ## 0.6.5 - 2026-08-02
 
 - Add typed branch-head reads and auto-merge suspension under exact pull-request

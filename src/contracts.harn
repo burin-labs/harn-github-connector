@@ -72,6 +72,21 @@ pub type GithubPullRequestCreateReceipt = GithubPullRequestDetails & {created: b
 /** Receipt proving whether a pull-request edit changed remote state. */
 pub type GithubPullRequestEditReceipt = GithubPullRequestDetails & {ok: bool, updated: bool}
 
+/** Closed input for creating or refreshing one exact automation pull request. */
+pub type GithubPullRequestUpsertRequest = {
+  owner: string,
+  repo: string,
+  head: string,
+  base: string,
+  title: string,
+  body: string,
+  expected_head_oid: string,
+}
+
+/** Receipt proving whether an exact automation pull request was created or updated. */
+pub type GithubPullRequestUpsertReceipt = GithubPullRequestDetails \
+  & {action: "created" | "updated", created: bool, updated: bool}
+
 /** Normalized branch-protection policy, including an explicit unavailable outcome. */
 pub type GithubBranchProtection = {
   available: bool,
@@ -89,6 +104,26 @@ pub type GithubBranchProtection = {
 
 /** One repository branch bound to its exact current commit. */
 pub type GithubBranchHead = {repo: string, branch: string, oid: string, url: string}
+
+/** Exact commit and tree identities used to compare two repository refs. */
+pub type GithubBranchTreeComparison = {
+  repo: string,
+  left_ref: string,
+  left_oid: string,
+  left_tree_oid: string,
+  right_ref: string,
+  right_oid: string,
+  right_tree_oid: string,
+  equal: bool,
+}
+
+/** Closed ref pair for one repository tree comparison. */
+pub type GithubBranchTreeCompareRequest = {
+  owner: string,
+  repo: string,
+  left_ref: string,
+  right_ref: string,
+}
 
 /** One pull request's normalized merge-queue entry. */
 pub type GithubMergeQueueEntry = {
