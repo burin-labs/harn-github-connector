@@ -25,27 +25,27 @@ pub fn signed_raw(secret, body, event, extra = nil) {
 }
 
 /** Read a fixture JSON body from the test fixtures directory. */
-pub fn fixture_body(harness: Harness, name) {
-  return harness.fs.read_text(harness.fs.source_dir() + "/fixtures/webhooks/" + name + ".json")
+pub fn fixture_body(fs: HarnessFs, name) {
+  return fs.read_text(fs.source_dir() + "/fixtures/webhooks/" + name + ".json")
 }
 
 /** Build a signed raw inbound envelope from a named fixture. */
-pub fn fixture_raw(harness: Harness, name, secret, event, extra = nil) {
-  return signed_raw(secret, fixture_body(harness, name), event, extra)
+pub fn fixture_raw(fs: HarnessFs, name, secret, event, extra = nil) {
+  return signed_raw(secret, fixture_body(fs, name), event, extra)
 }
 
-pub fn assert_github_interface(harness: Harness) {
+pub fn require_github_interface(harness: Harness) {
   shutdown(harness)
-  assert_eq(provider_id(), "github", "provider id")
-  assert_eq(kinds()[0], "webhook", "webhook kind")
-  assert_eq(payload_schema().harn_schema_name, "GitHubEventPayload", "payload schema name")
+  require provider_id() == "github"
+  require kinds()[0] == "webhook"
+  require payload_schema().harn_schema_name == "GitHubEventPayload"
   const initialized = init(harness, {signing_secret: "test-secret"})
-  assert(initialized.initialized, "init stores state")
+  require initialized.initialized
   const activated = activate(
     harness,
     [{id: "primary", path: "/github/events", secrets: {signing_secret: "test-secret"}}],
   )
-  assert_eq(activated.bindings, 1, "activate counts bindings")
+  require activated.bindings == 1
 }
 
 pub fn github_call(harness: Harness, method, args) {

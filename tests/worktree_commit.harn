@@ -29,8 +29,8 @@ fn expect_text(observed: string, wanted: string, label: string) {
   }
 }
 
-fn run_ok(harness: Harness, spec: dict) -> dict {
-  const result = harness.process.run(spec)
+fn run_ok(process: HarnessProcess, spec: dict) -> dict {
+  const result = process.run(spec)
   if !result.success {
     throw "fixture command failed with exit " + to_string(result.exit_code) + ": "
       + to_string(
@@ -40,71 +40,71 @@ fn run_ok(harness: Harness, spec: dict) -> dict {
   return result
 }
 
-fn process_ok(harness: Harness, dir: string, program: string, args: list<string>) -> dict {
+fn process_ok(process: HarnessProcess, dir: string, program: string, args: list<string>) -> dict {
   return run_ok(
-    harness,
+    process,
     {program: program, args: args, cwd: dir, env: {}, stdin: "", timeout_ms: 120000},
   )
 }
 
-fn git_ok(harness: Harness, dir: string, args: list<string>) -> dict {
-  return process_ok(harness, dir, "git", args)
+fn git_ok(process: HarnessProcess, dir: string, args: list<string>) -> dict {
+  return process_ok(process, dir, "git", args)
 }
 
-fn sh_out(harness: Harness, dir: string, script: string, env: dict = {}) -> string {
+fn sh_out(process: HarnessProcess, dir: string, script: string, env: dict = {}) -> string {
   return to_string(
     run_ok(
-      harness,
+      process,
       {program: "sh", args: ["-c", script], cwd: dir, env: env, stdin: "", timeout_ms: 120000},
     ).stdout,
   )
 }
 
-fn new_repo(harness: Harness) -> string {
-  const dir = harness.fs.mkdtemp_in_workspace("harn-worktree-commit-")
-  git_ok(harness, dir, ["init", "-q", "-b", "main", "."])
-  git_ok(harness, dir, ["config", "user.email", "harn-worktree-test@example.test"])
-  git_ok(harness, dir, ["config", "user.name", "Harn Worktree Test"])
-  git_ok(harness, dir, ["config", "commit.gpgsign", "false"])
-  git_ok(harness, dir, ["config", "core.excludesFile", "/dev/null"])
-  git_ok(harness, dir, ["config", "core.attributesFile", "/dev/null"])
-  git_ok(harness, dir, ["config", "core.autocrlf", "false"])
-  git_ok(harness, dir, ["config", "core.hooksPath", ".git/harn-absent-hooks"])
-  git_ok(harness, dir, ["config", "core.fileMode", "true"])
-  harness.fs.write_text(dir + "/keep.txt", "hello\n")
-  harness.fs.write_text(
+fn new_repo(fs: HarnessFs, process: HarnessProcess) -> string {
+  const dir = fs.mkdtemp_in_workspace("harn-worktree-commit-")
+  git_ok(process, dir, ["init", "-q", "-b", "main", "."])
+  git_ok(process, dir, ["config", "user.email", "harn-worktree-test@example.test"])
+  git_ok(process, dir, ["config", "user.name", "Harn Worktree Test"])
+  git_ok(process, dir, ["config", "commit.gpgsign", "false"])
+  git_ok(process, dir, ["config", "core.excludesFile", "/dev/null"])
+  git_ok(process, dir, ["config", "core.attributesFile", "/dev/null"])
+  git_ok(process, dir, ["config", "core.autocrlf", "false"])
+  git_ok(process, dir, ["config", "core.hooksPath", ".git/harn-absent-hooks"])
+  git_ok(process, dir, ["config", "core.fileMode", "true"])
+  fs.write_text(dir + "/keep.txt", "hello\n")
+  fs.write_text(
     dir + "/old.txt",
     "a rename source long enough to be uninteresting to any other pairing\n",
   )
-  harness.fs.write_text(dir + "/gone.txt", "delete me\n")
-  harness.fs.write_text(dir + "/tool.sh", "#!/bin/sh\necho base\n")
-  process_ok(harness, dir, "chmod", ["755", "tool.sh"])
-  process_ok(harness, dir, "ln", ["-s", "keep.txt", "tracked-link.txt"])
-  git_ok(harness, dir, ["add", "-A"])
-  git_ok(harness, dir, ["commit", "-q", "--no-verify", "-m", "base"])
+  fs.write_text(dir + "/gone.txt", "delete me\n")
+  fs.write_text(dir + "/tool.sh", "#!/bin/sh\necho base\n")
+  process_ok(process, dir, "chmod", ["755", "tool.sh"])
+  process_ok(process, dir, "ln", ["-s", "keep.txt", "tracked-link.txt"])
+  git_ok(process, dir, ["add", "-A"])
+  git_ok(process, dir, ["commit", "-q", "--no-verify", "-m", "base"])
   return dir
 }
 
-fn drop_repo(harness: Harness, dir: string) {
-  process_ok(harness, harness.fs.workspace_temp_dir(), "rm", ["-rf", "--", path_basename(dir)])
+fn drop_repo(fs: HarnessFs, process: HarnessProcess, dir: string) {
+  process_ok(process, fs.workspace_temp_dir(), "rm", ["-rf", "--", path_basename(dir)])
 }
 
-fn head_oid(harness: Harness, dir: string) -> string {
-  return trim(sh_out(harness, dir, "git rev-parse HEAD"))
+fn head_oid(process: HarnessProcess, dir: string) -> string {
+  return trim(sh_out(process, dir, "git rev-parse HEAD"))
 }
 
 /** Everything a caller would notice if the adapter touched the repo. */
-fn repo_state(harness: Harness, dir: string) -> string {
+fn repo_state(process: HarnessProcess, dir: string) -> string {
   return sh_out(
-    harness,
+    process,
     dir,
     "git rev-parse HEAD\ngit status --porcelain\ngit ls-files -s\ngit rev-parse --abbrev-ref HEAD\n",
   )
 }
 
-fn blob_oid(harness: Harness, dir: string, path: string) -> string {
+fn blob_oid(process: HarnessProcess, dir: string, path: string) -> string {
   return trim(
-    sh_out(harness, dir, "git hash-object \"$HARN_FIXTURE_PATH\"", {HARN_FIXTURE_PATH: path}),
+    sh_out(process, dir, "git hash-object \"$HARN_FIXTURE_PATH\"", {HARN_FIXTURE_PATH: path}),
   )
 }
 
@@ -124,8 +124,8 @@ fn ref_update_url(branch: string) -> string {
   return GITHUB_BASE + "/repos/" + OWNER + "/" + REPO + "/git/refs/heads/" + branch
 }
 
-fn mock_ref_at(harness: Harness, sha: string) {
-  harness.testing.http_mock(
+fn mock_ref_at(testing: HarnessTesting, sha: string) {
+  testing.http_mock(
     "GET",
     ref_url(BRANCH),
     {
@@ -135,24 +135,24 @@ fn mock_ref_at(harness: Harness, sha: string) {
   )
 }
 
-fn mock_ref_missing(harness: Harness) {
-  harness.testing.http_mock(
+fn mock_ref_missing(testing: HarnessTesting) {
+  testing.http_mock(
     "GET",
     ref_url(BRANCH),
     {status: 404, body: json_stringify({message: "Not Found"})},
   )
 }
 
-fn mock_ref_create(harness: Harness) {
-  harness.testing.http_mock(
+fn mock_ref_create(testing: HarnessTesting) {
+  testing.http_mock(
     "POST",
     refs_url(),
     {status: 201, body: json_stringify({ref: "refs/heads/" + BRANCH})},
   )
 }
 
-fn mock_ref_reset(harness: Harness) {
-  harness.testing.http_mock(
+fn mock_ref_reset(testing: HarnessTesting) {
+  testing.http_mock(
     "PATCH",
     ref_update_url(BRANCH),
     {status: 200, body: json_stringify({ref: "refs/heads/" + BRANCH})},
@@ -180,18 +180,14 @@ fn commit_body(signed: bool) -> string {
   )
 }
 
-fn mock_commit(harness: Harness, signed: bool) {
-  harness.testing.http_mock(
-    "POST",
-    GITHUB_BASE + "/graphql",
-    {status: 200, body: commit_body(signed)},
-  )
+fn mock_commit(testing: HarnessTesting, signed: bool) {
+  testing.http_mock("POST", GITHUB_BASE + "/graphql", {status: 200, body: commit_body(signed)})
 }
 
 /** Fail loudly on any request the test did not deliberately allow. */
-fn mock_forbid_everything(harness: Harness) {
+fn mock_forbid_everything(testing: HarnessTesting) {
   for method in ["GET", "POST", "PATCH", "PUT", "DELETE"] {
-    harness.testing.http_mock(
+    testing.http_mock(
       method,
       GITHUB_BASE + "/*",
       {status: 500, body: json_stringify({message: "unexpected request"})},
@@ -233,9 +229,9 @@ fn selector(dir: string, source: string, base_oid: string?) -> GithubWorktreeSel
   return {repo_dir: dir, source: source, base_oid: base_oid}
 }
 
-fn graphql_calls(harness: Harness) -> list<dict> {
+fn graphql_calls(testing: HarnessTesting) -> list<dict> {
   let out = []
-  for call in harness.testing.http_mock_calls() {
+  for call in testing.http_mock_calls() {
     if to_string(call.method) == "POST" && ends_with(to_string(call.url), "/graphql") {
       out = out + [call]
     }
@@ -243,12 +239,12 @@ fn graphql_calls(harness: Harness) -> list<dict> {
   return out
 }
 
-fn graphql_input(harness: Harness) -> dict {
-  const calls = graphql_calls(harness)
+fn graphql_input(testing: HarnessTesting) -> dict {
+  const calls = graphql_calls(testing)
   if len(calls) != 1 {
     throw "expected exactly one createCommitOnBranch request, observed " + to_string(len(calls))
   }
-  const payload: dict = json_parse(to_string(calls[0].body))
+  const payload: {variables: {input: dict}} = json_parse(to_string(calls[0].body))
   return payload.variables.input
 }
 
@@ -291,15 +287,15 @@ pipeline test_worktree_commit_publishes_modified_added_deleted_and_renamed_paths
   task,
 ) {
   harness.testing.http_mock_clear()
-  const dir = new_repo(harness)
+  const dir = new_repo(harness.fs, harness.process)
   harness.fs.write_text(dir + "/keep.txt", "hello world\n")
   harness.fs.rename(dir + "/old.txt", dir + "/new.txt")
   harness.fs.delete(dir + "/gone.txt")
   harness.fs.write_text(dir + "/added.txt", "brand new\n")
   harness.fs.write_text(dir + "/empty.txt", "")
-  const base = head_oid(harness, dir)
-  mock_ref_at(harness, base)
-  mock_commit(harness, true)
+  const base = head_oid(harness.process, dir)
+  mock_ref_at(harness.testing, base)
+  mock_commit(harness.testing, true)
   const result = github_commit_worktree(harness, request_for(dir, "worktree", false), options())
   expect(!is_err(result), "worktree commit succeeded")
   const receipt = unwrap(result)
@@ -328,12 +324,12 @@ pipeline test_worktree_commit_publishes_modified_added_deleted_and_renamed_paths
   assert_eq(change_named(receipt.changes, "old.txt").rename_to, "new.txt", "rename source")
   assert_eq(
     change_named(receipt.changes, "keep.txt").blob_oid,
-    blob_oid(harness, dir, "keep.txt"),
+    blob_oid(harness.process, dir, "keep.txt"),
     "content digest for the modified path",
   )
   assert_eq(change_named(receipt.changes, "keep.txt").size_bytes, 12, "modified path size")
   assert_eq(change_named(receipt.changes, "empty.txt").size_bytes, 0, "empty file size")
-  const input = graphql_input(harness)
+  const input = graphql_input(harness.testing)
   assert_eq(input.expectedHeadOid, base, "expected head lease")
   assert_eq(input.branch.repositoryNameWithOwner, OWNER + "/" + REPO, "mutation repository")
   assert_eq(
@@ -348,47 +344,47 @@ pipeline test_worktree_commit_publishes_modified_added_deleted_and_renamed_paths
     "modified content",
   )
   assert_eq(addition_contents(input, "empty.txt"), "", "empty file content")
-  drop_repo(harness, dir)
+  drop_repo(harness.fs, harness.process, dir)
   harness.testing.http_mock_clear()
 }
 
 pipeline test_worktree_commit_preserves_exact_binary_bytes(harness: Harness, task) {
   harness.testing.http_mock_clear()
-  const dir = new_repo(harness)
+  const dir = new_repo(harness.fs, harness.process)
   harness.fs.write_bytes(
     dir + "/payload.bin",
     bytes_from_base64("UE5HAAEC//4NCiBiaW5hcnmAIHBheWxvYWQA"),
   )
-  const base = head_oid(harness, dir)
-  mock_ref_at(harness, base)
-  mock_commit(harness, true)
+  const base = head_oid(harness.process, dir)
+  mock_ref_at(harness.testing, base)
+  mock_commit(harness.testing, true)
   const result = github_commit_worktree(harness, request_for(dir, "worktree", false), options())
   expect(!is_err(result), "binary worktree commit succeeded")
   const receipt = unwrap(result)
   assert_eq(change_paths(receipt.changes), ["payload.bin:added"], "binary change")
   assert_eq(
     change_named(receipt.changes, "payload.bin").blob_oid,
-    blob_oid(harness, dir, "payload.bin"),
+    blob_oid(harness.process, dir, "payload.bin"),
     "binary content digest",
   )
   assert_eq(change_named(receipt.changes, "payload.bin").size_bytes, 27, "binary byte count")
-  const contents = addition_contents(graphql_input(harness), "payload.bin")
+  const contents = addition_contents(graphql_input(harness.testing), "payload.bin")
   harness.fs.write_bytes(dir + "/roundtrip.bin", bytes_from_base64(contents))
-  process_ok(harness, dir, "cmp", ["roundtrip.bin", "payload.bin"])
-  drop_repo(harness, dir)
+  process_ok(harness.process, dir, "cmp", ["roundtrip.bin", "payload.bin"])
+  drop_repo(harness.fs, harness.process, dir)
   harness.testing.http_mock_clear()
 }
 
 pipeline test_index_selector_publishes_only_staged_changes(harness: Harness, task) {
   harness.testing.http_mock_clear()
-  const dir = new_repo(harness)
+  const dir = new_repo(harness.fs, harness.process)
   harness.fs.write_text(dir + "/keep.txt", "staged\n")
-  git_ok(harness, dir, ["add", "keep.txt"])
+  git_ok(harness.process, dir, ["add", "keep.txt"])
   harness.fs.write_text(dir + "/gone.txt", "unstaged\n")
   harness.fs.write_text(dir + "/extra.txt", "untracked\n")
-  const base = head_oid(harness, dir)
-  mock_ref_at(harness, base)
-  mock_commit(harness, true)
+  const base = head_oid(harness.process, dir)
+  mock_ref_at(harness.testing, base)
+  mock_commit(harness.testing, true)
   const staged = github_worktree_delta(harness.process, selector(dir, "index", base))
   expect(!is_err(staged), "staged delta derived")
   assert_eq(change_paths(unwrap(staged).changes), ["keep.txt:modified"], "staged-only delta")
@@ -402,19 +398,19 @@ pipeline test_index_selector_publishes_only_staged_changes(harness: Harness, tas
   const result = github_commit_worktree(harness, request_for(dir, "index", false), options())
   expect(!is_err(result), "staged commit succeeded")
   assert_eq(unwrap(result).source, "index", "receipt records the selector")
-  const input = graphql_input(harness)
+  const input = graphql_input(harness.testing)
   assert_eq(field_paths(input.fileChanges.additions), ["keep.txt"], "staged additions only")
   assert_eq(field_paths(input.fileChanges.deletions), [], "no deletions")
   assert_eq(addition_contents(input, "keep.txt"), base64_encode("staged\n"), "staged content")
-  drop_repo(harness, dir)
+  drop_repo(harness.fs, harness.process, dir)
   harness.testing.http_mock_clear()
 }
 
 pipeline test_empty_delta_is_a_clean_outcome_with_no_network_call(harness: Harness, task) {
   harness.testing.http_mock_clear()
-  mock_forbid_everything(harness)
-  const dir = new_repo(harness)
-  const base = head_oid(harness, dir)
+  mock_forbid_everything(harness.testing)
+  const dir = new_repo(harness.fs, harness.process)
+  const base = head_oid(harness.process, dir)
   const result = github_commit_worktree(harness, request_for(dir, "worktree", false), options())
   expect(!is_err(result), "empty delta is not an error")
   const receipt = unwrap(result)
@@ -425,18 +421,18 @@ pipeline test_empty_delta_is_a_clean_outcome_with_no_network_call(harness: Harne
   assert_eq(receipt.changes, [], "no changes")
   assert_eq(receipt.signature.verified, false, "no signature evidence")
   assert_eq(len(harness.testing.http_mock_calls()), 0, "no network request at all")
-  drop_repo(harness, dir)
+  drop_repo(harness.fs, harness.process, dir)
   harness.testing.http_mock_clear()
 }
 
 pipeline test_stale_branch_head_fails_closed_before_any_mutation(harness: Harness, task) {
   harness.testing.http_mock_clear()
-  const dir = new_repo(harness)
+  const dir = new_repo(harness.fs, harness.process)
   harness.fs.write_text(dir + "/keep.txt", "changed\n")
-  const base = head_oid(harness, dir)
-  mock_ref_at(harness, OTHER_OID)
-  mock_commit(harness, true)
-  mock_ref_reset(harness)
+  const base = head_oid(harness.process, dir)
+  mock_ref_at(harness.testing, OTHER_OID)
+  mock_commit(harness.testing, true)
+  mock_ref_reset(harness.testing)
   const result = github_commit_worktree(harness, request_for(dir, "worktree", false), options())
   expect(is_err(result), "stale branch head rejected")
   const error = unwrap_err(result)
@@ -444,25 +440,25 @@ pipeline test_stale_branch_head_fails_closed_before_any_mutation(harness: Harnes
   assert_eq(error.category, "conflict", "stale head category")
   assert_eq(error.expected_head_oid, base, "expected head")
   assert_eq(error.observed_head_oid, OTHER_OID, "observed head")
-  assert_eq(len(graphql_calls(harness)), 0, "no createCommitOnBranch mutation")
+  assert_eq(len(graphql_calls(harness.testing)), 0, "no createCommitOnBranch mutation")
   const calls = harness.testing.http_mock_calls()
   assert_eq(len(calls), 1, "only the branch read happened")
   assert_eq(calls[0].method, "GET", "branch read method")
   assert_eq(calls[0].url, ref_url(BRANCH), "branch read url")
-  drop_repo(harness, dir)
+  drop_repo(harness.fs, harness.process, dir)
   harness.testing.http_mock_clear()
 }
 
 pipeline test_unverified_signature_response_fails_closed(harness: Harness, task) {
   harness.testing.http_mock_clear()
-  const dir = new_repo(harness)
+  const dir = new_repo(harness.fs, harness.process)
   harness.fs.write_text(dir + "/keep.txt", "changed\n")
-  mock_ref_at(harness, head_oid(harness, dir))
-  mock_commit(harness, false)
+  mock_ref_at(harness.testing, head_oid(harness.process, dir))
+  mock_commit(harness.testing, false)
   const result = github_commit_worktree(harness, request_for(dir, "worktree", false), options())
   expect(is_err(result), "unsigned commit rejected")
   assert_eq(unwrap_err(result).code, "signature_invalid", "signature error code")
-  drop_repo(harness, dir)
+  drop_repo(harness.fs, harness.process, dir)
   harness.testing.http_mock_clear()
 }
 
@@ -477,21 +473,21 @@ pipeline test_modifying_a_tracked_executable_is_published_as_a_normal_addition(
   task,
 ) {
   harness.testing.http_mock_clear()
-  const dir = new_repo(harness)
+  const dir = new_repo(harness.fs, harness.process)
   harness.fs.write_text(dir + "/tool.sh", "#!/bin/sh\necho changed\n")
-  const base = head_oid(harness, dir)
-  mock_ref_at(harness, base)
-  mock_commit(harness, true)
+  const base = head_oid(harness.process, dir)
+  mock_ref_at(harness.testing, base)
+  mock_commit(harness.testing, true)
   const result = github_commit_worktree(harness, request_for(dir, "worktree", false), options())
   expect(!is_err(result), "tracked executable published")
   const receipt = unwrap(result)
   assert_eq(change_paths(receipt.changes), ["tool.sh:modified"], "executable change")
   assert_eq(
     change_named(receipt.changes, "tool.sh").blob_oid,
-    blob_oid(harness, dir, "tool.sh"),
+    blob_oid(harness.process, dir, "tool.sh"),
     "executable content digest",
   )
-  const input = graphql_input(harness)
+  const input = graphql_input(harness.testing)
   assert_eq(field_paths(input.fileChanges.additions), ["tool.sh"], "executable addition")
   assert_eq(field_paths(input.fileChanges.deletions), [], "no deletions")
   assert_eq(
@@ -499,7 +495,7 @@ pipeline test_modifying_a_tracked_executable_is_published_as_a_normal_addition(
     base64_encode("#!/bin/sh\necho changed\n"),
     "executable content",
   )
-  drop_repo(harness, dir)
+  drop_repo(harness.fs, harness.process, dir)
   harness.testing.http_mock_clear()
 }
 
@@ -508,10 +504,10 @@ pipeline test_adding_a_new_executable_is_rejected_before_any_network_request(
   task,
 ) {
   harness.testing.http_mock_clear()
-  mock_forbid_everything(harness)
-  const dir = new_repo(harness)
+  mock_forbid_everything(harness.testing)
+  const dir = new_repo(harness.fs, harness.process)
   harness.fs.write_text(dir + "/newtool.sh", "#!/bin/sh\necho new\n")
-  process_ok(harness, dir, "chmod", ["755", "newtool.sh"])
+  process_ok(harness.process, dir, "chmod", ["755", "newtool.sh"])
   const result = github_commit_worktree(harness, request_for(dir, "worktree", false), options())
   expect(is_err(result), "new executable rejected")
   const error = unwrap_err(result)
@@ -520,14 +516,14 @@ pipeline test_adding_a_new_executable_is_rejected_before_any_network_request(
   assert_eq(error.file_mode, "100755", "new executable mode")
   assert_eq(error.base_file_mode, "000000", "path absent from the base tree")
   assert_eq(len(harness.testing.http_mock_calls()), 0, "no network request")
-  drop_repo(harness, dir)
+  drop_repo(harness.fs, harness.process, dir)
   harness.testing.http_mock_clear()
 }
 
 pipeline test_renaming_a_tracked_executable_is_rejected_as_a_new_path(harness: Harness, task) {
   harness.testing.http_mock_clear()
-  mock_forbid_everything(harness)
-  const dir = new_repo(harness)
+  mock_forbid_everything(harness.testing)
+  const dir = new_repo(harness.fs, harness.process)
   harness.fs.rename(dir + "/tool.sh", dir + "/moved-tool.sh")
   const result = github_commit_worktree(harness, request_for(dir, "worktree", false), options())
   expect(is_err(result), "renamed executable rejected")
@@ -535,15 +531,15 @@ pipeline test_renaming_a_tracked_executable_is_rejected_as_a_new_path(harness: H
   assert_eq(error.code, "unsupported_new_executable", "rename destination error code")
   assert_eq(error.path, "moved-tool.sh", "rename destination path")
   assert_eq(len(harness.testing.http_mock_calls()), 0, "no network request")
-  drop_repo(harness, dir)
+  drop_repo(harness.fs, harness.process, dir)
   harness.testing.http_mock_clear()
 }
 
 pipeline test_a_mode_change_on_an_otherwise_unchanged_file_is_rejected(harness: Harness, task) {
   harness.testing.http_mock_clear()
-  mock_forbid_everything(harness)
-  const dir = new_repo(harness)
-  process_ok(harness, dir, "chmod", ["755", "keep.txt"])
+  mock_forbid_everything(harness.testing)
+  const dir = new_repo(harness.fs, harness.process)
+  process_ok(harness.process, dir, "chmod", ["755", "keep.txt"])
   const result = github_commit_worktree(harness, request_for(dir, "worktree", false), options())
   expect(is_err(result), "mode change rejected")
   const error = unwrap_err(result)
@@ -552,15 +548,15 @@ pipeline test_a_mode_change_on_an_otherwise_unchanged_file_is_rejected(harness: 
   assert_eq(error.base_file_mode, "100644", "base tree mode")
   assert_eq(error.file_mode, "100755", "selected mode")
   assert_eq(len(harness.testing.http_mock_calls()), 0, "no network request")
-  drop_repo(harness, dir)
+  drop_repo(harness.fs, harness.process, dir)
   harness.testing.http_mock_clear()
 }
 
 pipeline test_symlink_mode_is_rejected_before_any_network_request(harness: Harness, task) {
   harness.testing.http_mock_clear()
-  mock_forbid_everything(harness)
-  const dir = new_repo(harness)
-  process_ok(harness, dir, "ln", ["-s", "keep.txt", "link.txt"])
+  mock_forbid_everything(harness.testing)
+  const dir = new_repo(harness.fs, harness.process)
+  process_ok(harness.process, dir, "ln", ["-s", "keep.txt", "link.txt"])
   const result = github_commit_worktree(harness, request_for(dir, "worktree", false), options())
   expect(is_err(result), "symlink mode rejected")
   const error = unwrap_err(result)
@@ -568,7 +564,7 @@ pipeline test_symlink_mode_is_rejected_before_any_network_request(harness: Harne
   assert_eq(error.path, "link.txt", "symlink path")
   assert_eq(error.file_mode, "120000", "symlink mode")
   assert_eq(len(harness.testing.http_mock_calls()), 0, "no network request")
-  drop_repo(harness, dir)
+  drop_repo(harness.fs, harness.process, dir)
   harness.testing.http_mock_clear()
 }
 
@@ -578,8 +574,8 @@ pipeline test_symlink_mode_is_rejected_before_any_network_request(harness: Harne
  */
 pipeline test_replacing_a_tracked_symlink_with_a_regular_file_is_rejected(harness: Harness, task) {
   harness.testing.http_mock_clear()
-  mock_forbid_everything(harness)
-  const dir = new_repo(harness)
+  mock_forbid_everything(harness.testing)
+  const dir = new_repo(harness.fs, harness.process)
   harness.fs.delete(dir + "/tracked-link.txt")
   harness.fs.write_text(dir + "/tracked-link.txt", "now a real file\n")
   const result = github_commit_worktree(harness, request_for(dir, "worktree", false), options())
@@ -589,24 +585,24 @@ pipeline test_replacing_a_tracked_symlink_with_a_regular_file_is_rejected(harnes
   assert_eq(error.path, "tracked-link.txt", "symlink replacement path")
   assert_eq(error.base_file_mode, "120000", "base tree symlink mode")
   assert_eq(len(harness.testing.http_mock_calls()), 0, "no network request")
-  drop_repo(harness, dir)
+  drop_repo(harness.fs, harness.process, dir)
   harness.testing.http_mock_clear()
 }
 
 pipeline test_submodule_mode_is_rejected_before_any_network_request(harness: Harness, task) {
   harness.testing.http_mock_clear()
-  mock_forbid_everything(harness)
-  const dir = new_repo(harness)
+  mock_forbid_everything(harness.testing)
+  const dir = new_repo(harness.fs, harness.process)
   const nested = dir + "/nested"
   harness.fs.mkdir(nested, true)
-  git_ok(harness, nested, ["init", "-q", "-b", "main", "."])
-  git_ok(harness, nested, ["config", "user.email", "harn-worktree-test@example.test"])
-  git_ok(harness, nested, ["config", "user.name", "Harn Worktree Test"])
-  git_ok(harness, nested, ["config", "commit.gpgsign", "false"])
-  git_ok(harness, nested, ["config", "core.hooksPath", ".git/harn-absent-hooks"])
+  git_ok(harness.process, nested, ["init", "-q", "-b", "main", "."])
+  git_ok(harness.process, nested, ["config", "user.email", "harn-worktree-test@example.test"])
+  git_ok(harness.process, nested, ["config", "user.name", "Harn Worktree Test"])
+  git_ok(harness.process, nested, ["config", "commit.gpgsign", "false"])
+  git_ok(harness.process, nested, ["config", "core.hooksPath", ".git/harn-absent-hooks"])
   harness.fs.write_text(nested + "/nested.txt", "nested\n")
-  git_ok(harness, nested, ["add", "-A"])
-  git_ok(harness, nested, ["commit", "-q", "--no-verify", "-m", "nested"])
+  git_ok(harness.process, nested, ["add", "-A"])
+  git_ok(harness.process, nested, ["commit", "-q", "--no-verify", "-m", "nested"])
   const result = github_commit_worktree(harness, request_for(dir, "worktree", false), options())
   expect(is_err(result), "submodule mode rejected")
   const error = unwrap_err(result)
@@ -614,43 +610,43 @@ pipeline test_submodule_mode_is_rejected_before_any_network_request(harness: Har
   assert_eq(error.path, "nested", "submodule path")
   assert_eq(error.file_mode, "160000", "submodule mode")
   assert_eq(len(harness.testing.http_mock_calls()), 0, "no network request")
-  drop_repo(harness, dir)
+  drop_repo(harness.fs, harness.process, dir)
   harness.testing.http_mock_clear()
 }
 
 pipeline test_adapter_never_mutates_the_caller_index_or_worktree(harness: Harness, task) {
   harness.testing.http_mock_clear()
-  const dir = new_repo(harness)
+  const dir = new_repo(harness.fs, harness.process)
   harness.fs.write_text(dir + "/keep.txt", "hello world\n")
-  git_ok(harness, dir, ["add", "keep.txt"])
+  git_ok(harness.process, dir, ["add", "keep.txt"])
   harness.fs.rename(dir + "/old.txt", dir + "/new.txt")
   harness.fs.delete(dir + "/gone.txt")
   harness.fs.write_text(dir + "/extra.txt", "untracked\n")
-  const base = head_oid(harness, dir)
-  const before = repo_state(harness, dir)
-  mock_ref_at(harness, base)
-  mock_commit(harness, true)
+  const base = head_oid(harness.process, dir)
+  const before = repo_state(harness.process, dir)
+  mock_ref_at(harness.testing, base)
+  mock_commit(harness.testing, true)
   const staged = github_worktree_delta(harness.process, selector(dir, "index", base))
   expect(!is_err(staged), "staged delta derived")
   const derived = github_worktree_delta(harness.process, selector(dir, "worktree", base))
   expect(!is_err(derived), "worktree delta derived")
   const result = github_commit_worktree(harness, request_for(dir, "worktree", false), options())
   expect(!is_err(result), "worktree commit succeeded")
-  const after = repo_state(harness, dir)
+  const after = repo_state(harness.process, dir)
   expect_text(after, before, "repository state after publishing")
-  assert_eq(head_oid(harness, dir), base, "local HEAD unchanged")
-  drop_repo(harness, dir)
+  assert_eq(head_oid(harness.process, dir), base, "local HEAD unchanged")
+  drop_repo(harness.fs, harness.process, dir)
   harness.testing.http_mock_clear()
 }
 
 pipeline test_missing_branch_is_created_at_the_base_lease(harness: Harness, task) {
   harness.testing.http_mock_clear()
-  const dir = new_repo(harness)
+  const dir = new_repo(harness.fs, harness.process)
   harness.fs.write_text(dir + "/keep.txt", "changed\n")
-  const base = head_oid(harness, dir)
-  mock_ref_missing(harness)
-  mock_ref_create(harness)
-  mock_commit(harness, true)
+  const base = head_oid(harness.process, dir)
+  mock_ref_missing(harness.testing)
+  mock_ref_create(harness.testing)
+  mock_commit(harness.testing, true)
   const result = github_commit_worktree(harness, request_for(dir, "worktree", false), options())
   expect(!is_err(result), "branch created under the lease")
   assert_eq(unwrap(result).branch_action, "created", "branch was created")
@@ -661,22 +657,22 @@ pipeline test_missing_branch_is_created_at_the_base_lease(harness: Harness, task
     }
   }
   expect(created != nil, "a branch create request was observed")
-  const body: dict = json_parse(to_string(created.body))
+  const body: {ref: string, sha: string} = json_parse(to_string(created.body))
   assert_eq(body.ref, "refs/heads/" + BRANCH, "created ref")
   assert_eq(body.sha, base, "created at the base lease")
-  assert_eq(graphql_input(harness).expectedHeadOid, base, "commit leased to the same base")
-  drop_repo(harness, dir)
+  assert_eq(graphql_input(harness.testing).expectedHeadOid, base, "commit leased to the same base")
+  drop_repo(harness.fs, harness.process, dir)
   harness.testing.http_mock_clear()
 }
 
 pipeline test_diverged_branch_is_reset_only_when_the_caller_opts_in(harness: Harness, task) {
   harness.testing.http_mock_clear()
-  const dir = new_repo(harness)
+  const dir = new_repo(harness.fs, harness.process)
   harness.fs.write_text(dir + "/keep.txt", "changed\n")
-  const base = head_oid(harness, dir)
-  mock_ref_at(harness, OTHER_OID)
-  mock_ref_reset(harness)
-  mock_commit(harness, true)
+  const base = head_oid(harness.process, dir)
+  mock_ref_at(harness.testing, OTHER_OID)
+  mock_ref_reset(harness.testing)
+  mock_commit(harness.testing, true)
   const result = github_commit_worktree(harness, request_for(dir, "worktree", true), options())
   expect(!is_err(result), "diverged branch reset under the lease")
   assert_eq(unwrap(result).branch_action, "reset", "branch was reset")
@@ -687,29 +683,29 @@ pipeline test_diverged_branch_is_reset_only_when_the_caller_opts_in(harness: Har
     }
   }
   expect(reset != nil, "a branch reset request was observed")
-  const body: dict = json_parse(to_string(reset.body))
+  const body: {sha: string, force: bool} = json_parse(to_string(reset.body))
   assert_eq(body.sha, base, "reset to the base lease")
   assert_eq(body.force, true, "reset is an explicit force")
-  drop_repo(harness, dir)
+  drop_repo(harness.fs, harness.process, dir)
   harness.testing.http_mock_clear()
 }
 
 pipeline test_delta_rejects_an_unknown_selector_source(harness: Harness, task) {
   harness.testing.http_mock_clear()
-  mock_forbid_everything(harness)
-  const dir = new_repo(harness)
+  mock_forbid_everything(harness.testing)
+  const dir = new_repo(harness.fs, harness.process)
   const result = github_worktree_delta(harness.process, selector(dir, "staged", nil))
   expect(is_err(result), "unknown selector rejected")
   assert_eq(unwrap_err(result).code, "schema_drift", "selector error code")
   assert_eq(len(harness.testing.http_mock_calls()), 0, "no network request")
-  drop_repo(harness, dir)
+  drop_repo(harness.fs, harness.process, dir)
   harness.testing.http_mock_clear()
 }
 
 pipeline test_commit_rejects_a_branch_name_that_could_escape_the_rest_path(harness: Harness, task) {
   harness.testing.http_mock_clear()
-  mock_forbid_everything(harness)
-  const dir = new_repo(harness)
+  mock_forbid_everything(harness.testing)
+  const dir = new_repo(harness.fs, harness.process)
   harness.fs.write_text(dir + "/keep.txt", "changed\n")
   const result = github_commit_worktree(
     harness,
@@ -719,14 +715,14 @@ pipeline test_commit_rejects_a_branch_name_that_could_escape_the_rest_path(harne
   expect(is_err(result), "unsafe branch rejected")
   assert_eq(unwrap_err(result).code, "schema_drift", "unsafe branch code")
   assert_eq(len(harness.testing.http_mock_calls()), 0, "no network request")
-  drop_repo(harness, dir)
+  drop_repo(harness.fs, harness.process, dir)
   harness.testing.http_mock_clear()
 }
 
 pipeline test_delta_rejects_a_base_oid_that_is_not_the_local_head(harness: Harness, task) {
   harness.testing.http_mock_clear()
-  mock_forbid_everything(harness)
-  const dir = new_repo(harness)
+  mock_forbid_everything(harness.testing)
+  const dir = new_repo(harness.fs, harness.process)
   harness.fs.write_text(dir + "/keep.txt", "changed\n")
   const result = github_commit_worktree(
     harness,
@@ -748,8 +744,8 @@ pipeline test_delta_rejects_a_base_oid_that_is_not_the_local_head(harness: Harne
   const error = unwrap_err(result)
   assert_eq(error.code, "stale_head", "base mismatch code")
   assert_eq(error.expected_head_oid, OTHER_OID, "requested base")
-  assert_eq(error.observed_head_oid, head_oid(harness, dir), "local HEAD")
+  assert_eq(error.observed_head_oid, head_oid(harness.process, dir), "local HEAD")
   assert_eq(len(harness.testing.http_mock_calls()), 0, "no network request")
-  drop_repo(harness, dir)
+  drop_repo(harness.fs, harness.process, dir)
   harness.testing.http_mock_clear()
 }

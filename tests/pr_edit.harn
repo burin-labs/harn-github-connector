@@ -75,7 +75,9 @@ pipeline test_pr_edit(harness: Harness, task) {
   assert_eq(calls_after_success[0].url, base + "/repos/octo-org/octo-repo/pulls/42", "edit URL")
   const low_body = json_parse(calls_after_success[0].body)
   assert_eq(low_body.keys(), ["title"], "low-level edit forwards only editable fields")
-  const typed_body = json_parse(calls_after_success[1].body)
+  const typed_body: {title: string, body: string, maintainer_can_modify: bool} = json_parse(
+    calls_after_success[1].body,
+  )
   assert_eq(typed_body.title, "Release title", "typed edit forwards title")
   assert_eq(typed_body.body, "Release body", "typed edit forwards body")
   assert_eq(typed_body.maintainer_can_modify, false, "typed edit forwards explicit false")

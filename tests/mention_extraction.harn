@@ -34,7 +34,7 @@ pipeline test_mention_extraction(harness: Harness, task) {
   init(harness, {signing_secret: secret})
   const normalized = github_normalize(
     harness,
-    fixture_raw(harness, "issue_comment_mention", secret, "issue_comment"),
+    fixture_raw(harness.fs, "issue_comment_mention", secret, "issue_comment"),
   )
   assert_eq(normalized.type, "event", "mention event normalizes")
   const mention = normalized.event.payload.mention
@@ -48,7 +48,7 @@ pipeline test_mention_extraction(harness: Harness, task) {
   // 7. A comment with no mentions has no mention block.
   const plain = github_normalize(
     harness,
-    fixture_raw(harness, "issue_comment_created", secret, "issue_comment"),
+    fixture_raw(harness.fs, "issue_comment_created", secret, "issue_comment"),
   )
   assert_eq(plain.event.payload.mention, nil, "plain comment has no mention block")
   shutdown(harness)
