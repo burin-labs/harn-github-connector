@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.6.3 - 2026-08-02
+
+- Declare Harn 0.10.50 as the package minimum, matching the typed
+  `HarnessProcess.run` contract used by authentication and worktree publishing
+  instead of advertising compatibility with older, incompatible process APIs.
+
 ## 0.6.2 - 2026-08-02
 
 - Fix the GitHub CLI authentication fallback to execute through the typed
