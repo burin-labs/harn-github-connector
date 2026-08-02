@@ -43,6 +43,9 @@ keep them free of live GitHub secrets and private repository data.
   mutations after author identity has been resolved.
 - [`src/contracts.harn`](../src/contracts.harn) owns the closed records returned
   by the public API.
+- [`src/repository.harn`](../src/repository.harn) owns repository identity and
+  access checks; [`src/releases.harn`](../src/releases.harn) owns release
+  lookup, leased metadata edits, and asset listing.
 - [`src/webhooks.harn`](../src/webhooks.harn) owns inbound webhook validation
   and normalization.
 - [`src/worktree_commit.harn`](../src/worktree_commit.harn) owns atomic commits

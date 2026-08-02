@@ -1,0 +1,68 @@
+import { __github_api_url, __github_json } from "./client"
+import { connector_error } from "./errors"
+
+pub fn __repo_parts(args) {
+  if args?.owner != nil && args?.repo != nil && !contains(to_string(args.repo), "/") {
+    return Ok(
+      {
+        owner: to_string(args.owner),
+        name: to_string(args.repo),
+        full_name: to_string(args.owner) + "/" + to_string(args.repo),
+      },
+    )
+  }
+  const repo_arg = args?.repository ?? args?.repo_ref ?? args?.repo_full_name ?? args?.repo
+  if type_of(repo_arg) == "dict" {
+    const owner = repo_arg?.owner ?? repo_arg?.owner_login
+    const name = repo_arg?.name ?? repo_arg?.repo
+    const full_name = repo_arg?.full_name
+    if full_name != nil && contains(to_string(full_name), "/") {
+      return __repo_parts({repo: full_name})
+    }
+    if owner != nil && name != nil {
+      return Ok(
+        {
+          owner: to_string(owner),
+          name: to_string(name),
+          full_name: to_string(owner) + "/" + to_string(name),
+        },
+      )
+    }
+  }
+  if repo_arg != nil && contains(to_string(repo_arg), "/") {
+    const parts = split(to_string(repo_arg), "/")
+    if len(parts) == 2 && trim(parts[0]) != "" && trim(parts[1]) != "" {
+      return Ok({owner: parts[0], name: parts[1], full_name: parts[0] + "/" + parts[1]})
+    }
+  }
+  return connector_error(
+    "schema_drift",
+    "github typed API requires repo as `owner/name` or owner + repo",
+  )
+}
+
+pub fn __is_status_error(err, status) {
+  return to_int(err?.http_status ?? 0) == status
+    || contains(
+    to_string(err?.message ?? ""),
+    "status " + to_string(status),
+  )
+}
+
+pub fn __prove_repository_access(harness: Harness, repo, cfg) {
+  const visible = __github_json(
+    harness,
+    "GET",
+    __github_api_url(cfg.api_base_url, "/repos/" + repo.owner + "/" + repo.name),
+    nil,
+    cfg,
+  )
+  if is_err(visible) {
+    return visible
+  }
+  if lowercase(trim(to_string(visible?.full_name ?? "")))
+    != lowercase(repo.owner + "/" + repo.name) {
+    return connector_error("invalid_response", "GitHub repository access proof omitted full_name")
+  }
+  return Ok(true)
+}
