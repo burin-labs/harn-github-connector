@@ -7643,7 +7643,7 @@ fn __gh_auth_token(env: HarnessEnv, process: HarnessProcess, args) {
     return Ok(to_string(env_token))
   }
   const output = try {
-    process.exec("gh", "auth", "token")
+    process.run({program: "gh", args: ["auth", "token"], stdin: "", timeout_ms: 10000})
   }
   if is_err(output) {
     return __err(

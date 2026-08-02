@@ -1,4 +1,4 @@
-import { github_auth_fallback_enabled } from "../src/lib"
+import { call, github_auth_fallback_enabled } from "../src/lib"
 
 pipeline test_explicit_canonical_policy_dominates_environment(task) {
   assert_eq(
@@ -37,4 +37,34 @@ pipeline test_legacy_alias_precedes_environment_when_canonical_is_absent(task) {
 pipeline test_environment_is_only_the_absent_option_default(task) {
   assert_eq(github_auth_fallback_enabled({}, true), true, "enabled environment default")
   assert_eq(github_auth_fallback_enabled({}, false), false, "disabled environment default")
+}
+
+pipeline test_empty_explicit_token_reaches_typed_gh_fallback(harness: Harness) {
+  const base = "https://api.github.test"
+  harness.testing.http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/pulls?state=open",
+    {status: 200, body: "[]", headers: {"x-ratelimit-remaining": "6"}},
+  )
+  const result = call(
+    harness,
+    "github.pr.list",
+    {
+      api_base_url: base,
+      allow_gh_auth_fallback: true,
+      gh_token: "",
+      repo: "octo-org/octo-repo",
+      filters: {state: "open"},
+    },
+  )
+  if is_err(result) {
+    assert_eq(
+      unwrap_err(result).category,
+      "auth",
+      "an unavailable gh credential remains a structured auth error",
+    )
+  } else {
+    assert_eq(len(unwrap(result)), 0, "an available gh credential reaches the mocked API")
+  }
+  harness.testing.http_mock_clear()
 }
