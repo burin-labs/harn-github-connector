@@ -73,30 +73,32 @@ name = "harn-github-connector-consumer-smoke"
 version = "0.0.0"
 EOF
 cd "$smoke_root"
-harn add "${GITHUB_WORKSPACE:-$OLDPWD}@HEAD"
+harn add --alias harn-github-connector "${GITHUB_WORKSPACE:-$OLDPWD}@HEAD"
 cat > smoke.harn <<'EOF'
 import {
   GithubConnectorResult,
   GithubReleaseLookup,
 } from "harn-github-connector/default"
-import { GithubWorktreeCommitRequest, github_commit_worktree } from "harn-github-connector/worktree"
 import { publish_main } from "harn-github-connector/publish"
+import { GithubWorktreeCommitRequest, github_commit_worktree } from "harn-github-connector/worktree"
 
-fn release_state(result: GithubConnectorResult<GithubReleaseLookup>) -> string {
+fn _release_state(result: GithubConnectorResult<GithubReleaseLookup>) -> string {
   if is_err(result) {
     return unwrap_err(result).code
   }
   return unwrap(result).state
 }
 
-// Every declared export must resolve from a real consumer, not just from
-// inside this package. `worktree` and `publish` were added after the smoke was
-// written, and a missing `[exports]` entry is invisible to `harn check src`.
-fn commit(harness: Harness, request: GithubWorktreeCommitRequest) {
+/**
+ * Every declared export must resolve from a real consumer, not just from
+ * inside this package. A missing `[exports]` entry is invisible to
+ * `harn check src`.
+ */
+fn _commit(harness: Harness, request: GithubWorktreeCommitRequest) {
   return github_commit_worktree(harness, request)
 }
 
-// The exact entry file the README tells consumers to write.
+/** The exact entry file the README tells consumers to write. */
 fn main(harness: Harness) {
   harness.runtime.exit(publish_main(harness, argv ?? []))
 }

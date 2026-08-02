@@ -1,0 +1,907 @@
+import {
+  connector_http_json,
+  connector_http_rate_limit,
+  connector_http_request,
+} from "std/connectors/http"
+import { connector_error } from "./errors"
+import { GITHUB_API_BASE_URL, GITHUB_API_VERSION, GITHUB_USER_AGENT } from "./provider"
+import { text_index_of } from "./text"
+
+type GithubAuthFallbackPolicy = {allow_gh_auth_fallback?: bool}
+
+const TOKEN_CACHE_KEY = "harn-github-connector.token_cache"
+
+const DEFAULT_TOKEN_REFRESH_SKEW_SECONDS = 300
+
+const DEFAULT_JWT_BACKDATE_SECONDS = 60
+
+const DEFAULT_JWT_TTL_SECONDS = 600
+
+const DEFAULT_RATE_LIMIT_MAX_SLEEP_SECONDS = 60
+
+/** Mint a GitHub App JWT using Harn jwt_sign and the configured app private key. */
+pub fn mint_app_jwt(clock: HarnessClock, secrets: HarnessSecrets, config) {
+  const app_id = config?.app_id
+  if app_id == nil {
+    return connector_error("missing_app_id", "github connector requires app_id to mint JWT")
+  }
+  const pem_result = __private_key_pem(secrets, config)
+  if is_err(pem_result) {
+    return pem_result
+  }
+  const now = __now_seconds(clock, config)
+  const backdate = config?.jwt_backdate_seconds ?? DEFAULT_JWT_BACKDATE_SECONDS
+  const ttl = config?.jwt_ttl_seconds ?? DEFAULT_JWT_TTL_SECONDS
+  const claims = {iss: to_string(app_id), iat: now - backdate, exp: now + ttl}
+  return jwt_sign(config?.jwt_alg ?? "RS256", claims, unwrap(pem_result))
+}
+
+/** Return a cached installation token or refresh it when stale. */
+pub fn installation_token(harness: Harness, config) {
+  const resolved_result = __resolve_token_config(config)
+  if is_err(resolved_result) {
+    return resolved_result
+  }
+  const resolved = unwrap(resolved_result)
+  const key = to_string(resolved.installation_id)
+  const now = __now_seconds(harness.clock, resolved)
+  const cached = __token_cache(harness.runtime)[key]
+  if cached != nil && cached.refresh_at > now {
+    return cached.token
+  }
+  let token = nil
+  mutex {
+    let cache = __token_cache(harness.runtime)
+    const again = cache[key]
+    if again != nil && again.refresh_at > __now_seconds(harness.clock, resolved) {
+      token = again.token
+    } else {
+      const exchanged = __exchange_installation_token(harness, resolved)
+      if is_err(exchanged) {
+        token = exchanged
+      } else {
+        const response = unwrap(exchanged)
+        cache[key] = {
+          token: response.token,
+          refresh_at: __token_refresh_at(
+            response?.expires_at,
+            __now_seconds(harness.clock, resolved),
+            resolved,
+          ),
+        }
+        harness.runtime.store_set(TOKEN_CACHE_KEY, cache)
+        token = response.token
+      }
+    }
+  }
+  return token
+}
+
+/** Clear all cached installation tokens. */
+pub fn reset_token_cache(runtime: HarnessRuntime) {
+  runtime.store_delete(TOKEN_CACHE_KEY)
+}
+
+/** Invalidate one cached installation token by installation id. */
+pub fn invalidate_installation_token(runtime: HarnessRuntime, installation_id) {
+  const key = to_string(installation_id)
+  let cache = __token_cache(runtime)
+  cache.remove(key)
+  runtime.store_set(TOKEN_CACHE_KEY, cache)
+}
+
+pub fn __outbound_config(harness: Harness, args) {
+  const api_base_url = args?.api_base_url
+    ?? harness.env.get_or(
+    "GITHUB_API_BASE_URL",
+    GITHUB_API_BASE_URL,
+  )
+  const base_check = __validate_api_base_url(api_base_url)
+  if is_err(base_check) {
+    return base_check
+  }
+  const configured_installation_token = args?.installation_token
+    ?? args?.bindings?.installation_token
+    ?? args?.secrets?.installation_token
+    ?? harness.env.get("GITHUB_INSTALLATION_TOKEN")
+  const direct_token = configured_installation_token ?? args?.token
+  if direct_token != nil && trim(to_string(direct_token)) != "" {
+    const auth_identity = if configured_installation_token != nil
+      && trim(
+      to_string(configured_installation_token),
+    )
+      != "" {
+      "github_app"
+    } else {
+      "unknown"
+    }
+    return Ok(
+      {
+        api_base_url: to_string(api_base_url),
+        installation_token: to_string(direct_token),
+        token_mode: "direct",
+        auth_identity: auth_identity,
+        installation_id: args?.installation_id,
+        now: args?.now,
+        timeout_ms: args?.timeout_ms,
+        rate_limit_max_sleep_seconds: args?.rate_limit_max_sleep_seconds
+          ?? DEFAULT_RATE_LIMIT_MAX_SLEEP_SECONDS,
+      }
+        + __http_policy_config(args),
+    )
+  }
+  const app_id = args?.app_id ?? harness.env.get("GITHUB_APP_ID")
+  const installation_id = args?.installation_id ?? harness.env.get("GITHUB_INSTALLATION_ID")
+  if app_id == nil || trim(to_string(app_id)) == "" || installation_id == nil
+    || trim(
+    to_string(installation_id),
+  )
+    == "" {
+    if __allow_gh_auth_fallback(harness.env, args) {
+      const gh_token = __gh_auth_token(harness.env, harness.process, args)
+      if is_err(gh_token) {
+        return gh_token
+      }
+      return Ok(
+        {
+          api_base_url: to_string(api_base_url),
+          installation_token: to_string(unwrap(gh_token)),
+          token_mode: "gh_auth",
+          auth_identity: "user",
+          installation_id: nil,
+          now: args?.now,
+          timeout_ms: args?.timeout_ms,
+          rate_limit_max_sleep_seconds: args?.rate_limit_max_sleep_seconds
+            ?? DEFAULT_RATE_LIMIT_MAX_SLEEP_SECONDS,
+        }
+          + __http_policy_config(args),
+      )
+    }
+    return connector_error(
+      "missing_credentials",
+      "github connector requires installation_token, or app_id + installation_id + private_key",
+    )
+  }
+  const resolved = {
+    api_base_url: to_string(api_base_url),
+    app_id: app_id,
+    installation_id: installation_id,
+    private_key_pem: args?.private_key_pem,
+    private_key_secret: args?.private_key_secret ?? args?.secrets?.private_key,
+    jwt_alg: args?.jwt_alg ?? "RS256",
+    jwt_backdate_seconds: args?.jwt_backdate_seconds ?? DEFAULT_JWT_BACKDATE_SECONDS,
+    jwt_ttl_seconds: args?.jwt_ttl_seconds ?? DEFAULT_JWT_TTL_SECONDS,
+    token_refresh_skew_seconds: args?.token_refresh_skew_seconds
+      ?? DEFAULT_TOKEN_REFRESH_SKEW_SECONDS,
+    now: args?.now,
+    timeout_ms: args?.timeout_ms,
+    rate_limit_max_sleep_seconds: args?.rate_limit_max_sleep_seconds
+      ?? DEFAULT_RATE_LIMIT_MAX_SLEEP_SECONDS,
+  }
+    + __http_policy_config(args)
+  const token_result = installation_token(harness, resolved)
+  if is_err(token_result) {
+    return token_result
+  }
+  return Ok(
+    resolved
+      + {
+      installation_token: to_string(token_result),
+      token_mode: "jwt",
+      auth_identity: "github_app",
+    },
+  )
+}
+
+fn __http_policy_config(args) {
+  return {
+    retry: args?.retry,
+    retry_policy: args?.retry_policy,
+    retry_on: args?.retry_on,
+    retry_unsafe: args?.retry_unsafe,
+    idempotency_key: args?.idempotency_key,
+    max_attempts: args?.max_attempts,
+    base_ms: args?.base_ms,
+    backoff_ms: args?.backoff_ms,
+    cap_ms: args?.cap_ms,
+    respect_retry_after: args?.respect_retry_after,
+  }
+}
+
+pub fn __config_keys() {
+  return [
+    "api_base_url",
+    "installation_token",
+    "token",
+    "bindings",
+    "secrets",
+    "app_id",
+    "installation_id",
+    "private_key_pem",
+    "private_key_secret",
+    "jwt_alg",
+    "jwt_backdate_seconds",
+    "jwt_ttl_seconds",
+    "token_refresh_skew_seconds",
+    "now",
+    "timeout_ms",
+    "rate_limit_max_sleep_seconds",
+    "retry",
+    "retry_policy",
+    "retry_on",
+    "retry_unsafe",
+    "idempotency_key",
+    "max_attempts",
+    "base_ms",
+    "backoff_ms",
+    "cap_ms",
+    "respect_retry_after",
+    "poll_interval_ms",
+    "max_wait_ms",
+    "allow_gh_auth_fallback",
+    "gh_token",
+    "github_author_choice",
+    "author_choice",
+    "author_mode",
+  ]
+}
+
+/** Resolve gh-auth fallback from caller policy, then the environment default. */
+pub fn github_auth_fallback_enabled(
+  args: GithubAuthFallbackPolicy = {},
+  environment_enabled: bool = false,
+) -> bool {
+  if args.keys().contains("allow_gh_auth_fallback") {
+    return args.allow_gh_auth_fallback ?? false
+  }
+  return environment_enabled
+}
+
+fn __allow_gh_auth_fallback(env: HarnessEnv, args) {
+  return github_auth_fallback_enabled(
+    args,
+    env.get_or("HARN_GITHUB_ALLOW_GH_AUTH_FALLBACK", "") == "1",
+  )
+}
+
+fn __gh_auth_token(env: HarnessEnv, process: HarnessProcess, args) {
+  const env_token = args?.gh_token ?? env.get("GH_TOKEN") ?? env.get("GITHUB_TOKEN")
+  if env_token != nil && trim(to_string(env_token)) != "" {
+    return Ok(to_string(env_token))
+  }
+  const output = try {
+    process.exec("gh", "auth", "token")
+  }
+  if is_err(output) {
+    return connector_error(
+      "auth",
+      "gh auth fallback is enabled, but `gh auth token` failed: " + to_string(unwrap_err(output)),
+    )
+  }
+  const result = unwrap(output)
+  if !(result?.success ?? false) {
+    return connector_error(
+      "auth",
+      "gh auth fallback is enabled, but `gh auth token` exited non-zero",
+    )
+  }
+  const token = trim(to_string(result?.stdout ?? ""))
+  if token == "" {
+    return connector_error(
+      "auth",
+      "gh auth fallback is enabled, but `gh auth token` returned an empty token",
+    )
+  }
+  return Ok(token)
+}
+
+pub fn __body_without(args, keys) {
+  const body = (args ?? {}) + {}
+  for key in keys {
+    body.remove(key)
+  }
+  return body
+}
+
+pub fn __github_api_url(api_base_url, path) {
+  const base = trim(to_string(api_base_url))
+  const prefix = if ends_with(base, "/") {
+    base[0:len(base) - 1]
+  } else {
+    base
+  }
+  if starts_with(path, "/") {
+    return prefix + path
+  }
+  return prefix + "/" + path
+}
+
+@complexity(allow)
+fn __validate_api_base_url(api_base_url) {
+  if api_base_url == nil || trim(to_string(api_base_url)) == "" {
+    return connector_error("invalid_api_base_url", "api_base_url is required")
+  }
+  const url = trim(to_string(api_base_url))
+  if !starts_with(lowercase(url), "https://") {
+    return connector_error("invalid_api_base_url", "api_base_url must use https:// scheme")
+  }
+  const after_scheme = url[8:len(url)]
+  const slash_idx = text_index_of(after_scheme, "/")
+  const host_port = if slash_idx >= 0 {
+    after_scheme[0:slash_idx]
+  } else {
+    after_scheme
+  }
+  const host = __strip_port(host_port)
+  if host == "" {
+    return connector_error("invalid_api_base_url", "api_base_url is missing a host")
+  }
+  const host_lc = lowercase(host)
+  if __is_disallowed_host(host_lc) {
+    return connector_error(
+      "invalid_api_base_url",
+      "api_base_url host `" + host
+        + "` is not allowed (loopback/private/link-local/.internal/.local are blocked)",
+    )
+  }
+  return Ok(true)
+}
+
+fn __strip_port(host_port) {
+  if starts_with(host_port, "[") {
+    const close = text_index_of(host_port, "]")
+    if close >= 0 {
+      return host_port[1:close]
+    }
+    return host_port
+  }
+  const colon = text_index_of(host_port, ":")
+  if colon >= 0 {
+    return host_port[0:colon]
+  }
+  return host_port
+}
+
+@complexity(allow)
+fn __is_disallowed_host(host_lc) {
+  if host_lc == "localhost" {
+    return true
+  }
+  if ends_with(host_lc, ".localhost") || ends_with(host_lc, ".local")
+    || ends_with(
+    host_lc,
+    ".internal",
+  ) {
+    return true
+  }
+  if host_lc == "::1" || host_lc == "0:0:0:0:0:0:0:1" {
+    return true
+  }
+  if starts_with(host_lc, "127.") || starts_with(host_lc, "10.")
+    || starts_with(host_lc, "169.254.")
+    || starts_with(host_lc, "192.168.") {
+    return true
+  }
+  if starts_with(host_lc, "172.") {
+    const rest = host_lc[4:len(host_lc)]
+    const dot = text_index_of(rest, ".")
+    if dot > 0 {
+      const octet_str = rest[0:dot]
+      const parsed = try {
+        to_int(octet_str)
+      }
+      if !is_err(parsed) {
+        const octet = unwrap(parsed)
+        if octet >= 16 && octet <= 31 {
+          return true
+        }
+      }
+    }
+  }
+  return false
+}
+
+pub fn __trim_leading_slash(path) {
+  const text = to_string(path)
+  if starts_with(text, "/") {
+    return text[1:len(text)]
+  }
+  return text
+}
+
+pub fn __pagination_query(args) {
+  let parts = []
+  if args?.per_page != nil {
+    parts = parts + ["per_page=" + url_encode(to_string(args.per_page))]
+  }
+  if args?.page != nil {
+    parts = parts + ["page=" + url_encode(to_string(args.page))]
+  }
+  if len(parts) == 0 {
+    return ""
+  }
+  return "?" + join(parts, "&")
+}
+
+pub fn __workflow_runs_query(args) {
+  let parts = []
+  const keys = [
+    "actor",
+    "branch",
+    "event",
+    "status",
+    "created",
+    "check_suite_id",
+    "head_sha",
+    "per_page",
+    "page",
+  ]
+  for key in keys {
+    const value = args.get(key)
+    if value != nil {
+      parts = parts + [key + "=" + url_encode(to_string(value))]
+    }
+  }
+  if len(parts) == 0 {
+    return ""
+  }
+  return "?" + join(parts, "&")
+}
+
+pub fn __workflow_run_jobs_query(args) {
+  let parts = []
+  const keys = ["filter", "per_page", "page"]
+  for key in keys {
+    const value = args.get(key)
+    if value != nil {
+      parts = parts + [key + "=" + url_encode(to_string(value))]
+    }
+  }
+  if len(parts) == 0 {
+    return ""
+  }
+  return "?" + join(parts, "&")
+}
+
+pub fn __pulls_list_query(args) {
+  let parts = []
+  if args?.state != nil {
+    parts = parts + ["state=" + url_encode(to_string(args.state))]
+  }
+  if args?.head != nil {
+    parts = parts + ["head=" + url_encode(to_string(args.head))]
+  }
+  if args?.base != nil {
+    parts = parts + ["base=" + url_encode(to_string(args.base))]
+  }
+  if args?.sort != nil {
+    parts = parts + ["sort=" + url_encode(to_string(args.sort))]
+  }
+  if args?.direction != nil {
+    parts = parts + ["direction=" + url_encode(to_string(args.direction))]
+  }
+  if args?.per_page != nil || args?.limit != nil {
+    parts = parts + ["per_page=" + url_encode(to_string(args?.per_page ?? args?.limit))]
+  }
+  if args?.page != nil {
+    parts = parts + ["page=" + url_encode(to_string(args.page))]
+  }
+  if len(parts) == 0 {
+    return ""
+  }
+  return "?" + join(parts, "&")
+}
+
+pub fn __ref_query(args) {
+  if args?.ref == nil || trim(to_string(args.ref)) == "" {
+    return ""
+  }
+  return "?ref=" + url_encode(to_string(args.ref))
+}
+
+@complexity(allow)
+pub fn __github_json(harness: Harness, method, url, body, cfg) {
+  return __github_request(harness, method, url, body, cfg, "application/vnd.github+json", true)
+}
+
+pub fn __github_text(harness: Harness, method, url, cfg, accept) {
+  return __github_request(harness, method, url, nil, cfg, accept, false)
+}
+
+@complexity(allow)
+pub fn __github_request(harness: Harness, method, url, body, cfg, accept, parse_json) {
+  let current_token = cfg.installation_token
+  let retried_rate_limit = false
+  let retried_auth = false
+  while true {
+    const response = __github_policy_request(
+      harness.clock,
+      harness.net,
+      method,
+      url,
+      body,
+      cfg,
+      current_token,
+      accept,
+      parse_json,
+    )
+    if response.status == 401 && cfg.token_mode == "jwt" && !retried_auth {
+      retried_auth = true
+      invalidate_installation_token(harness.runtime, cfg.installation_id)
+      const refreshed = installation_token(harness, cfg)
+      if is_err(refreshed) {
+        return refreshed
+      }
+      current_token = to_string(refreshed)
+      continue
+    }
+    const limited = __maybe_wait_for_rate_limit(harness.clock, response, cfg)
+    if is_err(limited) {
+      return limited
+    }
+    if (response.status == 403 || response.status == 429) && unwrap(limited)
+      && !retried_rate_limit {
+      retried_rate_limit = true
+      continue
+    }
+    if !(response.ok ?? false) {
+      return __github_request_error(harness.clock, response)
+    }
+    if trim(response.body ?? "") == "" {
+      return {status: response.status, headers: response.headers, body: ""}
+    }
+    if !parse_json {
+      return response.body
+    }
+    return response.json
+  }
+}
+
+fn __github_policy_request(
+  clock: HarnessClock,
+  net: HarnessNet,
+  method,
+  url,
+  body,
+  cfg,
+  current_token,
+  accept,
+  parse_json,
+) {
+  const options = __github_policy_request_options(body, cfg, current_token, accept)
+  if parse_json {
+    return connector_http_json(clock, net, method, url, options)
+  }
+  return connector_http_request(clock, net, method, url, options)
+}
+
+fn __github_policy_request_options(body, cfg, current_token, accept) {
+  let options = {
+    provider: "github",
+    headers: {
+      Accept: accept,
+      "X-GitHub-Api-Version": GITHUB_API_VERSION,
+      "User-Agent": GITHUB_USER_AGENT,
+      Authorization: "Bearer " + current_token,
+    },
+    retry: __github_retry_policy(cfg),
+  }
+  if body != nil {
+    options["body"] = json_stringify(body)
+    options.headers["Content-Type"] = "application/json"
+  }
+  if cfg?.timeout_ms != nil {
+    options["timeout_ms"] = cfg.timeout_ms
+  }
+  if cfg?.idempotency_key != nil {
+    options["idempotency_key"] = cfg.idempotency_key
+  }
+  if cfg?.retry_unsafe != nil {
+    options["retry_unsafe"] = cfg.retry_unsafe
+  }
+  return options
+}
+
+fn __github_retry_policy(cfg) {
+  const source = cfg?.retry_policy ?? cfg?.retry ?? {}
+  let policy = {}
+  for entry in source.entries() {
+    policy[entry.key] = entry.value
+  }
+  if cfg?.max_attempts != nil && policy?.max_attempts == nil {
+    policy["max_attempts"] = cfg.max_attempts
+  }
+  if cfg?.base_ms != nil && policy?.base_ms == nil {
+    policy["base_ms"] = cfg.base_ms
+  }
+  if cfg?.backoff_ms != nil && policy?.backoff_ms == nil {
+    policy["backoff_ms"] = cfg.backoff_ms
+  }
+  if cfg?.cap_ms != nil && policy?.cap_ms == nil {
+    policy["cap_ms"] = cfg.cap_ms
+  }
+  if cfg?.respect_retry_after != nil && policy?.respect_retry_after == nil {
+    policy["respect_retry_after"] = cfg.respect_retry_after
+  }
+  if policy?.max_attempts == nil && policy?.max == nil {
+    policy["max_attempts"] = 1
+  }
+  policy["retry_on"] = __github_generic_retry_statuses(
+    policy?.retry_on ?? cfg?.retry_on ?? [408, 500, 502, 503, 504],
+  )
+  return policy
+}
+
+fn __github_generic_retry_statuses(statuses) {
+  let out = []
+  for status in statuses ?? [] {
+    const code = to_int(status)
+    if code != nil && code != 403 && code != 429 {
+      out = out + [code]
+    }
+  }
+  return out
+}
+
+fn __github_request_error(clock: HarnessClock, response) {
+  if response?.error?.category == "invalid_json" {
+    return connector_error("invalid_response", "GitHub API returned invalid JSON")
+  }
+  if response?.status == nil || to_int(response.status) == 0 {
+    return connector_error(
+      "network",
+      response?.error?.message ?? to_string(response?.error ?? response),
+    )
+  }
+  if response.status == 422 {
+    const message = __github_error_message(response)
+    const lowered = lowercase(message)
+    if contains(lowered, "author") || contains(lowered, "committer")
+      || (contains(lowered, "commit")
+      && contains(
+      lowered,
+      "email",
+    )) {
+      return connector_error(
+        "restricted_commit_author",
+        "GitHub rejected the configured commit author/committer: " + message,
+        {http_status: response.status},
+      )
+    }
+    return connector_error(
+      "validation_failed",
+      "GitHub API validation failed: " + message,
+      {http_status: response.status},
+    )
+  }
+  const code = __github_error_code(clock, response)
+  return connector_error(
+    code,
+    "github API request failed with status " + to_string(response.status),
+    {http_status: response.status},
+  )
+}
+
+fn __github_error_code(clock: HarnessClock, response) {
+  if response.status == 401 {
+    return "auth"
+  }
+  if response.status == 403 || response.status == 429 {
+    if __is_rate_limit_response(clock, response) {
+      return "rate_limited"
+    }
+    const message = lowercase(__github_error_message(response))
+    if contains(message, "resource not accessible by integration") || contains(message, "scope")
+      || contains(
+      message,
+      "permission",
+    ) {
+      return "missing_scopes"
+    }
+    return "permission"
+  }
+  if response.status == 404 {
+    return "inaccessible_resource"
+  }
+  return "network"
+}
+
+fn __github_error_message(response) {
+  const body_text = response?.body ?? response?.error?.body ?? ""
+  const parsed = try {
+    json_parse(body_text)
+  }
+  if !is_err(parsed) {
+    const body = unwrap(parsed)
+    if body?.message != nil {
+      return to_string(body.message)
+    }
+  }
+  return to_string(body_text ?? response?.error?.message ?? "")
+}
+
+fn __is_rate_limit_response(clock: HarnessClock, response) {
+  if response.status == 429 {
+    return true
+  }
+  return trim(to_string(connector_http_rate_limit(clock, response).remaining ?? "")) == "0"
+}
+
+fn __maybe_wait_for_rate_limit(clock: HarnessClock, response, cfg) {
+  const rate_limit = connector_http_rate_limit(clock, response)
+  const remaining = rate_limit.remaining
+  if remaining == nil || trim(to_string(remaining)) != "0" {
+    return Ok(false)
+  }
+  const reset = rate_limit.x_ratelimit_reset ?? rate_limit.reset
+  if reset == nil || trim(to_string(reset)) == "" {
+    return Ok(true)
+  }
+  const parsed_reset = try {
+    to_int(reset)
+  }
+  if is_err(parsed_reset) {
+    return Ok(true)
+  }
+  const wait_seconds = unwrap(parsed_reset) - __now_seconds(clock, cfg ?? {})
+  const max_sleep = max(
+    0,
+    to_int(cfg?.rate_limit_max_sleep_seconds ?? DEFAULT_RATE_LIMIT_MAX_SLEEP_SECONDS)
+      ?? DEFAULT_RATE_LIMIT_MAX_SLEEP_SECONDS,
+  )
+  if wait_seconds > max_sleep {
+    return connector_error(
+      "rate_limited",
+      "github API rate limit reset is more than " + to_string(max_sleep) + " seconds away",
+    )
+  }
+  if wait_seconds > 0 {
+    clock.sleep_ms(wait_seconds * 1000)
+  }
+  return Ok(true)
+}
+
+fn __resolve_token_config(config) {
+  const api_base_url = config?.api_base_url ?? GITHUB_API_BASE_URL
+  const base_check = __validate_api_base_url(api_base_url)
+  if is_err(base_check) {
+    return base_check
+  }
+  const app_id = config?.app_id
+  const installation_id = config?.installation_id
+  if app_id == nil || installation_id == nil {
+    return connector_error(
+      "missing_credentials",
+      "installation_token requires app_id and installation_id",
+    )
+  }
+  return Ok(
+    {
+      api_base_url: to_string(api_base_url),
+      app_id: app_id,
+      installation_id: installation_id,
+      private_key_pem: config?.private_key_pem,
+      private_key_secret: config?.private_key_secret,
+      jwt_alg: config?.jwt_alg ?? "RS256",
+      jwt_backdate_seconds: config?.jwt_backdate_seconds ?? DEFAULT_JWT_BACKDATE_SECONDS,
+      jwt_ttl_seconds: config?.jwt_ttl_seconds ?? DEFAULT_JWT_TTL_SECONDS,
+      token_refresh_skew_seconds: config?.token_refresh_skew_seconds
+        ?? DEFAULT_TOKEN_REFRESH_SKEW_SECONDS,
+      now: config?.now,
+      timeout_ms: config?.timeout_ms,
+      rate_limit_max_sleep_seconds: config?.rate_limit_max_sleep_seconds
+        ?? DEFAULT_RATE_LIMIT_MAX_SLEEP_SECONDS,
+    }
+      + __http_policy_config(config),
+  )
+}
+
+fn __token_cache(runtime: HarnessRuntime) {
+  return runtime.store_get(TOKEN_CACHE_KEY) ?? {}
+}
+
+fn __private_key_pem(secrets: HarnessSecrets, config) {
+  if config?.private_key_secret != nil && trim(to_string(config.private_key_secret)) != "" {
+    const resolved = try {
+      secrets.read(to_string(config.private_key_secret))
+    }
+    if is_err(resolved) {
+      return connector_error(
+        "missing_private_key",
+        "failed to resolve private_key_secret: " + to_string(unwrap_err(resolved)),
+      )
+    }
+    return Ok(to_string(unwrap(resolved)))
+  }
+  if config?.private_key_pem != nil && trim(to_string(config.private_key_pem)) != "" {
+    return Ok(to_string(config.private_key_pem))
+  }
+  return connector_error(
+    "missing_private_key",
+    "github connector requires private_key_secret or private_key_pem",
+  )
+}
+
+@complexity(allow)
+fn __exchange_installation_token(harness: Harness, config) {
+  const jwt_result = mint_app_jwt(harness.clock, harness.secrets, config)
+  if is_err(jwt_result) {
+    return jwt_result
+  }
+  const jwt = unwrap(jwt_result)
+  const url = __github_api_url(
+    config.api_base_url,
+    "/app/installations/" + to_string(config.installation_id) + "/access_tokens",
+  )
+  const response = connector_http_json(
+    harness.clock,
+    harness.net,
+    "POST",
+    url,
+    {
+      provider: "github",
+      operation: "installation_token",
+      headers: {
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": GITHUB_API_VERSION,
+        "User-Agent": GITHUB_USER_AGENT,
+        Authorization: "Bearer " + jwt,
+        "Content-Type": "application/json",
+      },
+      body: "",
+      timeout_ms: config?.timeout_ms ?? 30000,
+      retry: __github_retry_policy(config),
+    },
+  )
+  if !(response.ok ?? false) {
+    if response?.error?.category == "invalid_json" {
+      return connector_error(
+        "invalid_response",
+        "GitHub installation token response was not valid JSON",
+      )
+    }
+    if response.status == nil {
+      return connector_error(
+        "transport",
+        response?.error?.message ?? to_string(response?.error ?? response),
+      )
+    }
+    return connector_error(
+      "installation_token_failed",
+      "failed to create GitHub installation token (status " + to_string(response.status) + ")",
+    )
+  }
+  const payload = response.json
+  if payload?.token == nil {
+    return connector_error(
+      "invalid_response",
+      "GitHub installation token response did not include token",
+    )
+  }
+  return Ok(payload)
+}
+
+fn __token_refresh_at(expires_at, now, config) {
+  const skew = config?.token_refresh_skew_seconds ?? DEFAULT_TOKEN_REFRESH_SKEW_SECONDS
+  if expires_at == nil || expires_at == "" {
+    return now + 3000
+  }
+  const parsed_result = try {
+    to_int(date_parse(to_string(expires_at)))
+  }
+  if is_err(parsed_result) {
+    return now + 3000
+  }
+  const refresh_at = unwrap(parsed_result) - skew
+  if refresh_at <= now {
+    return now
+  }
+  return refresh_at
+}
+
+fn __now_seconds(clock: HarnessClock, config) {
+  if config?.now != nil {
+    return to_int(config.now)
+  }
+  return to_int(date_parse(clock.date_iso()))
+}

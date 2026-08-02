@@ -408,7 +408,7 @@ fn __wc_addition(
  * `FileAddition` exposes only `path` and `contents`, so the mutation cannot
  * *specify* a mode. It does not follow that it *clobbers* one: a commit created
  * by `createCommitOnBranch` over a path already in the base tree keeps that
- * entry's mode. Evidence — burin-labs/burin-code `9ec6ffb`, committed
+ * entry's mode. In burin-labs/burin-code commit `9ec6ffb`, GitHub committed
  * server-side by `GitHub <noreply@github.com>` through that mutation, has
  * `git diff-tree -r` records `:100755 100755 … M scripts/ci-rustc-wrapper.sh`.
  * A blanket "reject every non-100644 entry" rule would therefore refuse cases
@@ -427,8 +427,8 @@ fn __wc_addition(
  *   accepted, because the mode is preserved.
  * - executable on a path new to the base tree (added, copied, or a rename
  *   destination): rejected. There is no prior entry to inherit from, so it
- *   would land `100644`. This one is not empirically confirmed — a committed
- *   tree keeps no record of what the author intended — so it fails closed.
+ *   would land `100644`. A committed tree cannot prove what mode the author
+ *   intended, so this case fails closed.
  * - any mode change between the base tree and the selected state: rejected,
  *   because the transport cannot carry the chmod and would silently no-op it.
  *
@@ -819,6 +819,7 @@ fn __wc_empty_receipt(
   }
 }
 
+@complexity(allow)
 /**
  * Publish one exact local Git state to `branch` as a GitHub-signed commit.
  *
@@ -831,7 +832,6 @@ fn __wc_empty_receipt(
  * An empty delta returns `committed: false` with `branch_action: "skipped"` and
  * performs no network call at all.
  */
-@complexity(allow)
 pub fn github_commit_worktree(
   harness: Harness,
   request: GithubWorktreeCommitRequest,

@@ -1,12 +1,10 @@
 import { call, reset_token_cache } from "../src/lib"
 
-fn fixture_key(harness: Harness) {
-  return harness.fs.read_text(
-    path_join(harness.fs.source_dir(), "fixtures/github_app_test_key.pem"),
-  )
+fn fixture_key(harness: HarnessFs) {
+  return harness.read_text(path_join(harness.source_dir(), "fixtures/github_app_test_key.pem"))
 }
 
-fn app_config(harness: Harness, now) {
+fn app_config(harness: HarnessFs, now) {
   return {
     app_id: 12345,
     installation_id: 77,
@@ -32,7 +30,7 @@ pipeline test_installation_token_method_smoke(harness: Harness, task) {
     },
   )
   const minted = unwrap(
-    call(harness, "github.app.installation_token", app_config(harness, 1700000000)),
+    call(harness, "github.app.installation_token", app_config(harness.fs, 1700000000)),
   )
   assert_eq(minted.token, "token-a", "app-credential mode returns the minted token")
   assert_eq(minted.token_mode, "jwt", "app-credential mode reports jwt token_mode")

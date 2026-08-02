@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Import HTTP policy from `std/connectors/http`. This requires Harn 0.10.51 or
+  later.
+- Split webhook lifecycle, normalization, errors, and small shared utilities
+  out of the outbound connector module. The default export stays unchanged.
+- Remove the deprecated `gh_auth_fallback` option. Use
+  `allow_gh_auth_fallback`.
+- Add task-focused setup and publishing guides, policy and protocol references,
+  and a generated API index whose exported contracts are checked from source.
+
 ## 0.5.0 - 2026-08-01
 
 - Migrate the connector and its complete test surface to typed `Harness`
@@ -56,24 +65,34 @@
   `validation_failed`.
 - Expose `github.app.installation_token` as an outbound `call` method. It
   returns the installation bearer token the connector already resolves
-  internally — self-minted from `app_id` + `installation_id` +
+  internally: self-minted from `app_id` + `installation_id` +
   `private_key_pem`/`private_key_secret` (RS256 JWT exchange), or passed through
-  in direct/`gh-auth` modes — as `{token, token_mode, installation_id,
+  in direct/`gh-auth` modes as `{token, token_mode, installation_id,
   api_base_url}`. This lets an orchestrator (e.g. harn-cloud) obtain a token for
   its own git operations without re-implementing JWT minting. No new privilege:
   the caller must already hold the App credentials to mint.
 
-- Added typed release lookup by exact tag so automation no longer assembles raw GitHub API paths.
-- Explicit `allow_gh_auth_fallback` policy now overrides ambient environment configuration, so strict in-process callers can guarantee that connector authentication never spawns the GitHub CLI.
-- Typed pull-request listing now owner-qualifies bare head branches, implements merged-state filtering over GitHub's closed-PR REST contract, rejects unsupported states before I/O, and promotes GraphQL protocol errors instead of returning false successes.
+- Added typed release lookup by exact tag so automation no longer assembles raw
+  GitHub API paths.
+- Explicit `allow_gh_auth_fallback` policy now overrides environment
+  configuration, so strict in-process callers can guarantee that connector
+  authentication never spawns the GitHub CLI.
+- Typed pull-request listing now owner-qualifies bare head branches, implements
+  merged-state filtering over GitHub's closed-PR REST contract, rejects
+  unsupported states before I/O, and promotes GraphQL protocol errors instead
+  of returning false successes.
 - Workflow dispatch waits now snapshot matching run IDs before dispatch, select
   only one unseen exact run when GitHub returns no ID, and fail closed with a
   typed `ambiguous_dispatch` result when multiple unseen runs match.
 - Added a durable workflow dispatch boundary that returns the exact accepted run
   identity before terminal monitoring, while preserving typed dispatch, lookup,
   and ambiguity failures.
-- Workflow dispatch identity receipts now preserve the exact run source SHA, branch, event, URL, and timestamps returned by GitHub, and expose a typed helper for fetching one run.
-- Workflow dispatch identity resolution now hydrates exact run metadata before reporting success, including when GitHub returns a run ID before the run is observable.
+- Workflow dispatch identity receipts now preserve the exact run source SHA,
+  branch, event, URL, and timestamps returned by GitHub, and expose a typed
+  helper for fetching one run.
+- Workflow dispatch identity resolution now reads exact run metadata before
+  reporting success, including when GitHub returns a run ID before the run is
+  observable.
 - Added canonical closed typed GitHub orchestration methods for pull request
   create/list/files/comments, expected-head auto-merge, merge queue evidence,
   exact workflow runs/jobs, commit signatures, and exact file/release lookups.
@@ -92,7 +111,11 @@
   the base tree entry's mode), while a new executable, a mode change, and any
   symlink or submodule entry fail closed. Signed-commit additions now also accept
   genuinely empty file contents instead of failing as if the field were missing.
-- Added stable typed pull-request commit pagination with per-commit signature evidence, canonical merged PR timestamp/OID fields, and a closed typed workflow-run list envelope for release automation. CI and release validation now execute the deterministic in-process named-test suite in addition to executable smoke pipelines.
+- Added stable typed pull-request commit pagination with per-commit signature
+  evidence, canonical merged PR timestamp/OID fields, and a closed typed
+  workflow-run list envelope for release automation. CI and release validation
+  now execute the deterministic in-process named-test suite in addition to
+  executable smoke pipelines.
 - Workflow dispatch now fails closed when GitHub omits the returned run id,
     preserves exact workflow/source/run-attempt identity, and exposes typed
     cancellation for an exact workflow run.

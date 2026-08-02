@@ -1,8 +1,36 @@
+import { connector_http_json } from "std/connectors/http"
 import {
-  connector_http_json,
-  connector_http_rate_limit,
-  connector_http_request,
-} from "std/connectors/shared"
+  __actions_runners_dispatch,
+  __actions_workflow_dispatch,
+  __actions_workflow_run_cancel,
+  __actions_workflow_run_get,
+  __actions_workflow_run_jobs,
+  __actions_workflow_runs_list,
+  __typed_workflow_dispatch,
+  __typed_workflow_job,
+  __typed_workflow_run,
+} from "./actions"
+import {
+  __body_without,
+  __config_keys,
+  __github_api_url,
+  __github_json,
+  __github_request,
+  __github_text,
+  __outbound_config,
+  __pagination_query,
+  __pulls_list_query,
+  __ref_query,
+  __trim_leading_slash,
+} from "./client"
+pub import {
+  github_auth_fallback_enabled,
+  installation_token,
+  invalidate_installation_token,
+  mint_app_jwt,
+  reset_token_cache,
+} from "./client"
+import { first_or_nil } from "./collections"
 pub import {
   GithubAutoMergeReceipt,
   GithubBranchProtection,
@@ -45,15 +73,20 @@ pub import {
   GithubWorkflowRuns,
   GithubWorkflowStep,
 } from "./contracts"
+import { connector_error } from "./errors"
 import { pr_edit_body, pr_edit_result } from "./pr_edit"
-
-const GITHUB_PROVIDER_ID = "github"
-
-const GITHUB_API_BASE_URL = "https://api.github.com"
-
-const GITHUB_API_VERSION = "2022-11-28"
-
-const GITHUB_USER_AGENT = "harn-github-connector"
+import { GITHUB_USER_AGENT } from "./provider"
+import { __actions_run_id, __nonnegative_decimal, __positive_decimal } from "./validation"
+pub import {
+  activate,
+  github_extract_mentions,
+  init,
+  kinds,
+  normalize_inbound,
+  payload_schema,
+  provider_id,
+  shutdown,
+} from "./webhooks"
 
 const GITHUB_OUTBOUND_METHODS = [
   "github.pr.list",
@@ -145,195 +178,7 @@ const GITHUB_OUTBOUND_METHODS = [
   "graphql",
 ]
 
-const GITHUB_WEBHOOK_EVENTS = [
-  "issues",
-  "pull_request",
-  "issue_comment",
-  "pull_request_review",
-  "push",
-  "workflow_run",
-  "deployment_status",
-  "check_run",
-  "check_suite",
-  "status",
-  "merge_group",
-  "installation",
-  "installation_repositories",
-  "release",
-]
-
-const GITHUB_CI_FAILURE_CONCLUSIONS = ["failure", "timed_out", "startup_failure", "action_required"]
-
-const GITHUB_CI_FAILURE_STATES = ["failure", "error"]
-
 const MAX_PULL_REQUEST_COMMIT_PAGES = 250
-
-type GithubAuthFallbackPolicy = {allow_gh_auth_fallback?: bool, gh_auth_fallback?: bool}
-
-type GithubConnectorState = {initialized: bool, active: bool, bindings: dict, ctx: dict}
-
-const TOKEN_CACHE_KEY = "harn-github-connector.token_cache"
-
-const DEFAULT_TOKEN_REFRESH_SKEW_SECONDS = 300
-
-const DEFAULT_JWT_BACKDATE_SECONDS = 60
-
-const DEFAULT_JWT_TTL_SECONDS = 600
-
-const DEFAULT_RATE_LIMIT_MAX_SLEEP_SECONDS = 60
-
-const MAX_BODY_BYTES = 1048576
-
-let GITHUB_STATE: GithubConnectorState = {initialized: false, active: false, bindings: {}, ctx: {}}
-
-/** Return this connector's Harn provider id. */
-pub fn provider_id() {
-  return GITHUB_PROVIDER_ID
-}
-
-/** Return the trigger kinds supported by this connector. */
-pub fn kinds() {
-  return ["webhook"]
-}
-
-/** Return the canonical normalized GitHub webhook payload schema. */
-pub fn payload_schema() {
-  return {
-    harn_schema_name: "GitHubEventPayload",
-    json_schema: {
-      type: "object",
-      required: ["event", "raw"],
-      additionalProperties: true,
-      properties: {
-        provider: {type: "string"},
-        event: {type: "string"},
-        topic: {type: "string"},
-        reaction_topics: {type: "array", items: {type: "string"}},
-        action: {type: ["string", "null"]},
-        delivery_id: {type: ["string", "null"]},
-        installation_id: {type: ["integer", "null"]},
-        repository: {type: ["object", "null"]},
-        repo: {type: ["object", "null"]},
-        pull_request_number: {type: ["integer", "null"]},
-        head_sha: {type: ["string", "null"]},
-        head_ref: {type: ["string", "null"]},
-        base_ref: {type: ["string", "null"]},
-        run_id: {type: ["integer", "null"]},
-        check_id: {type: ["integer", "null"]},
-        check_suite_id: {type: ["integer", "null"]},
-        merge_group_id: {type: ["integer", "null", "string"]},
-        release_id: {type: ["integer", "null"]},
-        source: {type: ["object", "null"]},
-        source_refs: {type: ["array", "null"]},
-        triage_event: {type: ["object", "null"]},
-        job_event: {type: ["object", "null"]},
-        mention: {type: ["object", "null"]},
-        raw: {type: "object"},
-        issue: {type: ["object", "null"]},
-        pull_request: {type: ["object", "null"]},
-        comment: {type: ["object", "null"]},
-        review: {type: ["object", "null"]},
-        commits: {type: ["array", "null"]},
-        workflow_run: {type: ["object", "null"]},
-        deployment_status: {type: ["object", "null"]},
-        deployment: {type: ["object", "null"]},
-        check_run: {type: ["object", "null"]},
-        check_suite: {type: ["object", "null"]},
-        status: {type: ["string", "null"]},
-        commit_status: {type: ["object", "null"]},
-        merge_group: {type: ["object", "null"]},
-        installation: {type: ["object", "null"]},
-        release: {type: ["object", "null"]},
-        repositories_added: {type: ["array", "null"]},
-        repositories_removed: {type: ["array", "null"]},
-      },
-    },
-  }
-}
-
-/** Initialize connector state with orchestrator context. */
-pub fn init(_harness: Harness, ctx = nil) {
-  const next = __state()
-    + {
-    initialized: true,
-    ctx: if type_of(ctx) == "dict" {
-      ctx
-    } else {
-      {}
-    },
-  }
-  __set_state(next)
-  return next
-}
-
-/** Activate webhook bindings and reject duplicate configured paths. */
-pub fn activate(_harness: Harness, bindings = []) {
-  let by_id = {}
-  let seen_paths = {}
-  for binding in bindings ?? [] {
-    const fallback_id = "binding-" + to_string(len(by_id.keys()))
-    const binding_id = binding?.binding_id ?? binding?.id ?? fallback_id
-    const path = binding?.path ?? binding?.match?.path
-    if path != nil && path != "" {
-      if seen_paths.get(path) {
-        return __err(
-          "activation",
-          "github connector path `" + path + "` is configured by multiple bindings",
-        )
-      }
-      seen_paths[path] = true
-    }
-    by_id[binding_id] = binding + {binding_id: binding_id}
-  }
-  const next = __state() + {bindings: by_id, active: true}
-  __set_state(next)
-  return {provider: GITHUB_PROVIDER_ID, kind: "webhook", bindings: len(by_id.keys())}
-}
-
-/**
- * Clear connector lifecycle state. Cached installation tokens persist
- * across restarts so subsequent runs can refresh them lazily. Call
- * `reset_token_cache(harness.runtime)` explicitly to invalidate the persistent cache.
- */
-pub fn shutdown(_harness: Harness) {
-  GITHUB_STATE = {initialized: false, active: false, bindings: {}, ctx: {}}
-  return {provider: GITHUB_PROVIDER_ID, active: false}
-}
-
-@complexity(allow)
-/** Verify and normalize a raw GitHub webhook request into NormalizeResult v1. */
-pub fn normalize_inbound(harness: Harness, raw) {
-  const body_text = raw?.body_text ?? raw?.body ?? ""
-  if len(body_text) > MAX_BODY_BYTES {
-    return __reject(413, "payload_too_large", "github webhook body exceeds 1 MiB cap")
-  }
-  const headers = raw?.headers ?? {}
-  const verified = __verify_github_signature(harness.secrets, raw, headers, body_text)
-  if is_err(verified) {
-    return __reject_err(unwrap_err(verified))
-  }
-  const signature_status = unwrap(verified)
-  const parsed = try {
-    json_parse(body_text)
-  }
-  if is_err(parsed) {
-    return __reject(400, "invalid_json", "github payload body is not valid JSON")
-  }
-  const payload = unwrap(parsed)
-  const event_kind = __event_kind(raw, headers)
-  if event_kind == nil || event_kind == "" {
-    return __reject(400, "missing_event", "missing x-github-event header")
-  }
-  if !contains(GITHUB_WEBHOOK_EVENTS, event_kind) {
-    return __reject(
-      400,
-      "unsupported_event",
-      "unsupported GitHub event type `" + to_string(event_kind) + "`",
-    )
-  }
-  const event = __build_event(event_kind, payload, raw, headers, signature_status)
-  return {type: "event", event: event}
-}
 
 @complexity(allow)
 /** Dispatch a supported GitHub method through one explicit Result boundary. */
@@ -361,7 +206,7 @@ pub fn call_typed<T>(
   if schema_is(value, schema) {
     return Ok(value)
   }
-  return __err(
+  return connector_error(
     "invalid_response",
     "github connector method `" + method + "` did not match its declared success contract",
   )
@@ -370,7 +215,7 @@ pub fn call_typed<T>(
 @complexity(allow)
 fn __call_raw(harness: Harness, method, args = {}) {
   if !contains(GITHUB_OUTBOUND_METHODS, method) {
-    return __err(
+    return connector_error(
       "method_not_found",
       "github connector does not implement outbound method `" + method + "`",
     )
@@ -763,7 +608,10 @@ fn __call_raw(harness: Harness, method, args = {}) {
     return graph
   }
   if graph?.errors != nil && len(graph.errors) > 0 {
-    return __err("graphql", "github GraphQL returned errors: " + json_stringify(graph.errors))
+    return connector_error(
+      "graphql",
+      "github GraphQL returned errors: " + json_stringify(graph.errors),
+    )
   }
   return graph
 }
@@ -884,7 +732,10 @@ pub fn github_create_signed_commit(
   return Ok(receipt)
 }
 
-/** Dispatch a workflow_dispatch workflow and request run details when GitHub supports them. */
+/**
+ * Dispatch a workflow_dispatch workflow and request run details when GitHub
+ * supports them.
+ */
 pub fn actions_workflow_dispatch(
   harness: Harness,
   owner,
@@ -950,7 +801,7 @@ pub fn actions_runner_registration_token(harness: Harness, scope, options = nil)
 }
 
 /**
- * Generate an ephemeral just-in-time runner config (the modern stateless,
+ * Generate a temporary just-in-time runner config (the stateless,
  * single-use registration path). `scope` is `{org}` or `{owner, repo}`; the
  * body carries `{name, runner_group_id, labels[], work_folder?}`. Requires
  * `administration:write` (repo) or `organization_self_hosted_runners:write` (org).
@@ -1028,16 +879,6 @@ pub fn oauth_user_refresh(harness: Harness, client_id, refresh_token, options = 
     "oauth.user.refresh",
     opts + {client_id: client_id, refresh_token: refresh_token},
   )
-}
-
-/**
- * Extract `@handle command args...` mentions from a free-text body using pure
- * string scanning (CPU-only, no network). Returns a list of
- * `{handle, command, rest}` candidates. Mirrors the `mention.candidates`
- * surfaced on normalized issue/PR/comment payloads.
- */
-pub fn github_extract_mentions(body) {
-  return __extract_mention_candidates(body)
 }
 
 /** Read a repository file as decoded UTF-8 text at an optional ref. */
@@ -1122,7 +963,8 @@ pub fn github_release_edit_body(
 }
 
 /**
- * List release assets as a stable automation envelope. Defaults to latest release when no id is supplied.
+ * List release assets as a stable automation envelope. Defaults to the latest
+ * release when no id is supplied.
  */
 pub fn github_release_assets(harness: Harness, owner, repo, release_id = nil, options = nil) {
   const opts = options ?? {}
@@ -1203,7 +1045,10 @@ pub fn github_dispatch_workflow_and_resolve_run(
   const dispatch_run_id = __extract_dispatch_run_id(unwrap(dispatch))
   if dispatch_run_id == nil {
     const error = unwrap_err(
-      __err("dispatch_identity_missing", "workflow dispatch response omitted workflow_run_id"),
+      connector_error(
+        "dispatch_identity_missing",
+        "workflow dispatch response omitted workflow_run_id",
+      ),
     )
     return __workflow_wait_envelope(
       false,
@@ -2037,7 +1882,10 @@ fn __github_pr_list(harness: Harness, args, cfg) {
   let filters = (args?.filters ?? args ?? {}) + {}
   const requested_state = lowercase(to_string(filters.state ?? "open"))
   if !["open", "closed", "all", "merged"].contains(requested_state) {
-    return __err("schema_drift", "github.pr.list state must be open, closed, all, or merged")
+    return connector_error(
+      "schema_drift",
+      "github.pr.list state must be open, closed, all, or merged",
+    )
   }
   filters["state"] = if requested_state == "merged" {
     "closed"
@@ -2062,7 +1910,10 @@ fn __github_pr_list(harness: Harness, args, cfg) {
     return pulls
   }
   if type_of(pulls) != "list" {
-    return __err("invalid_response", "github.pr.list expected GitHub to return a pull-request list")
+    return connector_error(
+      "invalid_response",
+      "github.pr.list expected GitHub to return a pull-request list",
+    )
   }
   let typed = []
   for pull in pulls {
@@ -2089,7 +1940,10 @@ fn __github_pr_create(harness: Harness, args, cfg) {
     to_string(args?.base ?? ""),
   )
     == "" {
-    return __err("schema_drift", "github.pr.create requires non-empty title, head, and base")
+    return connector_error(
+      "schema_drift",
+      "github.pr.create requires non-empty title, head, and base",
+    )
   }
   let request = {
     owner: r.owner,
@@ -2132,7 +1986,10 @@ fn __github_pr_view(harness: Harness, args, cfg) {
   const r = unwrap(repo)
   const number = args?.pr_number ?? args?.number ?? args?.pull_number
   if number == nil {
-    return __err("schema_drift", "github.pr.view requires number, pr_number, or pull_number")
+    return connector_error(
+      "schema_drift",
+      "github.pr.view requires number, pr_number, or pull_number",
+    )
   }
   const pull = __github_json(
     harness,
@@ -2189,7 +2046,10 @@ fn __github_pr_edit(harness: Harness, args, cfg) {
   const r = unwrap(repo)
   const number = args?.pr_number ?? args?.number ?? args?.pull_number
   if number == nil {
-    return __err("schema_drift", "github.pr.edit requires number, pr_number, or pull_number")
+    return connector_error(
+      "schema_drift",
+      "github.pr.edit requires number, pr_number, or pull_number",
+    )
   }
   const updated = __pulls_update(
     harness,
@@ -2210,7 +2070,10 @@ fn __github_pr_files(harness: Harness, args, cfg) {
   const r = unwrap(repo)
   const number = args?.pr_number ?? args?.number ?? args?.pull_number
   if number == nil {
-    return __err("schema_drift", "github.pr.files requires number, pr_number, or pull_number")
+    return connector_error(
+      "schema_drift",
+      "github.pr.files requires number, pr_number, or pull_number",
+    )
   }
   const files = __github_json(
     harness,
@@ -2229,7 +2092,10 @@ fn __github_pr_files(harness: Harness, args, cfg) {
     return files
   }
   if type_of(files) != "list" {
-    return __err("invalid_response", "github.pr.files expected GitHub to return a file list")
+    return connector_error(
+      "invalid_response",
+      "github.pr.files expected GitHub to return a file list",
+    )
   }
   let normalized = []
   for file in files {
@@ -2264,7 +2130,10 @@ fn __github_pr_commits(harness: Harness, args, cfg) {
   const r = unwrap(repo)
   const number = __positive_decimal(args?.pr_number ?? args?.number ?? args?.pull_number, nil)
   if number == nil {
-    return __err("schema_drift", "github.pr.commits requires a positive pull-request number")
+    return connector_error(
+      "schema_drift",
+      "github.pr.commits requires a positive pull-request number",
+    )
   }
   const per_page = if args?.per_page == nil {
     100
@@ -2272,7 +2141,10 @@ fn __github_pr_commits(harness: Harness, args, cfg) {
     __positive_decimal(args.per_page, 100)
   }
   if per_page == nil {
-    return __err("schema_drift", "github.pr.commits per_page must be an integer from 1 to 100")
+    return connector_error(
+      "schema_drift",
+      "github.pr.commits per_page must be an integer from 1 to 100",
+    )
   }
   const initial = __github_pull_identity(harness, r, number, cfg, "github.pr.commits")
   if is_err(initial) {
@@ -2282,10 +2154,13 @@ fn __github_pr_commits(harness: Harness, args, cfg) {
   const head_sha = to_string(initial_pull.head.sha)
   const expected_commit_count = __nonnegative_decimal(initial_pull?.commits)
   if expected_commit_count == nil || expected_commit_count == 0 {
-    return __err("invalid_response", "github.pr.commits response omitted a positive commit count")
+    return connector_error(
+      "invalid_response",
+      "github.pr.commits response omitted a positive commit count",
+    )
   }
   if expected_commit_count > 250 {
-    return __err(
+    return connector_error(
       "invalid_response",
       "github.pr.commits cannot prove completeness above GitHub's 250-commit pull-request limit",
     )
@@ -2302,7 +2177,10 @@ fn __github_pr_commits(harness: Harness, args, cfg) {
   const commits: list<GithubPullRequestCommit> = page_result.commits
   const terminal_commit = commits[len(commits) - 1]
   if terminal_commit == nil {
-    return __err("invalid_response", "github.pr.commits could not resolve the terminal commit")
+    return connector_error(
+      "invalid_response",
+      "github.pr.commits could not resolve the terminal commit",
+    )
   }
   const terminal_sha = terminal_commit.sha
   if terminal_sha != head_sha {
@@ -2318,7 +2196,7 @@ fn __github_pr_commits(harness: Harness, args, cfg) {
   }
   const observed_commit_count = __nonnegative_decimal(unwrap(final)?.commits)
   if observed_commit_count != expected_commit_count {
-    return __err(
+    return connector_error(
       "stale_head",
       "pull request commit count changed while reading canonical evidence",
       {
@@ -2365,7 +2243,10 @@ fn __github_pr_commit_pages(harness: Harness, repo, number, expected_commit_coun
       return raw_page
     }
     if type_of(raw_page) != "list" {
-      return __err("invalid_response", "github.pr.commits expected GitHub to return a commit list")
+      return connector_error(
+        "invalid_response",
+        "github.pr.commits expected GitHub to return a commit list",
+      )
     }
     for raw_commit in raw_page {
       const typed = __typed_pull_request_commit(repo.full_name, raw_commit)
@@ -2374,7 +2255,7 @@ fn __github_pr_commit_pages(harness: Harness, repo, number, expected_commit_coun
       }
       const commit = unwrap(typed)
       if seen_shas.get(commit.sha) {
-        return __err(
+        return connector_error(
           "invalid_response",
           "github.pr.commits returned a duplicate commit across pages",
         )
@@ -2386,18 +2267,24 @@ fn __github_pr_commit_pages(harness: Harness, repo, number, expected_commit_coun
       break
     }
     if len(commits) > expected_commit_count || len(raw_page) < per_page {
-      return __err(
+      return connector_error(
         "invalid_response",
         "github.pr.commits pagination did not match the pull-request commit count",
       )
     }
     if page == MAX_PULL_REQUEST_COMMIT_PAGES {
-      return __err("invalid_response", "github.pr.commits exceeded the bounded pagination limit")
+      return connector_error(
+        "invalid_response",
+        "github.pr.commits exceeded the bounded pagination limit",
+      )
     }
     page = page + 1
   }
   if len(commits) == 0 {
-    return __err("invalid_response", "github.pr.commits returned no commits for the pull request")
+    return connector_error(
+      "invalid_response",
+      "github.pr.commits returned no commits for the pull request",
+    )
   }
   return Ok({commits: commits, pages_fetched: page})
 }
@@ -2443,7 +2330,7 @@ fn __github_pr_checks(harness: Harness, args, cfg) {
     head_sha = fetched?.head?.sha
   }
   if head_sha == nil || trim(to_string(head_sha)) == "" {
-    return __err(
+    return connector_error(
       "schema_drift",
       "github.pr.checks requires pr_number, number, pull_number, head_sha, or sha",
     )
@@ -2484,7 +2371,10 @@ fn __github_pr_merge(harness: Harness, args, cfg) {
   const r = unwrap(repo)
   const number = args?.pr_number ?? args?.number ?? args?.pull_number
   if number == nil {
-    return __err("schema_drift", "github.pr.merge requires number, pr_number, or pull_number")
+    return connector_error(
+      "schema_drift",
+      "github.pr.merge requires number, pr_number, or pull_number",
+    )
   }
   const method = args?.method ?? args?.merge_method ?? args?.options?.merge_method ?? "merge"
   const options = args?.options ?? {}
@@ -2499,7 +2389,7 @@ fn __github_pr_merge(harness: Harness, args, cfg) {
     const err = unwrap_err(merged)
     if err?.category == "branch_protection"
       || err?.code == "protected_branch_requires_admin_override" {
-      return __err("branch_protection", err?.message ?? "branch protection blocked merge")
+      return connector_error("branch_protection", err?.message ?? "branch protection blocked merge")
     }
     return merged
   }
@@ -2515,7 +2405,7 @@ fn __github_pr_enable_auto_merge(harness: Harness, args, cfg) {
   const r = unwrap(repo)
   const number = args?.pr_number ?? args?.number ?? args?.pull_number
   if number == nil {
-    return __err(
+    return connector_error(
       "schema_drift",
       "github.pr.enable_auto_merge requires number, pr_number, or pull_number",
     )
@@ -2535,7 +2425,7 @@ fn __github_actions_workflow_dispatch(harness: Harness, args, cfg) {
   const r = unwrap(repo)
   const workflow_id = args?.workflow_id ?? args?.workflow ?? args?.workflow_file
   if workflow_id == nil || trim(to_string(workflow_id)) == "" {
-    return __err(
+    return connector_error(
       "schema_drift",
       "github.actions.workflow_dispatch requires workflow_id, workflow, or workflow_file",
     )
@@ -2579,10 +2469,13 @@ fn __github_actions_runs(harness: Harness, args, cfg) {
     __positive_decimal(args.page, nil)
   }
   if per_page == nil {
-    return __err("schema_drift", "github.actions.runs per_page must be an integer from 1 to 100")
+    return connector_error(
+      "schema_drift",
+      "github.actions.runs per_page must be an integer from 1 to 100",
+    )
   }
   if page == nil {
-    return __err("schema_drift", "github.actions.runs page must be a positive integer")
+    return connector_error("schema_drift", "github.actions.runs page must be a positive integer")
   }
   const response = __actions_workflow_runs_list(harness, args + {owner: r.owner, repo: r.name}, cfg)
   if is_err(response) {
@@ -2591,11 +2484,17 @@ fn __github_actions_runs(harness: Harness, args, cfg) {
   if type_of(response) != "dict" || response?.total_count == nil
     || type_of(response?.workflow_runs)
     != "list" {
-    return __err("invalid_response", "github.actions.runs expected total_count and workflow_runs")
+    return connector_error(
+      "invalid_response",
+      "github.actions.runs expected total_count and workflow_runs",
+    )
   }
   const total_count = __nonnegative_decimal(response.total_count)
   if total_count == nil {
-    return __err("invalid_response", "github.actions.runs expected a non-negative total_count")
+    return connector_error(
+      "invalid_response",
+      "github.actions.runs expected a non-negative total_count",
+    )
   }
   let runs: list<GithubWorkflowRun> = []
   for run in response.workflow_runs {
@@ -2649,7 +2548,10 @@ fn __github_actions_run_jobs(harness: Harness, args, cfg) {
     return response
   }
   if type_of(response?.jobs) != "list" || response?.total_count == nil {
-    return __err("invalid_response", "github.actions.run_jobs expected total_count and jobs")
+    return connector_error(
+      "invalid_response",
+      "github.actions.run_jobs expected total_count and jobs",
+    )
   }
   let jobs = []
   for job in response.jobs {
@@ -2685,7 +2587,7 @@ fn __github_actions_run_cancel(harness: Harness, args, cfg) {
   const r = unwrap(repo)
   const run_id = __actions_run_id(args?.run_id)
   if run_id == nil {
-    return __err("schema_drift", "github.actions.run_cancel requires a positive run_id")
+    return connector_error("schema_drift", "github.actions.run_cancel requires a positive run_id")
   }
   const cancelled = __actions_workflow_run_cancel(
     harness,
@@ -2730,7 +2632,7 @@ fn __github_actions_logs(harness: Harness, args, cfg) {
     run_id = __extract_actions_run_id(check_run?.details_url ?? check_run?.html_url)
   }
   if run_id == nil || trim(to_string(run_id)) == "" {
-    return __err(
+    return connector_error(
       "schema_drift",
       "github.actions.logs requires run_id or a check_id with an actions run URL",
     )
@@ -2784,11 +2686,11 @@ fn __github_release_view(harness: Harness, args, cfg) {
   const r = unwrap(repo)
   const raw_tag = args?.tag
   if raw_tag == nil {
-    return __err("schema_drift", "github.release.view requires a non-empty exact tag")
+    return connector_error("schema_drift", "github.release.view requires a non-empty exact tag")
   }
   const tag = trim(to_string(raw_tag))
   if tag == "" {
-    return __err("schema_drift", "github.release.view requires a non-empty exact tag")
+    return connector_error("schema_drift", "github.release.view requires a non-empty exact tag")
   }
   const release = __github_json(
     harness,
@@ -2842,7 +2744,7 @@ fn __github_release_edit_body(harness: Harness, args, cfg) {
   if tag == "" || args?.body == nil || expected_release_id == nil
     || expected_tag_ref_oid == ""
     || expected_tag_target_oid == "" {
-    return __err(
+    return connector_error(
       "schema_drift",
       "github.release.edit_body requires tag, body, and the complete observed release/tag lease",
     )
@@ -2856,11 +2758,11 @@ fn __github_release_edit_body(harness: Harness, args, cfg) {
     return observed
   }
   if !observed.found {
-    return __err("not_found", "release does not exist for the exact tag", {tag: tag})
+    return connector_error("not_found", "release does not exist for the exact tag", {tag: tag})
   }
   const lease = observed.lease
   if lease.release_id != expected_release_id {
-    return __err(
+    return connector_error(
       "stale_release",
       "release identity changed before metadata edit",
       {expected_release_id: expected_release_id, observed_release_id: lease.release_id},
@@ -2868,7 +2770,7 @@ fn __github_release_edit_body(harness: Harness, args, cfg) {
   }
   if lease.tag_ref_oid != expected_tag_ref_oid
     || lease.tag_target_oid != expected_tag_target_oid {
-    return __err(
+    return connector_error(
       "stale_tag",
       "tag identity changed before release metadata edit",
       {
@@ -2899,7 +2801,10 @@ fn __github_release_edit_body(harness: Harness, args, cfg) {
   }
   const release = unwrap(typed)
   if release.id != lease.release_id || release.tag_name != tag || release.body != body {
-    return __err("invalid_response", "release metadata edit response did not confirm the mutation")
+    return connector_error(
+      "invalid_response",
+      "release metadata edit response did not confirm the mutation",
+    )
   }
   return {
     repo: r.full_name,
@@ -2932,7 +2837,7 @@ fn __github_tag_lease(harness: Harness, repo, tag, cfg) {
   let target_type = lowercase(trim(to_string(ref?.object?.type ?? "")))
   if trim(to_string(ref?.ref ?? "")) != "refs/tags/" + tag || ref_oid == ""
     || target_type == "" {
-    return __err("invalid_response", "GitHub tag reference omitted exact identity")
+    return connector_error("invalid_response", "GitHub tag reference omitted exact identity")
   }
   let depth = 0
   while target_type == "tag" && depth < 16 {
@@ -2952,12 +2857,15 @@ fn __github_tag_lease(harness: Harness, repo, tag, cfg) {
     target_oid = trim(to_string(object?.object?.sha ?? ""))
     target_type = lowercase(trim(to_string(object?.object?.type ?? "")))
     if target_oid == "" || target_type == "" {
-      return __err("invalid_response", "GitHub annotated tag omitted its target identity")
+      return connector_error("invalid_response", "GitHub annotated tag omitted its target identity")
     }
     depth = depth + 1
   }
   if target_type == "tag" {
-    return __err("invalid_response", "GitHub annotated tag chain exceeded the safety limit")
+    return connector_error(
+      "invalid_response",
+      "GitHub annotated tag chain exceeded the safety limit",
+    )
   }
   return Ok({tag_ref_oid: ref_oid, tag_target_oid: target_oid, tag_target_type: target_type})
 }
@@ -2971,7 +2879,10 @@ fn __github_file_view(harness: Harness, args, cfg) {
   const path = __trim_leading_slash(args?.path ?? "")
   const ref = trim(to_string(args?.ref ?? ""))
   if path == "" || ref == "" {
-    return __err("schema_drift", "github.file.view requires a non-empty path and exact ref")
+    return connector_error(
+      "schema_drift",
+      "github.file.view requires a non-empty path and exact ref",
+    )
   }
   const content = __github_json(
     harness,
@@ -3009,7 +2920,7 @@ fn __github_commit_signature(harness: Harness, args, cfg) {
   const r = unwrap(repo)
   const ref = trim(to_string(args?.sha ?? args?.ref ?? ""))
   if ref == "" {
-    return __err("schema_drift", "github.commit.signature requires sha or ref")
+    return connector_error("schema_drift", "github.commit.signature requires sha or ref")
   }
   const commit = __github_json(
     harness,
@@ -3038,7 +2949,7 @@ fn __typed_commit_signature(repo, commit, surface) {
     != "dict"
     || type_of(verification?.verified) != "bool"
     || trim(to_string(verification?.reason ?? "")) == "" {
-    return __err("invalid_response", surface + " response omitted verification evidence")
+    return connector_error("invalid_response", surface + " response omitted verification evidence")
   }
   const result: GithubCommitSignature = {
     repo: repo,
@@ -3057,7 +2968,10 @@ fn __typed_pull_request_commit(repo, commit) {
   if type_of(commit) != "dict" || trim(to_string(commit?.sha ?? "")) == ""
     || commit?.commit?.message
     == nil {
-    return __err("invalid_response", "github.pr.commits response omitted commit sha or message")
+    return connector_error(
+      "invalid_response",
+      "github.pr.commits response omitted commit sha or message",
+    )
   }
   const signature = __typed_commit_signature(repo, commit, "github.pr.commits")
   if is_err(signature) {
@@ -3104,11 +3018,14 @@ fn __github_merge_queue_entries(harness: Harness, args, cfg) {
   const r = unwrap(repo)
   const branch = args?.branch ?? args?.base_branch ?? args?.base
   if branch == nil || trim(to_string(branch)) == "" {
-    return __err("merge_queue", "github.merge_queue.entries requires branch or base_branch")
+    return connector_error(
+      "merge_queue",
+      "github.merge_queue.entries requires branch or base_branch",
+    )
   }
   const limit = to_int(args?.limit ?? args?.per_page ?? 100)
   if limit == nil || limit < 1 || limit > 100 {
-    return __err("schema_drift", "github.merge_queue.entries limit must be from 1 to 100")
+    return connector_error("schema_drift", "github.merge_queue.entries limit must be from 1 to 100")
   }
   const response = __github_json(
     harness,
@@ -3124,14 +3041,17 @@ fn __github_merge_queue_entries(harness: Harness, args, cfg) {
     return response
   }
   if response?.errors != nil && len(response.errors) > 0 {
-    return __err(
+    return connector_error(
       "graphql",
       "github merge queue query returned errors: " + json_stringify(response.errors),
     )
   }
   const repository = response?.data?.repository
   if type_of(repository) != "dict" {
-    return __err("invalid_response", "github merge queue response omitted repository evidence")
+    return connector_error(
+      "invalid_response",
+      "github merge queue response omitted repository evidence",
+    )
   }
   const queue = repository?.mergeQueue
   if queue == nil {
@@ -3146,7 +3066,7 @@ fn __github_merge_queue_entries(harness: Harness, args, cfg) {
   }
   const nodes = queue?.entries?.nodes
   if type_of(nodes) != "list" {
-    return __err("invalid_response", "github merge queue response omitted entries.nodes")
+    return connector_error("invalid_response", "github merge queue response omitted entries.nodes")
   }
   let entries: list<GithubMergeQueueEntry> = []
   for entry in nodes {
@@ -3174,7 +3094,7 @@ fn __github_merge_queue_membership(harness: Harness, args, cfg) {
   const r = unwrap(repo)
   const number = args?.pr_number ?? args?.number ?? args?.pull_number
   if number == nil {
-    return __err(
+    return connector_error(
       "schema_drift",
       "github.merge_queue.membership requires pr_number, number, or pull_number",
     )
@@ -3213,14 +3133,14 @@ fn __github_merge_queue_membership(harness: Harness, args, cfg) {
     return response
   }
   if response?.errors != nil && len(response.errors) > 0 {
-    return __err(
+    return connector_error(
       "graphql",
       "github merge queue membership returned errors: " + json_stringify(response.errors),
     )
   }
   const node = response?.data?.repository?.pullRequest
   if node?.number == nil || to_int(node.number) != to_int(number) {
-    return __err(
+    return connector_error(
       "invalid_response",
       "github merge queue membership omitted the requested pull request",
     )
@@ -3253,14 +3173,14 @@ fn __github_merge_queue_enqueue(harness: Harness, args, cfg) {
   const r = unwrap(repo)
   const number = args?.pr_number ?? args?.number ?? args?.pull_number
   if number == nil {
-    return __err(
+    return connector_error(
       "merge_queue",
       "github.merge_queue.enqueue requires pr_number, number, or pull_number",
     )
   }
   const expected_head_oid = trim(to_string(args?.expected_head_oid ?? args?.expectedHeadOid ?? ""))
   if expected_head_oid == "" {
-    return __err("schema_drift", "github.merge_queue.enqueue requires expected_head_oid")
+    return connector_error("schema_drift", "github.merge_queue.enqueue requires expected_head_oid")
   }
   const pull = __github_json(
     harness,
@@ -3280,14 +3200,14 @@ fn __github_merge_queue_enqueue(harness: Harness, args, cfg) {
     return valid
   }
   if to_string(pull?.head?.sha ?? "") != expected_head_oid {
-    return __err(
+    return connector_error(
       "stale_head",
       "pull request head no longer matches expected_head_oid",
       {expected_head_oid: expected_head_oid, observed_head_oid: pull?.head?.sha},
     )
   }
   if trim(to_string(pull?.node_id ?? "")) == "" {
-    return __err(
+    return connector_error(
       "invalid_response",
       "github.merge_queue.enqueue response omitted pull request node_id",
     )
@@ -3313,12 +3233,12 @@ fn __github_merge_queue_enqueue(harness: Harness, args, cfg) {
   }
   if response?.errors != nil && len(response.errors) > 0 {
     if __graphql_errors_indicate_stale_head(response.errors) {
-      return __err(
+      return connector_error(
         "stale_head",
         "GitHub rejected merge queue enqueue because the pull request head changed",
       )
     }
-    return __err(
+    return connector_error(
       "graphql",
       "github merge queue enqueue returned errors: " + json_stringify(response.errors),
     )
@@ -3362,13 +3282,13 @@ fn __github_issue_comment(harness: Harness, args, cfg) {
   const r = unwrap(repo)
   const number = args?.issue_number ?? args?.number ?? args?.pr_number ?? args?.pull_number
   if number == nil {
-    return __err(
+    return connector_error(
       "schema_drift",
       "github issue comment helpers require issue_number, number, pr_number, or pull_number",
     )
   }
   if trim(to_string(args?.body ?? "")) == "" {
-    return __err("schema_drift", "github issue comment helpers require a non-empty body")
+    return connector_error("schema_drift", "github issue comment helpers require a non-empty body")
   }
   const comment = __github_json(
     harness,
@@ -3384,7 +3304,7 @@ fn __github_issue_comment(harness: Harness, args, cfg) {
     return comment
   }
   if comment?.id == nil || comment?.body == nil {
-    return __err("invalid_response", "github comment response omitted id or body")
+    return connector_error("invalid_response", "github comment response omitted id or body")
   }
   return {
     repo: r.full_name,
@@ -3486,7 +3406,10 @@ fn __pulls_list_with_checks(harness: Harness, args, cfg) {
   }
   const payload = graph
   if payload?.errors != nil && len(payload.errors) > 0 {
-    return __err("graphql", "github GraphQL returned errors: " + json_stringify(payload.errors))
+    return connector_error(
+      "graphql",
+      "github GraphQL returned errors: " + json_stringify(payload.errors),
+    )
   }
   const nodes = payload?.data?.repository?.pullRequests?.nodes ?? []
   let pulls = []
@@ -3523,7 +3446,7 @@ fn __pulls_merge_safe(harness: Harness, args, cfg) {
   const protection = unwrap(protection_result)
   const protected = protection != nil
   if protected && !(args?.admin_override ?? false) {
-    return __err(
+    return connector_error(
       "protected_branch_requires_admin_override",
       "base branch `" + to_string(base_branch)
         + "` is protected; pass admin_override to merge through it",
@@ -3561,7 +3484,7 @@ fn __pulls_merge_safe(harness: Harness, args, cfg) {
 fn __pulls_enable_auto_merge(harness: Harness, args, cfg) {
   const expected_head_oid = trim(to_string(args?.expected_head_oid ?? args?.expectedHeadOid ?? ""))
   if expected_head_oid == "" {
-    return __err(
+    return connector_error(
       "schema_drift",
       "github.pr.enable_auto_merge requires expected_head_oid as an explicit publication lease",
     )
@@ -3585,7 +3508,7 @@ fn __pulls_enable_auto_merge(harness: Harness, args, cfg) {
   }
   const observed_head_oid = trim(to_string(pull?.head?.sha ?? ""))
   if observed_head_oid != expected_head_oid {
-    return __err(
+    return connector_error(
       "stale_head",
       "pull request head no longer matches expected_head_oid",
       {expected_head_oid: expected_head_oid, observed_head_oid: observed_head_oid},
@@ -3609,7 +3532,10 @@ fn __pulls_enable_auto_merge(harness: Harness, args, cfg) {
   }
   const node_id = pull?.node_id
   if node_id == nil || trim(to_string(node_id)) == "" {
-    return __err("schema_drift", "GitHub PR response did not include node_id for auto-merge")
+    return connector_error(
+      "schema_drift",
+      "GitHub PR response did not include node_id for auto-merge",
+    )
   }
   const graph = __github_json(
     harness,
@@ -3632,18 +3558,24 @@ fn __pulls_enable_auto_merge(harness: Harness, args, cfg) {
   }
   if graph?.errors != nil && len(graph.errors) > 0 {
     if __graphql_errors_indicate_stale_head(graph.errors) {
-      return __err(
+      return connector_error(
         "stale_head",
         "GitHub rejected auto-merge because the pull request head changed",
         {expected_head_oid: expected_head_oid, observed_head_oid: observed_head_oid},
       )
     }
-    return __err("graphql", "github GraphQL returned errors: " + json_stringify(graph.errors))
+    return connector_error(
+      "graphql",
+      "github GraphQL returned errors: " + json_stringify(graph.errors),
+    )
   }
   const enabled = graph?.data?.enablePullRequestAutoMerge
   const enabled_pull = enabled?.pullRequest
   if enabled_pull?.number == nil || enabled_pull?.autoMergeRequest == nil {
-    return __err("invalid_response", "GitHub auto-merge response omitted pull request evidence")
+    return connector_error(
+      "invalid_response",
+      "GitHub auto-merge response omitted pull request evidence",
+    )
   }
   return {
     repo: to_string(args.owner) + "/" + to_string(args.repo),
@@ -3676,14 +3608,14 @@ fn __repos_get_text(harness: Harness, args, cfg) {
     return content
   }
   if type_of(content) == "list" {
-    return __err(
+    return connector_error(
       "schema_drift",
       "repos.get_text requires a file path, but GitHub returned a directory listing",
     )
   }
   const encoding = lowercase(content?.encoding ?? "")
   if encoding != "base64" {
-    return __err(
+    return connector_error(
       "invalid_response",
       "repos.get_text only supports base64-encoded GitHub file content",
     )
@@ -3693,7 +3625,10 @@ fn __repos_get_text(harness: Harness, args, cfg) {
     base64_decode(encoded)
   }
   if is_err(decoded) {
-    return __err("invalid_response", "repos.get_text could not decode base64 file content")
+    return connector_error(
+      "invalid_response",
+      "repos.get_text could not decode base64 file content",
+    )
   }
   return {
     name: content?.name,
@@ -3727,7 +3662,7 @@ fn __repos_get_latest_release(harness: Harness, args, cfg) {
 fn __repos_list_release_assets(harness: Harness, args, cfg) {
   const release_id = args?.release_id ?? args?.id
   if release_id == nil || trim(to_string(release_id)) == "" {
-    return __err("schema_drift", "repos.list_release_assets requires release_id or id")
+    return connector_error("schema_drift", "repos.list_release_assets requires release_id or id")
   }
   return __github_json(
     harness,
@@ -3743,168 +3678,12 @@ fn __repos_list_release_assets(harness: Harness, args, cfg) {
   )
 }
 
-fn __actions_workflow_dispatch(harness: Harness, args, cfg) {
-  const workflow_id = args?.workflow_id ?? args?.workflow ?? args?.workflow_file
-  if workflow_id == nil || trim(to_string(workflow_id)) == "" {
-    return __err(
-      "schema_drift",
-      "actions.workflow_dispatch requires workflow_id, workflow, or workflow_file",
-    )
-  }
-  const ref = args?.ref ?? args?.branch ?? "main"
-  const body = {ref: ref, inputs: args?.inputs ?? {}, return_run_details: true}
-  return __github_json(
-    harness,
-    "POST",
-    __github_api_url(
-      cfg.api_base_url,
-      "/repos/" + args.owner + "/" + args.repo + "/actions/workflows/"
-        + url_encode(
-        to_string(workflow_id),
-      )
-        + "/dispatches",
-    ),
-    body,
-    cfg,
-  )
-}
-
-fn __actions_workflow_runs_list(harness: Harness, args, cfg) {
-  const workflow_id = args?.workflow_id ?? args?.workflow ?? args?.workflow_file
-  const path = if workflow_id == nil || trim(to_string(workflow_id)) == "" {
-    "/repos/" + args.owner + "/" + args.repo + "/actions/runs"
-  } else {
-    "/repos/" + args.owner + "/" + args.repo + "/actions/workflows/"
-      + url_encode(
-      to_string(workflow_id),
-    )
-      + "/runs"
-  }
-  return __github_json(
-    harness,
-    "GET",
-    __github_api_url(cfg.api_base_url, path + __workflow_runs_query(args)),
-    nil,
-    cfg,
-  )
-}
-
-fn __actions_workflow_run_get(harness: Harness, args, cfg) {
-  const run_id = __actions_run_id(args?.run_id ?? args?.id)
-  if run_id == nil {
-    return __err(
-      "schema_drift",
-      "actions.workflow_run.get requires a positive decimal run_id or id",
-    )
-  }
-  return __github_json(
-    harness,
-    "GET",
-    __github_api_url(
-      cfg.api_base_url,
-      "/repos/" + args.owner + "/" + args.repo + "/actions/runs/" + to_string(run_id),
-    ),
-    nil,
-    cfg,
-  )
-}
-
-fn __actions_workflow_run_jobs(harness: Harness, args, cfg) {
-  const run_id = __actions_run_id(args?.run_id)
-  if run_id == nil {
-    return __err("schema_drift", "actions.workflow_run.jobs requires a positive decimal run_id")
-  }
-  const filter = trim(to_string(args?.filter ?? ""))
-  if filter != "" && filter != "latest" && filter != "all" {
-    return __err("schema_drift", "actions.workflow_run.jobs filter must be latest or all")
-  }
-  if args?.per_page != nil && __positive_decimal(args.per_page, 100) == nil {
-    return __err(
-      "schema_drift",
-      "actions.workflow_run.jobs per_page must be an integer from 1 to 100",
-    )
-  }
-  if args?.page != nil && __positive_decimal(args.page, nil) == nil {
-    return __err("schema_drift", "actions.workflow_run.jobs page must be a positive integer")
-  }
-  return __github_json(
-    harness,
-    "GET",
-    __github_api_url(
-      cfg.api_base_url,
-      "/repos/" + args.owner + "/" + args.repo + "/actions/runs/" + to_string(run_id) + "/jobs"
-        + __workflow_run_jobs_query(
-        args,
-      ),
-    ),
-    nil,
-    cfg,
-  )
-}
-
-fn __actions_workflow_run_cancel(harness: Harness, args, cfg) {
-  const run_id = __actions_run_id(args?.run_id)
-  if run_id == nil {
-    return __err("schema_drift", "actions.workflow_run.cancel requires a positive run_id")
-  }
-  return __github_json(
-    harness,
-    "POST",
-    __github_api_url(
-      cfg.api_base_url,
-      "/repos/" + args.owner + "/" + args.repo + "/actions/runs/" + to_string(run_id)
-        + "/cancel",
-    ),
-    nil,
-    cfg,
-  )
-}
-
-fn __actions_run_id(value) {
-  const raw = trim(to_string(value ?? ""))
-  if len(regex_captures("^[1-9][0-9]*$", raw)) == 0 {
-    return nil
-  }
-  return to_int(raw)
-}
-
-fn __positive_decimal(value, max_value) {
-  const parsed = __actions_run_id(value)
-  if parsed == nil || (max_value != nil && parsed > max_value) {
-    return nil
-  }
-  return parsed
-}
-
-fn __nonnegative_decimal(value) {
-  const raw = trim(to_string(value ?? ""))
-  if len(regex_captures("^[0-9]+$", raw)) == 0 {
-    return nil
-  }
-  return to_int(raw)
-}
-
 /**
  * Resolve the REST path prefix for self-hosted-runner methods that accept
  * either a repo scope (`owner` + `repo`) or an org scope (`org`). Returns
  * `Ok("/repos/{owner}/{repo}")` or `Ok("/orgs/{org}")`, or a schema_drift error
  * when neither scope is supplied.
  */
-fn __runner_scope_prefix(args) {
-  const org = args?.org
-  if org != nil && trim(to_string(org)) != "" {
-    return Ok("/orgs/" + url_encode(to_string(org)))
-  }
-  if args?.owner != nil && trim(to_string(args.owner)) != "" && args?.repo != nil
-    && trim(
-    to_string(args.repo),
-  )
-    != "" {
-    return Ok("/repos/" + to_string(args.owner) + "/" + to_string(args.repo))
-  }
-  return __err("schema_drift", "self-hosted runner methods require `org`, or `owner` + `repo`")
-}
-
 /**
  * Dispatch GitHub Actions self-hosted runner and runner-group methods.
  * Mutating methods (registration_token, remove_token, generate_jitconfig,
@@ -3913,157 +3692,8 @@ fn __runner_scope_prefix(args) {
  * `organization_self_hosted_runners:write` org permission. Read methods
  * require the matching read permission.
  */
-@complexity(allow)
-fn __actions_runners_dispatch(harness: Harness, method, args, cfg) {
-  const runner_id = args?.runner_id ?? args?.id
-  if method == "actions.runner_groups.list" || method == "actions.runner_groups.create" {
-    const org = args?.org
-    if org == nil || trim(to_string(org)) == "" {
-      return __err("schema_drift", method + " requires `org`")
-    }
-    const url = __github_api_url(
-      cfg.api_base_url,
-      "/orgs/" + url_encode(to_string(org)) + "/actions/runner-groups",
-    )
-    if method == "actions.runner_groups.create" {
-      return __github_json(
-        harness,
-        "POST",
-        url,
-        __body_without(args, __config_keys() + ["org"]),
-        cfg,
-      )
-    }
-    return __github_json(harness, "GET", url + __pagination_query(args), nil, cfg)
-  }
-  if method == "actions.runner_groups.get" || method == "actions.runner_groups.update"
-    || method
-    == "actions.runner_groups.delete" {
-    const org = args?.org
-    const group_id = args?.runner_group_id ?? args?.group_id ?? args?.id
-    if org == nil || trim(to_string(org)) == "" || group_id == nil {
-      return __err("schema_drift", method + " requires `org` and `runner_group_id`")
-    }
-    const url = __github_api_url(
-      cfg.api_base_url,
-      "/orgs/" + url_encode(to_string(org)) + "/actions/runner-groups/" + to_string(group_id),
-    )
-    if method == "actions.runner_groups.update" {
-      return __github_json(
-        harness,
-        "PATCH",
-        url,
-        __body_without(args, __config_keys() + ["org", "runner_group_id", "group_id", "id"]),
-        cfg,
-      )
-    }
-    if method == "actions.runner_groups.delete" {
-      return __github_json(harness, "DELETE", url, nil, cfg)
-    }
-    return __github_json(harness, "GET", url, nil, cfg)
-  }
-  const prefix = __runner_scope_prefix(args)
-  if is_err(prefix) {
-    return prefix
-  }
-  const base = unwrap(prefix) + "/actions/runners"
-  if method == "actions.runners.registration_token" {
-    return __github_json(
-      harness,
-      "POST",
-      __github_api_url(cfg.api_base_url, base + "/registration-token"),
-      nil,
-      cfg,
-    )
-  }
-  if method == "actions.runners.remove_token" {
-    return __github_json(
-      harness,
-      "POST",
-      __github_api_url(cfg.api_base_url, base + "/remove-token"),
-      nil,
-      cfg,
-    )
-  }
-  if method == "actions.runners.generate_jitconfig" {
-    if args?.name == nil || trim(to_string(args.name)) == "" {
-      return __err("schema_drift", "actions.runners.generate_jitconfig requires `name`")
-    }
-    return __github_json(
-      harness,
-      "POST",
-      __github_api_url(cfg.api_base_url, base + "/generate-jitconfig"),
-      __runner_jitconfig_body(args),
-      cfg,
-    )
-  }
-  if method == "actions.runners.downloads" {
-    return __github_json(
-      harness,
-      "GET",
-      __github_api_url(cfg.api_base_url, base + "/downloads"),
-      nil,
-      cfg,
-    )
-  }
-  if method == "actions.runners.list" {
-    return __github_json(
-      harness,
-      "GET",
-      __github_api_url(cfg.api_base_url, base + __pagination_query(args)),
-      nil,
-      cfg,
-    )
-  }
-  if method == "actions.runners.get" || method == "actions.runners.delete" {
-    if runner_id == nil {
-      return __err("schema_drift", method + " requires `runner_id`")
-    }
-    const url = __github_api_url(cfg.api_base_url, base + "/" + to_string(runner_id))
-    if method == "actions.runners.delete" {
-      return __github_json(harness, "DELETE", url, nil, cfg)
-    }
-    return __github_json(harness, "GET", url, nil, cfg)
-  }
-  if starts_with(method, "actions.runners.labels.") {
-    if runner_id == nil {
-      return __err("schema_drift", method + " requires `runner_id`")
-    }
-    const url = __github_api_url(cfg.api_base_url, base + "/" + to_string(runner_id) + "/labels")
-    if method == "actions.runners.labels.list" {
-      return __github_json(harness, "GET", url, nil, cfg)
-    }
-    if method == "actions.runners.labels.add" {
-      return __github_json(harness, "POST", url, {labels: args?.labels ?? []}, cfg)
-    }
-    if method == "actions.runners.labels.replace" {
-      return __github_json(harness, "PUT", url, {labels: args?.labels ?? []}, cfg)
-    }
-    if method == "actions.runners.labels.remove" {
-      const label = args?.name ?? args?.label
-      if label != nil && trim(to_string(label)) != "" {
-        return __github_json(harness, "DELETE", url + "/" + url_encode(to_string(label)), nil, cfg)
-      }
-      return __github_json(harness, "DELETE", url, nil, cfg)
-    }
-  }
-  return __err("method_not_found", "unsupported runner method `" + method + "`")
-}
-
-fn __runner_jitconfig_body(args) {
-  let body = {
-    name: to_string(args?.name),
-    runner_group_id: args?.runner_group_id ?? 1,
-    labels: args?.labels ?? [],
-  }
-  if args?.work_folder != nil {
-    body["work_folder"] = args.work_folder
-  }
-  return body
-}
-
 /**
- * GET /repos/{owner}/{repo}/commits/{sha}/pulls — list pull requests that
+ * GET /repos/{owner}/{repo}/commits/{sha}/pulls lists pull requests that
  * contain the given commit. Used to recover the PR for `status` events and
  * fork pushes whose webhook `pull_requests[]` array is empty.
  */
@@ -4075,7 +3705,7 @@ fn __repos_commit_pulls(harness: Harness, args, cfg) {
   const r = unwrap(repo)
   const sha = args?.sha ?? args?.commit_sha
   if sha == nil || trim(to_string(sha)) == "" {
-    return __err("schema_drift", "repos.commit_pulls requires `sha`")
+    return connector_error("schema_drift", "repos.commit_pulls requires `sha`")
   }
   return __github_json(
     harness,
@@ -4187,7 +3817,7 @@ fn __mergeable_envelope(ok, mergeable, mergeable_state, attempts, resolved, raw,
 pub fn github_resolve_pr_for_sha(harness: Harness, owner, repo, sha, options = nil) {
   const opts = options ?? {}
   const payload_prs = opts?.pull_requests ?? []
-  const from_payload = __first(payload_prs)
+  const from_payload = first_or_nil(payload_prs)
   if from_payload != nil && from_payload?.number != nil {
     return {
       ok: true,
@@ -4214,7 +3844,7 @@ pub fn github_resolve_pr_for_sha(harness: Harness, owner, repo, sha, options = n
       error: unwrap_err(pulls),
     }
   }
-  const first = __first(pulls)
+  const first = first_or_nil(pulls)
   if first == nil || first?.number == nil {
     return {
       ok: true,
@@ -4273,7 +3903,7 @@ const GITHUB_OAUTH_BASE_URL = "https://github.com"
 fn __oauth_user_dispatch(harness: Harness, method, args) {
   const client_id = args?.client_id ?? harness.env.get("GITHUB_OAUTH_CLIENT_ID")
   if client_id == nil || trim(to_string(client_id)) == "" {
-    return __err("schema_drift", method + " requires `client_id`")
+    return connector_error("schema_drift", method + " requires `client_id`")
   }
   const base = args?.oauth_base_url ?? GITHUB_OAUTH_BASE_URL
   if method == "oauth.user.device_code" {
@@ -4292,7 +3922,7 @@ fn __oauth_user_dispatch(harness: Harness, method, args) {
   if method == "oauth.user.device_poll" {
     const device_code = args?.device_code
     if device_code == nil || trim(to_string(device_code)) == "" {
-      return __err("schema_drift", "oauth.user.device_poll requires `device_code`")
+      return connector_error("schema_drift", "oauth.user.device_poll requires `device_code`")
     }
     return __oauth_post(
       harness.clock,
@@ -4309,7 +3939,7 @@ fn __oauth_user_dispatch(harness: Harness, method, args) {
   if method == "oauth.user.exchange_code" {
     const code = args?.code
     if code == nil || trim(to_string(code)) == "" {
-      return __err("schema_drift", "oauth.user.exchange_code requires `code`")
+      return connector_error("schema_drift", "oauth.user.exchange_code requires `code`")
     }
     let body = {client_id: to_string(client_id), code: to_string(code)}
     if args?.client_secret != nil {
@@ -4329,7 +3959,7 @@ fn __oauth_user_dispatch(harness: Harness, method, args) {
   if method == "oauth.user.refresh" {
     const refresh_token = args?.refresh_token
     if refresh_token == nil || trim(to_string(refresh_token)) == "" {
-      return __err("schema_drift", "oauth.user.refresh requires `refresh_token`")
+      return connector_error("schema_drift", "oauth.user.refresh requires `refresh_token`")
     }
     let body = {
       client_id: to_string(client_id),
@@ -4347,7 +3977,7 @@ fn __oauth_user_dispatch(harness: Harness, method, args) {
       args,
     )
   }
-  return __err("method_not_found", "unsupported oauth method `" + method + "`")
+  return connector_error("method_not_found", "unsupported oauth method `" + method + "`")
 }
 
 fn __oauth_post(clock: HarnessClock, net: HarnessNet, url, body, args) {
@@ -4369,10 +3999,13 @@ fn __oauth_post(clock: HarnessClock, net: HarnessNet, url, body, args) {
     },
   )
   if !(response.ok ?? false) {
-    if response?.status == nil || to_int(response?.status ?? 0) == 0 {
-      return __err("network", response?.error?.message ?? to_string(response?.error ?? response))
+    if response.status == nil || to_int(response.status ?? 0) == 0 {
+      return connector_error(
+        "network",
+        response?.error?.message ?? to_string(response?.error ?? response),
+      )
     }
-    return __err(
+    return connector_error(
       "oauth_failed",
       "github OAuth request failed with status " + to_string(response.status),
     )
@@ -4535,7 +4168,7 @@ fn __github_create_signed_commit(harness: Harness, args, cfg) {
   const expected_head_oid = trim(to_string(args?.expected_head_oid ?? args?.expectedHeadOid ?? ""))
   const headline = trim(to_string(args?.headline ?? ""))
   if owner == "" || repo == "" || branch == "" || expected_head_oid == "" || headline == "" {
-    return __err(
+    return connector_error(
       "schema_drift",
       "github.branch.create_signed_commit requires owner, repo, branch, expected_head_oid, and headline",
     )
@@ -4551,7 +4184,7 @@ fn __github_create_signed_commit(harness: Harness, args, cfg) {
   }
   const deletions = unwrap(deletions_result)
   if len(additions) == 0 && len(deletions) == 0 {
-    return __err(
+    return connector_error(
       "schema_drift",
       "github.branch.create_signed_commit requires at least one file change",
     )
@@ -4559,7 +4192,7 @@ fn __github_create_signed_commit(harness: Harness, args, cfg) {
   for addition in additions {
     for deletion in deletions {
       if addition.path == deletion.path {
-        return __err(
+        return connector_error(
           "schema_drift",
           "github.branch.create_signed_commit cannot add and delete the same path `"
             + addition.path
@@ -4594,7 +4227,7 @@ fn __github_create_signed_commit(harness: Harness, args, cfg) {
     return payload
   }
   if payload?.errors != nil && len(payload.errors) != 0 {
-    return __err(
+    return connector_error(
       "graphql",
       "github createCommitOnBranch returned errors: " + json_stringify(payload.errors),
     )
@@ -4603,11 +4236,11 @@ fn __github_create_signed_commit(harness: Harness, args, cfg) {
   const commit = result?.commit
   const signature = commit?.signature
   if commit?.oid == nil || trim(to_string(commit.oid)) == "" {
-    return __err("schema_drift", "github createCommitOnBranch returned no commit oid")
+    return connector_error("schema_drift", "github createCommitOnBranch returned no commit oid")
   }
   if signature?.isValid != true || signature?.wasSignedByGitHub != true
     || signature?.state != "VALID" {
-    return __err(
+    return connector_error(
       "signature_invalid",
       "github createCommitOnBranch did not return a valid GitHub-generated signature",
     )
@@ -4630,11 +4263,17 @@ fn __github_signed_commit_additions(raw) {
     const path = trim(to_string(item?.path ?? ""))
     const raw_contents = item?.contents_base64 ?? item?.contents
     if path == "" || raw_contents == nil {
-      return __err("schema_drift", "signed commit additions require path and contents_base64")
+      return connector_error(
+        "schema_drift",
+        "signed commit additions require path and contents_base64",
+      )
     }
     const contents = trim(to_string(raw_contents))
     if seen.get(path) ?? false {
-      return __err("schema_drift", "signed commit additions contain duplicate path `" + path + "`")
+      return connector_error(
+        "schema_drift",
+        "signed commit additions contain duplicate path `" + path + "`",
+      )
     }
     seen[path] = true
     additions = additions + [{path: path, contents: contents}]
@@ -4648,10 +4287,13 @@ fn __github_signed_commit_deletions(raw) {
   for item in raw {
     const path = trim(to_string(item?.path ?? ""))
     if path == "" {
-      return __err("schema_drift", "signed commit deletions require path")
+      return connector_error("schema_drift", "signed commit deletions require path")
     }
     if seen.get(path) ?? false {
-      return __err("schema_drift", "signed commit deletions contain duplicate path `" + path + "`")
+      return connector_error(
+        "schema_drift",
+        "signed commit deletions contain duplicate path `" + path + "`",
+      )
     }
     seen[path] = true
     deletions = deletions + [{path: path}]
@@ -4688,7 +4330,7 @@ fn __graphql_merge_method(method) {
   if normalized == "MERGE" || normalized == "SQUASH" || normalized == "REBASE" {
     return Ok(normalized)
   }
-  return __err("schema_drift", "merge method must be MERGE, SQUASH, or REBASE")
+  return connector_error("schema_drift", "merge method must be MERGE, SQUASH, or REBASE")
 }
 
 fn __normalize_graphql_pr(node) {
@@ -4779,7 +4421,10 @@ fn __repo_parts(args) {
       return Ok({owner: parts[0], name: parts[1], full_name: parts[0] + "/" + parts[1]})
     }
   }
-  return __err("schema_drift", "github typed API requires repo as `owner/name` or owner + repo")
+  return connector_error(
+    "schema_drift",
+    "github typed API requires repo as `owner/name` or owner + repo",
+  )
 }
 
 fn __github_branch_protection_raw(harness: Harness, repo, branch, cfg) {
@@ -4903,7 +4548,10 @@ fn __validate_pull_response(pull, surface) {
     || trim(to_string(pull?.base?.ref ?? "")) == ""
     || trim(to_string(pull?.head?.ref ?? "")) == ""
     || trim(to_string(pull?.head?.sha ?? "")) == "" {
-    return __err("invalid_response", surface + " response omitted required pull-request fields")
+    return connector_error(
+      "invalid_response",
+      surface + " response omitted required pull-request fields",
+    )
   }
   const merge_commit_oid = __pull_merge_commit_oid(pull)
   if __pull_is_merged(pull)
@@ -4911,7 +4559,7 @@ fn __validate_pull_response(pull, surface) {
     || trim(pull.merged_at) == ""
     || merge_commit_oid == nil
     || len(regex_captures("^[0-9a-fA-F]{40}$", merge_commit_oid)) == 0) {
-    return __err(
+    return connector_error(
       "invalid_response",
       surface + " response omitted required merged pull-request evidence",
     )
@@ -4953,13 +4601,16 @@ fn __github_pull_identity(harness: Harness, repo, number, cfg, surface) {
     return valid
   }
   if to_int(pull.number) != number {
-    return __err("invalid_response", surface + " response did not match the requested pull request")
+    return connector_error(
+      "invalid_response",
+      surface + " response did not match the requested pull request",
+    )
   }
   return Ok(pull)
 }
 
 fn __stale_pr_head(expected_head_oid, observed_head_oid) {
-  return __err(
+  return connector_error(
     "stale_head",
     "pull request head changed while reading canonical evidence",
     {expected_head_oid: expected_head_oid, observed_head_oid: observed_head_oid},
@@ -4969,7 +4620,10 @@ fn __stale_pr_head(expected_head_oid, observed_head_oid) {
 fn __validate_pull_identity(pull, surface) {
   if type_of(pull) != "dict" || pull?.number == nil
     || trim(to_string(pull?.head?.sha ?? "")) == "" {
-    return __err("invalid_response", surface + " response omitted pull number or head sha")
+    return connector_error(
+      "invalid_response",
+      surface + " response omitted pull number or head sha",
+    )
   }
   return Ok(true)
 }
@@ -4984,7 +4638,10 @@ fn __typed_pr_file(file) {
     || file?.additions == nil
     || file?.deletions == nil
     || file?.changes == nil {
-    return __err("invalid_response", "github.pr.files entry omitted required file evidence")
+    return connector_error(
+      "invalid_response",
+      "github.pr.files entry omitted required file evidence",
+    )
   }
   const typed: GithubPullRequestFile = {
     sha: to_string(file.sha),
@@ -5005,12 +4662,18 @@ fn __typed_release(release) -> GithubConnectorResult<GithubRelease> {
   if type_of(release) != "dict" || release?.id == nil
     || trim(to_string(release?.tag_name ?? ""))
     == "" {
-    return __err("invalid_response", "github.release.view response omitted release id or tag")
+    return connector_error(
+      "invalid_response",
+      "github.release.view response omitted release id or tag",
+    )
   }
   let assets: list<GithubReleaseAsset> = []
   for asset in release?.assets ?? [] {
     if asset?.id == nil || trim(to_string(asset?.name ?? "")) == "" {
-      return __err("invalid_response", "github.release.view response contained a malformed asset")
+      return connector_error(
+        "invalid_response",
+        "github.release.view response contained a malformed asset",
+      )
     }
     assets = assets
       + [
@@ -5051,13 +4714,16 @@ fn __typed_repository_file(content, ref) {
     == ""
     || trim(to_string(content?.sha ?? "")) == ""
     || content?.content == nil {
-    return __err("invalid_response", "github.file.view expected one base64-encoded file")
+    return connector_error("invalid_response", "github.file.view expected one base64-encoded file")
   }
   const decoded = try {
     base64_decode(to_string(content.content).replace("\n", ""))
   }
   if is_err(decoded) {
-    return __err("invalid_response", "github.file.view could not decode GitHub file content")
+    return connector_error(
+      "invalid_response",
+      "github.file.view could not decode GitHub file content",
+    )
   }
   return Ok(
     {
@@ -5068,168 +4734,6 @@ fn __typed_repository_file(content, ref) {
       ref: ref,
       text: unwrap(decoded),
       url: to_string(content?.html_url ?? content?.url ?? ""),
-    },
-  )
-}
-
-fn __typed_workflow_dispatch(
-  repo,
-  ref,
-  resolved,
-) -> GithubConnectorResult<GithubWorkflowDispatchReceipt> {
-  if resolved?.run_id == nil || trim(to_string(resolved?.head_sha ?? "")) == ""
-    || trim(
-    to_string(resolved?.event ?? ""),
-  )
-    == ""
-    || trim(to_string(resolved?.workflow_path ?? "")) == ""
-    || trim(to_string(resolved?.run_url ?? ""))
-    == "" {
-    return __err(
-      "invalid_response",
-      "github.actions.workflow_dispatch could not prove an exact run identity",
-    )
-  }
-  const receipt: GithubWorkflowDispatchReceipt = {
-    repo: repo,
-    accepted: true,
-    run_id: to_int(resolved.run_id),
-    workflow_id: if resolved?.workflow_id == nil {
-      nil
-    } else {
-      to_string(resolved.workflow_id)
-    },
-    workflow_path: to_string(resolved.workflow_path),
-    run_attempt: if resolved?.run_attempt == nil {
-      nil
-    } else {
-      to_int(resolved.run_attempt)
-    },
-    ref: to_string(ref),
-    head_sha: to_string(resolved.head_sha),
-    head_branch: to_string(resolved?.head_branch ?? ""),
-    event: to_string(resolved.event),
-    url: to_string(resolved.run_url),
-    created_at: resolved?.created_at,
-  }
-  return Ok(receipt)
-}
-
-fn __typed_workflow_run(repo, run) {
-  const id = __actions_run_id(run?.id)
-  if type_of(run) != "dict" || id == nil || trim(to_string(run?.status ?? "")) == ""
-    || trim(
-    to_string(run?.event ?? ""),
-  )
-    == ""
-    || trim(to_string(run?.path ?? "")) == ""
-    || trim(to_string(run?.head_sha ?? "")) == "" {
-    return __err("invalid_response", "github.actions.run response omitted exact run evidence")
-  }
-  const typed: GithubWorkflowRun = {
-    repo: repo,
-    id: id,
-    workflow_id: if run?.workflow_id == nil {
-      nil
-    } else {
-      to_int(run.workflow_id)
-    },
-    workflow_path: to_string(run.path),
-    run_number: if run?.run_number == nil {
-      nil
-    } else {
-      to_int(run.run_number)
-    },
-    run_attempt: if run?.run_attempt == nil {
-      nil
-    } else {
-      to_int(run.run_attempt)
-    },
-    name: to_string(run?.name ?? ""),
-    event: to_string(run.event),
-    status: lowercase(to_string(run.status)),
-    conclusion: if run?.conclusion == nil {
-      nil
-    } else {
-      lowercase(to_string(run.conclusion))
-    },
-    head_branch: to_string(run?.head_branch ?? ""),
-    head_sha: to_string(run.head_sha),
-    url: to_string(run?.html_url ?? run?.url ?? ""),
-    created_at: if run?.created_at == nil {
-      nil
-    } else {
-      to_string(run.created_at)
-    },
-    run_started_at: if run?.run_started_at == nil {
-      nil
-    } else {
-      to_string(run.run_started_at)
-    },
-    updated_at: if run?.updated_at == nil {
-      nil
-    } else {
-      to_string(run.updated_at)
-    },
-  }
-  return Ok(typed)
-}
-
-fn __typed_workflow_job(job) -> GithubConnectorResult<GithubWorkflowJob> {
-  if type_of(job) != "dict" || job?.id == nil || job?.run_id == nil
-    || trim(
-    to_string(job?.name ?? ""),
-  )
-    == ""
-    || trim(to_string(job?.status ?? "")) == ""
-    || type_of(job?.steps ?? []) != "list" {
-    return __err("invalid_response", "github.actions.run_jobs response contained a malformed job")
-  }
-  let steps: list<GithubWorkflowStep> = []
-  for step in job?.steps ?? [] {
-    if step?.number == nil || trim(to_string(step?.name ?? "")) == ""
-      || trim(
-      to_string(step?.status ?? ""),
-    )
-      == "" {
-      return __err(
-        "invalid_response",
-        "github.actions.run_jobs response contained a malformed step",
-      )
-    }
-    steps = steps
-      + [
-      {
-        number: to_int(step.number),
-        name: to_string(step.name),
-        status: lowercase(to_string(step.status)),
-        conclusion: if step?.conclusion == nil {
-          nil
-        } else {
-          lowercase(to_string(step.conclusion))
-        },
-        started_at: step?.started_at,
-        completed_at: step?.completed_at,
-      },
-    ]
-  }
-  return Ok(
-    {
-      id: to_int(job.id),
-      run_id: to_int(job.run_id),
-      name: to_string(job.name),
-      status: lowercase(to_string(job.status)),
-      conclusion: if job?.conclusion == nil {
-        nil
-      } else {
-        lowercase(to_string(job.conclusion))
-      },
-      head_sha: to_string(job?.head_sha ?? ""),
-      url: to_string(job?.html_url ?? job?.url ?? ""),
-      runner_name: to_string(job?.runner_name ?? ""),
-      started_at: job?.started_at,
-      completed_at: job?.completed_at,
-      steps: steps,
     },
   )
 }
@@ -5401,7 +4905,7 @@ fn __typed_merge_queue_entry(entry) {
     == nil
     || entry?.position == nil
     || trim(to_string(entry?.state ?? "")) == "" {
-    return __err("invalid_response", "github merge queue entry omitted required evidence")
+    return connector_error("invalid_response", "github merge queue entry omitted required evidence")
   }
   const typed: GithubMergeQueueEntry = {
     id: to_string(entry.id),
@@ -5499,7 +5003,10 @@ fn __merge_annotation(response, args) {
 fn __delete_pull_head_branch(harness: Harness, args, pull, cfg) {
   const head_ref = pull?.head?.ref
   if head_ref == nil || trim(to_string(head_ref)) == "" {
-    return __err("missing_head_ref", "cannot delete PR branch because pull.head.ref was missing")
+    return connector_error(
+      "missing_head_ref",
+      "cannot delete PR branch because pull.head.ref was missing",
+    )
   }
   const head_repo = pull?.head?.repo
   const repo_owner = head_repo?.owner?.login ?? args.owner
@@ -5516,2304 +5023,10 @@ fn __delete_pull_head_branch(harness: Harness, args, pull, cfg) {
   )
 }
 
-/** Mint a GitHub App JWT using Harn jwt_sign and the configured app private key. */
-pub fn mint_app_jwt(clock: HarnessClock, secrets: HarnessSecrets, config) {
-  const app_id = config?.app_id
-  if app_id == nil {
-    return __err("missing_app_id", "github connector requires app_id to mint JWT")
-  }
-  const pem_result = __private_key_pem(secrets, config)
-  if is_err(pem_result) {
-    return pem_result
-  }
-  const now = __now_seconds(clock, config)
-  const backdate = config?.jwt_backdate_seconds ?? DEFAULT_JWT_BACKDATE_SECONDS
-  const ttl = config?.jwt_ttl_seconds ?? DEFAULT_JWT_TTL_SECONDS
-  const claims = {iss: to_string(app_id), iat: now - backdate, exp: now + ttl}
-  return jwt_sign(config?.jwt_alg ?? "RS256", claims, unwrap(pem_result))
-}
-
-/** Return a cached installation token or refresh it when stale. */
-pub fn installation_token(harness: Harness, config) {
-  const resolved_result = __resolve_token_config(config)
-  if is_err(resolved_result) {
-    return resolved_result
-  }
-  const resolved = unwrap(resolved_result)
-  const key = to_string(resolved.installation_id)
-  const now = __now_seconds(harness.clock, resolved)
-  const cached = __token_cache(harness.runtime)[key]
-  if cached != nil && cached.refresh_at > now {
-    return cached.token
-  }
-  let token = nil
-  mutex {
-    let cache = __token_cache(harness.runtime)
-    const again = cache[key]
-    if again != nil && again.refresh_at > __now_seconds(harness.clock, resolved) {
-      token = again.token
-    } else {
-      const exchanged = __exchange_installation_token(harness, resolved)
-      if is_err(exchanged) {
-        token = exchanged
-      } else {
-        const response = unwrap(exchanged)
-        cache[key] = {
-          token: response.token,
-          refresh_at: __token_refresh_at(
-            response?.expires_at,
-            __now_seconds(harness.clock, resolved),
-            resolved,
-          ),
-        }
-        harness.runtime.store_set(TOKEN_CACHE_KEY, cache)
-        token = response.token
-      }
-    }
-  }
-  return token
-}
-
-/** Clear all cached installation tokens. */
-pub fn reset_token_cache(runtime: HarnessRuntime) {
-  runtime.store_delete(TOKEN_CACHE_KEY)
-}
-
-/** Invalidate one cached installation token by installation id. */
-pub fn invalidate_installation_token(runtime: HarnessRuntime, installation_id) {
-  const key = to_string(installation_id)
-  let cache = __token_cache(runtime)
-  cache.remove(key)
-  runtime.store_set(TOKEN_CACHE_KEY, cache)
-}
-
-fn __state() -> GithubConnectorState {
-  return GITHUB_STATE
-}
-
-fn __set_state(state: GithubConnectorState) {
-  GITHUB_STATE = state
-  return state
-}
-
-fn __err(code, message, details = nil) {
-  const error = {code: code, category: __error_category(code), message: message}
-  return Err(
-    if details == nil {
-      error
-    } else {
-      error + details
-    },
-  )
-}
-
-fn __error_category(code) {
-  if code == "auth" || code == "unauthorized" || code == "missing_credentials"
-    || code
-    == "missing_private_key"
-    || code == "missing_app_id" {
-    return "auth"
-  }
-  if code == "permission" || code == "missing_scopes" || code == "inaccessible_resource" {
-    return "permission"
-  }
-  if code == "rate_limit" || code == "rate_limited" {
-    return "rate_limit"
-  }
-  if code == "branch_protection" || code == "protected_branch_requires_admin_override" {
-    return "branch_protection"
-  }
-  if code == "merge_queue" {
-    return "merge_queue"
-  }
-  if code == "checks_pending" {
-    return "checks_pending"
-  }
-  if code == "checks_failed" {
-    return "checks_failed"
-  }
-  if code == "network" || code == "transport" {
-    return "network"
-  }
-  if code == "oauth_failed" {
-    return "auth"
-  }
-  if code == "schema_drift" || code == "invalid_response" || code == "invalid_json" {
-    return "schema_drift"
-  }
-  if code == "stale_head" {
-    return "conflict"
-  }
-  return code
-}
-
-fn __reject(status, code, message) {
-  return {
-    type: "reject",
-    reject: {
-      status: status,
-      body: json_stringify({error: code, message: message}),
-      content_type: "application/json",
-    },
-  }
-}
-
-fn __reject_err(err) {
-  const code = err?.code ?? "rejected"
-  const message = err?.message ?? "request rejected"
-  const status = if code == "missing_signature" || code == "invalid_signature"
-    || code
-    == "missing_secret" {
-    401
-  } else {
-    400
-  }
-  return __reject(status, code, message)
-}
-
-fn __header(headers, name) {
-  const wanted = lowercase(name)
-  for entry in (headers ?? {}).entries() {
-    if lowercase(trim(to_string(entry.key))) == wanted {
-      return trim(to_string(entry.value))
-    }
-  }
-  return nil
-}
-
-fn __event_kind(raw, headers) {
-  return __header(headers, "x-github-event") ?? raw?.kind ?? raw?.event
-}
-
-fn __signing_secret(secrets: HarnessSecrets, raw) {
-  const state = __state()
-  const ctx_secret = state.ctx?.signing_secret ?? state.ctx?.secrets?.signing_secret
-  if ctx_secret != nil && trim(to_string(ctx_secret)) != "" {
-    return to_string(ctx_secret)
-  }
-  const bindings = state.bindings ?? {}
-  const binding_id = raw?.metadata?.binding_id ?? raw?.binding_id
-  if binding_id != nil {
-    const binding = bindings.get(binding_id)
-    const binding_secret = binding?.signing_secret ?? binding?.secrets?.signing_secret
-      ?? binding
-      ?.config?.signing_secret
-    if binding_secret != nil && trim(to_string(binding_secret)) != "" {
-      return to_string(binding_secret)
-    }
-  }
-  const secret_id = __signing_secret_id(raw)
-  const secret = __secret_get_optional(secrets, secret_id)
-  if secret != nil && trim(to_string(secret)) != "" {
-    return secret
-  }
-  return nil
-}
-
-fn __signing_secret_id(raw) {
-  const metadata = raw?.metadata ?? {}
-  const id = metadata?.secret_ids?.signing_secret ?? metadata?.config?.secret_ids?.signing_secret
-  const direct_id = __secret_id_candidate(id, "signing_secret")
-  if direct_id != nil {
-    return direct_id
-  }
-  const bindings = __state().bindings ?? {}
-  const binding_id = metadata?.binding_id ?? raw?.binding_id
-  if binding_id != nil {
-    const binding = bindings.get(binding_id)
-    return __binding_signing_secret_id(binding)
-  }
-  return nil
-}
-
-fn __binding_signing_secret_id(binding) {
-  const id = binding?.signing_secret_id ?? binding?.signing_secret_secret
-    ?? binding?.secrets
-    ?.signing_secret_id
-    ?? binding?.config?.signing_secret_id
-    ?? binding?.config?.signing_secret_secret
-    ?? binding?.config?.secret_ids?.signing_secret
-    ?? binding?.config?.secrets?.signing_secret
-  return __secret_id_candidate(id, "signing_secret")
-}
-
-fn __secret_id_candidate(value, fallback_name) {
-  if value == nil || trim(to_string(value)) == "" {
-    return nil
-  }
-  const text = trim(to_string(value))
-  if contains(text, "/") {
-    return text
-  }
-  if fallback_name != nil && trim(to_string(fallback_name)) != "" {
-    return GITHUB_PROVIDER_ID + "/" + to_string(fallback_name)
-  }
-  return nil
-}
-
-fn __secret_get_optional(secrets: HarnessSecrets, secret_id) {
-  if secret_id == nil || trim(to_string(secret_id)) == "" {
-    return nil
-  }
-  const resolved = try {
-    secrets.read(to_string(secret_id))
-  }
-  if is_err(resolved) {
-    return nil
-  }
-  return to_string(unwrap(resolved))
-}
-
-fn __verify_github_signature(secrets: HarnessSecrets, raw, headers, body_text) {
-  const signature = __header(headers, "x-hub-signature-256")
-  if signature == nil || signature == "" {
-    return __err("missing_signature", "missing x-hub-signature-256 header")
-  }
-  if !starts_with(signature, "sha256=") {
-    return __err("invalid_signature", "x-hub-signature-256 must start with sha256=")
-  }
-  const secret = __signing_secret(secrets, raw)
-  if secret == nil || trim(to_string(secret)) == "" {
-    return __err("missing_secret", "github signing_secret is required")
-  }
-  const actual = signature[7:len(signature)]
-  const expected = hmac_sha256(to_string(secret), body_text)
-  if !constant_time_eq(expected, actual) {
-    return __err("invalid_signature", "x-hub-signature-256 did not match the request body")
-  }
-  return Ok("verified")
-}
-
-@complexity(allow)
-fn __build_event(event_kind, payload, raw, headers, signature_status) {
-  const repo = __repo(payload)
-  const occurred_at = __occurred_at(event_kind, payload, raw)
-  const delivery_id = __header(headers, "x-github-delivery")
-  const dedupe_key = __dedupe_key(event_kind, payload, repo, delivery_id)
-  const normalized_payload = __normalize_github_payload(
-    event_kind,
-    payload,
-    delivery_id,
-    dedupe_key,
-    occurred_at,
-  )
-  return {
-    kind: event_kind,
-    topic: normalized_payload.topic,
-    occurred_at: occurred_at,
-    dedupe_key: dedupe_key,
-    delivery_id: delivery_id,
-    signature_status: __signature_status(signature_status),
-    payload: normalized_payload,
-    headers: {"x-github-event": event_kind, "x-github-delivery": delivery_id},
-  }
-}
-
-fn __signature_status(status) {
-  if status == "verified" || status == "signed" {
-    return {state: "verified"}
-  }
-  return {state: "unsigned"}
-}
-
-fn __dedupe_key(event_kind, payload, repo, delivery_id) {
-  if delivery_id != nil && delivery_id != "" {
-    return "github:delivery:" + to_string(delivery_id)
-  }
-  const repo_part = if repo?.full_name != nil && repo.full_name != "" {
-    repo.full_name
-  } else {
-    "unknown"
-  }
-  if event_kind == "push" {
-    return "github:push:" + repo_part + ":" + to_string(payload?.after ?? "")
-  }
-  const action = payload?.action ?? ""
-  const resource_id = to_string(
-    payload?.pull_request?.id ?? payload?.issue?.id ?? payload?.comment?.id ?? payload?.review?.id
-      ?? payload
-      ?.workflow_run?.id
-      ?? payload?.deployment_status?.id
-      ?? payload?.check_run?.id
-      ?? payload?.check_suite?.id
-      ?? payload?.merge_group?.id
-      ?? payload?.installation?.id
-      ?? payload?.release?.id
-      ?? payload?.sha
-      ?? "",
-  )
-  return "github:" + event_kind + ":" + repo_part + ":" + to_string(action) + ":" + resource_id
-}
-
-@complexity(allow)
-fn __normalize_github_payload(event_kind, raw, delivery_id, dedupe_key, occurred_at) {
-  const common = {
-    provider: GITHUB_PROVIDER_ID,
-    event: event_kind,
-    topic: __topic(event_kind, raw?.action),
-    reaction_topics: __reaction_topics(event_kind, raw),
-    action: raw?.action,
-    delivery_id: delivery_id,
-    installation_id: raw?.installation?.id,
-    installation: raw?.installation,
-    repository: raw?.repository,
-    repo: __repo(raw),
-    sender: raw?.sender,
-    raw: raw,
-  }
-  if event_kind == "pull_request" {
-    const pr = raw?.pull_request ?? {}
-    return __decorate_dashboard_payload(
-      event_kind,
-      common
-        + {
-        pull_request: pr,
-        pull_request_id: pr?.id,
-        pull_request_number: raw?.number ?? pr?.number,
-        head_sha: pr?.head?.sha,
-        head_ref: pr?.head?.ref,
-        base_sha: pr?.base?.sha,
-        base_ref: pr?.base?.ref,
-        draft: pr?.draft,
-        merged: pr?.merged,
-        labels: pr?.labels ?? [],
-      },
-      dedupe_key,
-      occurred_at,
-    )
-  }
-  if event_kind == "check_run" {
-    const check = raw?.check_run ?? {}
-    const pr = __first(check?.pull_requests)
-    return __decorate_dashboard_payload(
-      event_kind,
-      common
-        + {
-        check_run: check,
-        check_id: check?.id,
-        check_run_id: check?.id,
-        check_suite_id: check?.check_suite?.id,
-        pull_request_number: pr?.number,
-        head_sha: check?.head_sha ?? pr?.head?.sha,
-        head_ref: pr?.head?.ref,
-        base_ref: pr?.base?.ref,
-        name: check?.name,
-        status: check?.status,
-        conclusion: check?.conclusion,
-      },
-      dedupe_key,
-      occurred_at,
-    )
-  }
-  if event_kind == "check_suite" {
-    const suite = raw?.check_suite ?? {}
-    const pr = __first(suite?.pull_requests)
-    return __decorate_dashboard_payload(
-      event_kind,
-      common
-        + {
-        check_suite: suite,
-        check_suite_id: suite?.id,
-        pull_request_number: pr?.number,
-        head_sha: suite?.head_sha,
-        head_ref: suite?.head_branch ?? pr?.head?.ref,
-        base_ref: pr?.base?.ref,
-        status: suite?.status,
-        conclusion: suite?.conclusion,
-      },
-      dedupe_key,
-      occurred_at,
-    )
-  }
-  if event_kind == "workflow_run" {
-    const run = raw?.workflow_run ?? {}
-    const pr = __first(run?.pull_requests)
-    return __decorate_dashboard_payload(
-      event_kind,
-      common
-        + {
-        workflow_run: run,
-        run_id: run?.id,
-        run_number: run?.run_number,
-        workflow_id: run?.workflow_id,
-        check_suite_id: run?.check_suite_id,
-        pull_request_number: pr?.number,
-        head_sha: run?.head_sha ?? pr?.head?.sha,
-        head_ref: run?.head_branch ?? pr?.head?.ref,
-        base_ref: pr?.base?.ref,
-        name: run?.name,
-        status: run?.status,
-        conclusion: run?.conclusion,
-      },
-      dedupe_key,
-      occurred_at,
-    )
-  }
-  if event_kind == "status" {
-    const branch = __first(raw?.branches)
-    return __decorate_dashboard_payload(
-      event_kind,
-      common
-        + {
-        commit_status: raw,
-        status_id: raw?.id,
-        head_sha: raw?.sha,
-        head_ref: branch?.name,
-        base_ref: branch?.name,
-        state: raw?.state,
-        context: raw?.context,
-        target_url: raw?.target_url,
-      },
-      dedupe_key,
-      occurred_at,
-    )
-  }
-  if event_kind == "merge_group" {
-    const group = raw?.merge_group ?? {}
-    return __decorate_dashboard_payload(
-      event_kind,
-      common
-        + {
-        merge_group: group,
-        merge_group_id: group?.id,
-        head_sha: group?.head_sha,
-        head_ref: group?.head_ref,
-        base_sha: group?.base_sha,
-        base_ref: group?.base_ref,
-        pull_requests: group?.pull_requests ?? raw?.pull_requests ?? [],
-        pull_request_numbers: __pull_request_numbers(group?.pull_requests ?? raw?.pull_requests),
-      },
-      dedupe_key,
-      occurred_at,
-    )
-  }
-  if event_kind == "push" {
-    return __decorate_dashboard_payload(
-      event_kind,
-      common
-        + {
-        ref: raw?.ref,
-        ref_name: __ref_name(raw?.ref),
-        before: raw?.before,
-        after: raw?.after,
-        head_sha: raw?.after,
-        head_ref: __ref_name(raw?.ref),
-        commits: raw?.commits ?? [],
-        distinct_size: raw?.distinct_size,
-        head_commit: raw?.head_commit,
-        pusher: raw?.pusher,
-        deleted: raw?.deleted ?? false,
-        forced: raw?.forced ?? false,
-        created: raw?.created ?? false,
-      },
-      dedupe_key,
-      occurred_at,
-    )
-  }
-  if event_kind == "installation" {
-    return __decorate_dashboard_payload(
-      event_kind,
-      common
-        + {
-        installation: raw?.installation,
-        account: raw?.installation?.account ?? raw?.account,
-        installation_id: raw?.installation?.id,
-        installation_state: __installation_state(raw?.action),
-        suspended: __is_suspension_action(raw?.action),
-        revoked: __is_revocation_action(raw?.action),
-        repositories: raw?.repositories ?? [],
-      },
-      dedupe_key,
-      occurred_at,
-    )
-  }
-  if event_kind == "installation_repositories" {
-    return __decorate_dashboard_payload(
-      event_kind,
-      common
-        + {
-        installation: raw?.installation,
-        account: raw?.installation?.account ?? raw?.account,
-        installation_id: raw?.installation?.id,
-        installation_state: __installation_state(raw?.action),
-        suspended: __is_suspension_action(raw?.action),
-        revoked: __is_revocation_action(raw?.action),
-        repository_selection: raw?.repository_selection,
-        repositories_added: raw?.repositories_added ?? [],
-        repositories_removed: raw?.repositories_removed ?? [],
-      },
-      dedupe_key,
-      occurred_at,
-    )
-  }
-  if event_kind == "release" {
-    const release = raw?.release ?? {}
-    return __decorate_dashboard_payload(
-      event_kind,
-      common
-        + {
-        release: release,
-        release_id: release?.id,
-        tag_name: release?.tag_name,
-        name: release?.name,
-        draft: release?.draft ?? false,
-        prerelease: release?.prerelease ?? false,
-        target_commitish: release?.target_commitish,
-        html_url: release?.html_url,
-        published_at: release?.published_at,
-        assets: release?.assets ?? [],
-      },
-      dedupe_key,
-      occurred_at,
-    )
-  }
-  if event_kind == "issues" {
-    return __decorate_dashboard_payload(
-      event_kind,
-      common + {issue: raw?.issue},
-      dedupe_key,
-      occurred_at,
-    )
-  }
-  if event_kind == "issue_comment" {
-    return __decorate_dashboard_payload(
-      event_kind,
-      common + {issue: raw?.issue, comment: raw?.comment},
-      dedupe_key,
-      occurred_at,
-    )
-  }
-  if event_kind == "pull_request_review" {
-    const pr = raw?.pull_request ?? {}
-    return __decorate_dashboard_payload(
-      event_kind,
-      common
-        + {
-        pull_request: pr,
-        review: raw?.review,
-        pull_request_number: pr?.number,
-        head_sha: pr?.head?.sha,
-        head_ref: pr?.head?.ref,
-        base_sha: pr?.base?.sha,
-        base_ref: pr?.base?.ref,
-      },
-      dedupe_key,
-      occurred_at,
-    )
-  }
-  if event_kind == "deployment_status" {
-    return __decorate_dashboard_payload(
-      event_kind,
-      common + {deployment_status: raw?.deployment_status, deployment: raw?.deployment},
-      dedupe_key,
-      occurred_at,
-    )
-  }
-  return __decorate_dashboard_payload(event_kind, common, dedupe_key, occurred_at)
-}
-
-fn __reaction_topics(event_kind, raw) {
-  if event_kind == "pull_request" && __pull_request_has_conflict(raw?.pull_request) {
-    return ["github.reaction.merge_conflict"]
-  }
-  if __ci_concluded_failed(event_kind, raw) {
-    return ["github.reaction.ci_failure"]
-  }
-  return []
-}
-
-fn __pull_request_has_conflict(pr) {
-  return lowercase(to_string(pr?.mergeable_state ?? "")) == "dirty"
-}
-
-fn __ci_concluded_failed(event_kind, raw) {
-  if event_kind == "status" {
-    return contains(GITHUB_CI_FAILURE_STATES, lowercase(to_string(raw?.state ?? "")))
-  }
-  if event_kind == "check_run" {
-    return contains(
-      GITHUB_CI_FAILURE_CONCLUSIONS,
-      lowercase(to_string(raw?.check_run?.conclusion ?? "")),
-    )
-  }
-  if event_kind == "check_suite" {
-    return contains(
-      GITHUB_CI_FAILURE_CONCLUSIONS,
-      lowercase(to_string(raw?.check_suite?.conclusion ?? "")),
-    )
-  }
-  if event_kind == "workflow_run" {
-    return contains(
-      GITHUB_CI_FAILURE_CONCLUSIONS,
-      lowercase(to_string(raw?.workflow_run?.conclusion ?? "")),
-    )
-  }
-  return false
-}
-
-const MENTION_HANDLE_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_/"
-
-/**
- * Extract `@handle command args...` mentions from a free-text body using
- * pure string scanning (no network, no regex). Returns a list of
- * `{handle, command, rest}` candidates. A mention is recognized when `@` is at
- * the start of the body or follows whitespace, the handle is a run of
- * `[A-Za-z0-9-_/]`, and (optionally) a command word follows on the same line.
- */
-@complexity(allow)
-fn __extract_mention_candidates(body) {
-  const text = to_string(body ?? "")
-  const n = len(text)
-  let out = []
-  let i = 0
-  while i < n {
-    const ch = text[i:i + 1]
-    const prev_is_boundary = i == 0 || __is_mention_boundary(text[i - 1:i])
-    if ch == "@" && prev_is_boundary {
-      let j = i + 1
-      while j < n && contains(MENTION_HANDLE_CHARS, text[j:j + 1]) {
-        j = j + 1
-      }
-      const handle = text[i + 1:j]
-      if handle != "" {
-        out = out + [__mention_from(handle, text, j, n)]
-      }
-      i = j
-    } else {
-      i = i + 1
-    }
-  }
-  return out
-}
-
-fn __is_mention_boundary(ch) {
-  return ch == " " || ch == "\n" || ch == "\t" || ch == "\r" || ch == "(" || ch == "["
-}
-
-fn __mention_from(handle, text, after_handle, n) {
-  // A command must be separated from the handle by whitespace; punctuation
-  // directly attached to the handle (e.g. `@reviewer!`) yields no command.
-  if after_handle < n {
-    const next = text[after_handle:after_handle + 1]
-    if next != " " && next != "\t" && next != "\n" && next != "\r" {
-      return {handle: handle, command: nil, rest: ""}
-    }
-  }
-  // Skip spaces/tabs (but not newlines) to find the command on the same line.
-  let k = after_handle
-  while k < n && (text[k:k + 1] == " " || text[k:k + 1] == "\t") {
-    k = k + 1
-  }
-  // Stop the command/rest scan at a newline.
-  let line_end = k
-  while line_end < n && text[line_end:line_end + 1] != "\n" {
-    line_end = line_end + 1
-  }
-  const rest_line = trim(text[k:line_end])
-  if rest_line == "" {
-    return {handle: handle, command: nil, rest: ""}
-  }
-  const space = __index_of(rest_line, " ")
-  if space < 0 {
-    return {handle: handle, command: rest_line, rest: ""}
-  }
-  return {handle: handle, command: rest_line[0:space], rest: trim(rest_line[space:len(rest_line)])}
-}
-
-/**
- * Build the `mention` triage sub-block for events whose body may contain
- * `@handle command` directives. Surfaces ALL @mentions as `candidates`
- * (downstream filters by bot identity) plus the first command for convenience.
- * Returns nil when the event kind has no body or no mentions are found.
- */
-fn __mention_block(event_kind, payload) {
-  const body = __mention_body(event_kind, payload)
-  if body == nil || trim(to_string(body)) == "" {
-    return nil
-  }
-  const candidates = __extract_mention_candidates(body)
-  if len(candidates) == 0 {
-    return nil
-  }
-  const first = __first(candidates)
-  const actor = payload?.sender?.login ?? payload?.comment?.user?.login
-    ?? payload?.issue?.user?.login
-    ?? payload?.pull_request?.user?.login
-  return {
-    candidates: candidates,
-    actor: actor,
-    command: first?.command,
-    handle: first?.handle,
-    rest: first?.rest,
-    issue_number: payload?.issue?.number ?? payload?.pull_request?.number ?? payload?.number,
-    comment_id: payload?.comment?.id,
-    html_url: payload?.comment?.html_url ?? payload?.issue?.html_url
-      ?? payload?.pull_request?.html_url,
-  }
-}
-
-fn __mention_body(event_kind, payload) {
-  if event_kind == "issue_comment" || event_kind == "pull_request_review_comment" {
-    return payload?.comment?.body
-  }
-  if event_kind == "issues" {
-    return payload?.issue?.body
-  }
-  if event_kind == "pull_request" {
-    return payload?.pull_request?.body
-  }
-  return nil
-}
-
-@complexity(allow)
-fn __decorate_dashboard_payload(event_kind, payload, dedupe_key, occurred_at) {
-  const source_refs = __source_refs(event_kind, payload)
-  const source = __first(source_refs)
-  let out = payload + {source: source, source_refs: source_refs}
-  const mention = __mention_block(event_kind, payload)
-  if mention != nil {
-    out["mention"] = mention
-  }
-  const triage = __triage_event(event_kind, out, source, source_refs, dedupe_key, occurred_at)
-  if triage != nil {
-    out["triage_event"] = triage
-  }
-  const job = __job_event(event_kind, out, source, source_refs, dedupe_key, occurred_at)
-  if job != nil {
-    out["job_event"] = job
-  }
-  return out
-}
-
-@complexity(allow)
-fn __source_refs(event_kind, payload) {
-  let refs = []
-  if event_kind == "issues" {
-    refs = __append_ref(refs, __issue_source_ref(payload))
-  }
-  if event_kind == "issue_comment" {
-    refs = __append_ref(refs, __comment_source_ref(payload))
-    refs = __append_ref(refs, __issue_source_ref(payload))
-  }
-  if event_kind == "pull_request" {
-    refs = __append_ref(refs, __pull_request_source_ref(payload))
-  }
-  if event_kind == "pull_request_review" {
-    refs = __append_ref(refs, __review_source_ref(payload))
-    refs = __append_ref(refs, __pull_request_source_ref(payload))
-  }
-  if event_kind == "check_run" {
-    refs = __append_ref(refs, __check_run_source_ref(payload))
-    refs = __append_ref(
-      refs,
-      __pull_request_number_source_ref(payload, payload?.pull_request_number),
-    )
-  }
-  if event_kind == "check_suite" {
-    refs = __append_ref(refs, __check_suite_source_ref(payload))
-    refs = __append_ref(
-      refs,
-      __pull_request_number_source_ref(payload, payload?.pull_request_number),
-    )
-  }
-  if event_kind == "workflow_run" {
-    refs = __append_ref(refs, __workflow_run_source_ref(payload))
-    refs = __append_ref(
-      refs,
-      __pull_request_number_source_ref(payload, payload?.pull_request_number),
-    )
-  }
-  if event_kind == "status" {
-    refs = __append_ref(refs, __status_source_ref(payload))
-  }
-  if event_kind == "merge_group" {
-    refs = __append_ref(refs, __merge_group_source_ref(payload))
-    for number in payload?.pull_request_numbers ?? [] {
-      refs = __append_ref(refs, __pull_request_number_source_ref(payload, number))
-    }
-  }
-  if event_kind == "push" {
-    refs = __append_ref(refs, __push_source_ref(payload))
-  }
-  if event_kind == "deployment_status" {
-    refs = __append_ref(refs, __deployment_source_ref(payload))
-  }
-  if event_kind == "installation" || event_kind == "installation_repositories" {
-    refs = __append_ref(refs, __installation_source_ref(payload))
-  }
-  if event_kind == "release" {
-    refs = __append_ref(refs, __release_source_ref(payload))
-  }
-  refs = __append_ref(refs, __repo_source_ref(payload))
-  return refs
-}
-
-fn __append_ref(refs, ref) {
-  if ref == nil {
-    return refs
-  }
-  return refs + [ref]
-}
-
-fn __source_ref(kind, id, payload, fields = nil) {
-  const data = fields ?? {}
-  const repo = payload?.repo ?? {}
-  const repo_name = repo?.full_name ?? ""
-  const url = data?.url ?? data?.html_url
-  return {
-    provider: GITHUB_PROVIDER_ID,
-    kind: kind,
-    id: if id == nil {
-      ""
-    } else {
-      to_string(id)
-    },
-    repo: repo_name,
-    key: __source_key(kind, repo_name, id),
-    url: url,
-    html_url: data?.html_url ?? url,
-    api_url: data?.api_url,
-  }
-    + data
-}
-
-fn __source_key(kind, repo, id) {
-  const value = if id == nil || trim(to_string(id)) == "" {
-    "unknown"
-  } else {
-    to_string(id)
-  }
-  const repo_part = if repo == nil || trim(to_string(repo)) == "" {
-    "unknown"
-  } else {
-    to_string(repo)
-  }
-  return "github:" + to_string(kind) + ":" + repo_part + ":" + value
-}
-
-fn __repo_source_ref(payload) {
-  const repo = payload?.repo ?? {}
-  if repo?.full_name == nil || repo.full_name == "" {
-    return nil
-  }
-  const url = __repo_url(payload)
-  return __source_ref(
-    "github.repository",
-    repo.full_name,
-    payload,
-    {name: repo?.name, owner: repo?.owner, full_name: repo.full_name, url: url, html_url: url},
-  )
-}
-
-fn __issue_source_ref(payload) {
-  const issue = payload?.issue
-  if issue == nil || issue?.number == nil {
-    return nil
-  }
-  return __source_ref(
-    "github.issue",
-    issue?.id ?? issue.number,
-    payload,
-    {
-      number: issue.number,
-      title: issue?.title,
-      state: issue?.state,
-      url: issue?.html_url ?? __issue_url(payload, issue.number),
-      html_url: issue?.html_url ?? __issue_url(payload, issue.number),
-      api_url: issue?.url,
-    },
-  )
-}
-
-fn __comment_source_ref(payload) {
-  const comment = payload?.comment
-  if comment == nil || comment?.id == nil {
-    return nil
-  }
-  const number = payload?.issue?.number
-  return __source_ref(
-    "github.comment",
-    comment.id,
-    payload,
-    {
-      issue_number: number,
-      url: comment?.html_url ?? __issue_url(payload, number),
-      html_url: comment?.html_url ?? __issue_url(payload, number),
-      api_url: comment?.url,
-    },
-  )
-}
-
-fn __pull_request_source_ref(payload) {
-  const pr = payload?.pull_request
-  const number = payload?.pull_request_number ?? pr?.number
-  if number == nil {
-    return nil
-  }
-  return __source_ref(
-    "github.pull_request",
-    pr?.id ?? number,
-    payload,
-    {
-      number: number,
-      title: pr?.title,
-      state: pr?.state,
-      url: pr?.html_url ?? __pull_request_url(payload, number),
-      html_url: pr?.html_url ?? __pull_request_url(payload, number),
-      api_url: pr?.url,
-    },
-  )
-}
-
-fn __pull_request_number_source_ref(payload, number) {
-  if number == nil {
-    return nil
-  }
-  return __source_ref(
-    "github.pull_request",
-    number,
-    payload,
-    {
-      number: number,
-      url: __pull_request_url(payload, number),
-      html_url: __pull_request_url(payload, number),
-    },
-  )
-}
-
-fn __review_source_ref(payload) {
-  const review = payload?.review
-  if review == nil || review?.id == nil {
-    return nil
-  }
-  return __source_ref(
-    "github.review",
-    review.id,
-    payload,
-    {
-      pull_request_number: payload?.pull_request_number,
-      state: review?.state,
-      url: review?.html_url ?? __pull_request_url(payload, payload?.pull_request_number),
-      html_url: review?.html_url ?? __pull_request_url(payload, payload?.pull_request_number),
-      api_url: review?.url,
-    },
-  )
-}
-
-fn __check_run_source_ref(payload) {
-  if payload?.check_id == nil {
-    return nil
-  }
-  const check = payload?.check_run ?? {}
-  return __source_ref(
-    "github.check_run",
-    payload.check_id,
-    payload,
-    {
-      name: check?.name ?? payload?.name,
-      status: payload?.status,
-      conclusion: payload?.conclusion,
-      sha: payload?.head_sha,
-      url: check?.html_url ?? check?.details_url ?? __commit_url(payload, payload?.head_sha),
-      html_url: check?.html_url ?? check?.details_url ?? __commit_url(payload, payload?.head_sha),
-      api_url: check?.url,
-    },
-  )
-}
-
-fn __check_suite_source_ref(payload) {
-  if payload?.check_suite_id == nil {
-    return nil
-  }
-  return __source_ref(
-    "github.check_suite",
-    payload.check_suite_id,
-    payload,
-    {
-      status: payload?.status,
-      conclusion: payload?.conclusion,
-      sha: payload?.head_sha,
-      url: __check_suite_url(payload, payload.check_suite_id),
-      html_url: __check_suite_url(payload, payload.check_suite_id),
-    },
-  )
-}
-
-fn __workflow_run_source_ref(payload) {
-  if payload?.run_id == nil {
-    return nil
-  }
-  const run = payload?.workflow_run ?? {}
-  return __source_ref(
-    "github.workflow_run",
-    payload.run_id,
-    payload,
-    {
-      name: payload?.name ?? run?.name,
-      run_number: payload?.run_number,
-      workflow_id: payload?.workflow_id,
-      status: payload?.status,
-      conclusion: payload?.conclusion,
-      sha: payload?.head_sha,
-      branch: payload?.head_ref,
-      url: run?.html_url ?? __actions_run_url(payload, payload.run_id),
-      html_url: run?.html_url ?? __actions_run_url(payload, payload.run_id),
-      api_url: run?.url,
-    },
-  )
-}
-
-fn __status_source_ref(payload) {
-  const id = payload?.status_id ?? payload?.head_sha
-  if id == nil {
-    return nil
-  }
-  return __source_ref(
-    "github.status",
-    id,
-    payload,
-    {
-      context: payload?.context,
-      state: payload?.state,
-      sha: payload?.head_sha,
-      url: payload?.target_url ?? __commit_url(payload, payload?.head_sha),
-      html_url: payload?.target_url ?? __commit_url(payload, payload?.head_sha),
-    },
-  )
-}
-
-fn __merge_group_source_ref(payload) {
-  if payload?.merge_group_id == nil {
-    return nil
-  }
-  return __source_ref(
-    "github.merge_group",
-    payload.merge_group_id,
-    payload,
-    {
-      branch: payload?.head_ref,
-      base_ref: payload?.base_ref,
-      sha: payload?.head_sha,
-      url: __commit_url(payload, payload?.head_sha) ?? __repo_url(payload),
-      html_url: __commit_url(payload, payload?.head_sha) ?? __repo_url(payload),
-    },
-  )
-}
-
-fn __push_source_ref(payload) {
-  const id = payload?.after ?? payload?.ref
-  if id == nil {
-    return nil
-  }
-  const url = payload?.raw?.compare
-    ?? __branch_or_commit_url(
-    payload,
-    payload?.ref_name,
-    payload?.after,
-  )
-  return __source_ref(
-    "github.push",
-    id,
-    payload,
-    {branch: payload?.ref_name, sha: payload?.after, url: url, html_url: url},
-  )
-}
-
-fn __deployment_source_ref(payload) {
-  const status = payload?.deployment_status ?? {}
-  const deployment = payload?.deployment ?? {}
-  const id = status?.id ?? deployment?.id
-  if id == nil {
-    return nil
-  }
-  const url = status?.target_url ?? status?.environment_url ?? __repo_url(payload)
-  return __source_ref(
-    "github.deployment_status",
-    id,
-    payload,
-    {
-      environment: deployment?.environment,
-      state: status?.state,
-      url: url,
-      html_url: url,
-      api_url: status?.url,
-    },
-  )
-}
-
-fn __installation_source_ref(payload) {
-  if payload?.installation_id == nil {
-    return nil
-  }
-  const account = payload?.account ?? payload?.installation?.account
-  return __source_ref(
-    "github.installation",
-    payload.installation_id,
-    payload,
-    {
-      account: account?.login ?? account?.name,
-      state: payload?.installation_state,
-      url: account?.html_url,
-      html_url: account?.html_url,
-      api_url: payload?.installation?.url,
-    },
-  )
-}
-
-fn __release_source_ref(payload) {
-  if payload?.release_id == nil {
-    return nil
-  }
-  const release = payload?.release ?? {}
-  return __source_ref(
-    "github.release",
-    payload.release_id,
-    payload,
-    {
-      tag_name: payload?.tag_name,
-      name: payload?.name,
-      draft: payload?.draft ?? false,
-      prerelease: payload?.prerelease ?? false,
-      url: release?.html_url ?? payload?.html_url ?? __release_url(payload, payload?.tag_name),
-      html_url: release?.html_url ?? payload?.html_url ?? __release_url(payload, payload?.tag_name),
-      api_url: release?.url,
-    },
-  )
-}
-
-fn __repo_url(payload) {
-  const explicit = payload?.repository?.html_url
-  if explicit != nil && explicit != "" {
-    return explicit
-  }
-  const full_name = payload?.repo?.full_name
-  if full_name == nil || full_name == "" {
-    return nil
-  }
-  return "https://github.com/" + full_name
-}
-
-fn __issue_url(payload, number) {
-  const repo_url = __repo_url(payload)
-  if repo_url == nil || number == nil {
-    return nil
-  }
-  return repo_url + "/issues/" + to_string(number)
-}
-
-fn __pull_request_url(payload, number) {
-  const repo_url = __repo_url(payload)
-  if repo_url == nil || number == nil {
-    return nil
-  }
-  return repo_url + "/pull/" + to_string(number)
-}
-
-fn __commit_url(payload, sha) {
-  const repo_url = __repo_url(payload)
-  if repo_url == nil || sha == nil || sha == "" {
-    return nil
-  }
-  return repo_url + "/commit/" + to_string(sha)
-}
-
-fn __branch_or_commit_url(payload, branch, sha) {
-  const repo_url = __repo_url(payload)
-  if repo_url == nil {
-    return nil
-  }
-  if branch != nil && branch != "" {
-    return repo_url + "/tree/" + url_encode(to_string(branch))
-  }
-  if sha != nil && sha != "" {
-    return __commit_url(payload, sha)
-  }
-  return repo_url
-}
-
-fn __actions_run_url(payload, run_id) {
-  const repo_url = __repo_url(payload)
-  if repo_url == nil || run_id == nil {
-    return nil
-  }
-  return repo_url + "/actions/runs/" + to_string(run_id)
-}
-
-fn __check_suite_url(payload, suite_id) {
-  const commit = __commit_url(payload, payload?.head_sha)
-  if commit == nil || suite_id == nil {
-    return commit
-  }
-  return commit + "/checks?check_suite_id=" + to_string(suite_id)
-}
-
-fn __release_url(payload, tag_name) {
-  const repo_url = __repo_url(payload)
-  if repo_url == nil || tag_name == nil || tag_name == "" {
-    return nil
-  }
-  return repo_url + "/releases/tag/" + url_encode(to_string(tag_name))
-}
-
-fn __triage_event(event_kind, payload, source, source_refs, dedupe_key, occurred_at) {
-  if !contains(["issues", "issue_comment", "pull_request", "pull_request_review"], event_kind) {
-    return nil
-  }
-  return {
-    schema: "harn.triage_event.v1",
-    kind: "triage_event",
-    provider: GITHUB_PROVIDER_ID,
-    source_kind: source?.kind,
-    source_ref: source,
-    source_url: source?.url,
-    source_timestamp: occurred_at,
-    actor: __primary_actor(payload),
-    actors: __actors(payload),
-    summary: __triage_summary(event_kind, payload),
-    why_it_matters: __triage_reason(event_kind, payload),
-    proposed_action: __triage_proposed_action(event_kind, payload),
-    urgency: __triage_urgency(event_kind, payload),
-    priority: __triage_priority(event_kind, payload),
-    confidence: 0.9,
-    related_refs: source_refs,
-    dedupe_key: dedupe_key,
-    privacy: __privacy(payload),
-    privacy_flags: __privacy_flags(payload),
-    action_intents: __read_action_intents(source, source_refs)
-      + __host_task_action_intents(
-      source,
-      source_refs,
-    )
-      + __triage_write_action_intents(event_kind, payload),
-  }
-}
-
-fn __job_event(event_kind, payload, source, source_refs, dedupe_key, occurred_at) {
-  if !contains(
-    [
-      "workflow_run",
-      "check_run",
-      "check_suite",
-      "status",
-      "deployment_status",
-      "merge_group",
-      "push",
-      "release",
-    ],
-    event_kind,
-  ) {
-    return nil
-  }
-  return {
-    schema: "harn.job_event.v1",
-    kind: "job_event",
-    provider: GITHUB_PROVIDER_ID,
-    source_kind: source?.kind,
-    source_ref: source,
-    source_url: source?.url,
-    source_timestamp: occurred_at,
-    actor: __primary_actor(payload),
-    actors: __actors(payload),
-    summary: __job_summary(event_kind, payload),
-    status: __job_status(event_kind, payload),
-    conclusion: __job_conclusion(event_kind, payload),
-    repo: payload?.repo,
-    branch: payload?.head_ref ?? payload?.ref_name,
-    sha: payload?.head_sha ?? payload?.after,
-    run_id: payload?.run_id,
-    run_number: payload?.run_number,
-    workflow_id: payload?.workflow_id,
-    check_id: payload?.check_id,
-    check_suite_id: payload?.check_suite_id,
-    release_id: payload?.release_id,
-    pull_request_number: payload?.pull_request_number,
-    related_refs: source_refs,
-    dedupe_key: dedupe_key,
-    receipt_url: source?.url,
-    replay_url: source?.url,
-    privacy: __privacy(payload),
-    privacy_flags: __privacy_flags(payload),
-    action_intents: __read_action_intents(source, source_refs)
-      + __host_task_action_intents(
-      source,
-      source_refs,
-    )
-      + __job_write_action_intents(event_kind, payload),
-  }
-}
-
-fn __read_action_intents(source, source_refs) {
-  if source == nil || source?.url == nil {
-    return []
-  }
-  return [
-    {
-      kind: "open_source",
-      name: "open_source",
-      requires_approval: false,
-      source_ref: source,
-      related_refs: source_refs,
-    },
-  ]
-}
-
-fn __host_task_action_intents(source, source_refs) {
-  return [
-    {kind: "host", name: "dismiss", requires_approval: false, source_ref: source},
-    {kind: "host", name: "snooze", requires_approval: false, source_ref: source},
-    {
-      kind: "host",
-      name: "convert_to_task",
-      requires_approval: false,
-      source_ref: source,
-      related_refs: source_refs,
-    },
-  ]
-}
-
-fn __triage_write_action_intents(event_kind, payload) {
-  let intents = []
-  const repo = payload?.repo ?? {}
-  const issue_number = payload?.issue?.number
-  const pr_number = payload?.pull_request_number ?? payload?.pull_request?.number
-  if event_kind == "issues" || event_kind == "issue_comment" {
-    intents = __append_intent(
-      intents,
-      __provider_write_intent(
-        "comment",
-        "github.issue.comment",
-        {repo: repo?.full_name, number: issue_number},
-      ),
-    )
-    intents = __append_intent(
-      intents,
-      __provider_write_intent(
-        "add_labels",
-        "issues.add_labels",
-        {owner: repo?.owner, repo: repo?.name, issue_number: issue_number},
-      ),
-    )
-  }
-  if event_kind == "pull_request" || event_kind == "pull_request_review" {
-    intents = __append_intent(
-      intents,
-      __provider_write_intent(
-        "comment",
-        "github.pr.comment",
-        {repo: repo?.full_name, number: pr_number},
-      ),
-    )
-    intents = __append_intent(
-      intents,
-      __provider_write_intent(
-        "enable_auto_merge",
-        "github.pr.enable_auto_merge",
-        {repo: repo?.full_name, number: pr_number},
-      ),
-    )
-  }
-  return intents
-}
-
-fn __job_write_action_intents(event_kind, payload) {
-  let intents = []
-  const repo = payload?.repo ?? {}
-  if event_kind == "workflow_run" && payload?.workflow_id != nil {
-    intents = __append_intent(
-      intents,
-      __provider_write_intent(
-        "dispatch_workflow",
-        "github.actions.workflow_dispatch",
-        {
-          repo: repo?.full_name,
-          workflow_id: payload.workflow_id,
-          ref: payload?.head_ref ?? payload?.base_ref,
-        },
-      ),
-    )
-    intents = __append_intent(
-      intents,
-      __provider_operation_intent("rerun_workflow", "actions.rerun_workflow", false),
-    )
-  }
-  if event_kind == "check_run" {
-    intents = __append_intent(
-      intents,
-      __provider_operation_intent("rerun_check", "checks.rerequest", false),
-    )
-  }
-  if event_kind == "release" {
-    intents = __append_intent(
-      intents,
-      __provider_operation_intent("mutate_release", "releases.mutate", false),
-    )
-  }
-  return intents
-}
-
-fn __append_intent(intents, intent) {
-  if intent == nil {
-    return intents
-  }
-  return intents + [intent]
-}
-
-fn __provider_write_intent(name, method, args) {
-  if args?.repo == nil {
-    return nil
-  }
-  return {
-    kind: "provider_write",
-    name: name,
-    provider: GITHUB_PROVIDER_ID,
-    requires_approval: true,
-    method: method,
-    args: args,
-  }
-}
-
-fn __provider_operation_intent(name, operation, available) {
-  return {
-    kind: "provider_write",
-    name: name,
-    provider: GITHUB_PROVIDER_ID,
-    requires_approval: true,
-    operation: operation,
-    available: available,
-  }
-}
-
-fn __primary_actor(payload) {
-  return __first(__actors(payload))
-}
-
-fn __actors(payload) {
-  let actors = []
-  actors = __append_actor(actors, payload?.sender)
-  actors = __append_actor(actors, payload?.issue?.user)
-  actors = __append_actor(actors, payload?.pull_request?.user)
-  actors = __append_actor(actors, payload?.comment?.user)
-  actors = __append_actor(actors, payload?.review?.user)
-  actors = __append_actor(actors, payload?.workflow_run?.actor)
-  actors = __append_actor(actors, payload?.workflow_run?.triggering_actor)
-  actors = __append_actor(actors, payload?.check_run?.app)
-  actors = __append_actor(actors, payload?.release?.author)
-  actors = __append_actor(actors, payload?.pusher)
-  return actors
-}
-
-fn __append_actor(actors, raw_actor) {
-  const actor = __actor(raw_actor)
-  if actor == nil || actor?.handle == nil || actor.handle == "" {
-    return actors
-  }
-  for existing in actors {
-    if existing?.handle == actor.handle {
-      return actors
-    }
-  }
-  return actors + [actor]
-}
-
-fn __actor(raw_actor) {
-  if raw_actor == nil {
-    return nil
-  }
-  const handle = raw_actor?.login ?? raw_actor?.slug ?? raw_actor?.name
-  if handle == nil || handle == "" {
-    return nil
-  }
-  return {
-    provider: GITHUB_PROVIDER_ID,
-    id: raw_actor?.id,
-    login: raw_actor?.login,
-    handle: handle,
-    type: raw_actor?.type,
-    url: raw_actor?.html_url,
-  }
-}
-
-fn __privacy(payload) {
-  return {redacted: false, contains_private_repo: payload?.repository?.private ?? false}
-}
-
-fn __privacy_flags(payload) {
-  if payload?.repository?.private ?? false {
-    return ["private_repository"]
-  }
-  return []
-}
-
-fn __triage_summary(event_kind, payload) {
-  if event_kind == "issues" {
-    return "Issue #" + to_string(payload?.issue?.number ?? "") + " "
-      + to_string(
-      payload?.action ?? "updated",
-    )
-      + ": "
-      + to_string(payload?.issue?.title ?? "")
-  }
-  if event_kind == "issue_comment" {
-    return "Comment on issue #" + to_string(payload?.issue?.number ?? "") + ": "
-      + __truncate_summary(
-      payload?.comment?.body,
-    )
-  }
-  if event_kind == "pull_request" {
-    return "PR #" + to_string(payload?.pull_request_number ?? "") + " "
-      + to_string(
-      payload?.action ?? "updated",
-    )
-      + ": "
-      + to_string(payload?.pull_request?.title ?? "")
-  }
-  if event_kind == "pull_request_review" {
-    return "PR #" + to_string(payload?.pull_request_number ?? "") + " review "
-      + to_string(
-      payload?.action ?? "updated",
-    )
-      + ": "
-      + to_string(payload?.review?.state ?? "")
-  }
-  return "GitHub item updated"
-}
-
-fn __triage_reason(event_kind, payload) {
-  if event_kind == "issues" {
-    return "A tracked GitHub issue changed and may need triage or conversion into a task."
-  }
-  if event_kind == "pull_request" {
-    return "A pull request changed and may need review, merge, or follow-up work."
-  }
-  if event_kind == "issue_comment" || event_kind == "pull_request_review" {
-    return "A GitHub conversation changed and may need a response."
-  }
-  return "A GitHub source item changed."
-}
-
-fn __triage_proposed_action(event_kind, payload) {
-  if event_kind == "issues" {
-    return "triage_issue"
-  }
-  if event_kind == "pull_request" {
-    if payload?.draft ?? false {
-      return "watch_pr"
-    }
-    return "review_pr"
-  }
-  if event_kind == "issue_comment" {
-    return "review_comment"
-  }
-  if event_kind == "pull_request_review" {
-    return "review_pr_feedback"
-  }
-  return "review"
-}
-
-fn __triage_urgency(event_kind, payload) {
-  if event_kind == "pull_request_review"
-    && lowercase(to_string(payload?.review?.state ?? ""))
-    == "changes_requested" {
-    return "high"
-  }
-  if event_kind == "issues"
-    && __labels_include(payload?.labels ?? payload?.issue?.labels, "urgent") {
-    return "high"
-  }
-  return "normal"
-}
-
-fn __triage_priority(event_kind, payload) {
-  if __triage_urgency(event_kind, payload) == "high" {
-    return "high"
-  }
-  return "normal"
-}
-
-fn __labels_include(labels, wanted) {
-  for label in labels ?? [] {
-    const name = lowercase(to_string(label?.name ?? label))
-    if name == lowercase(to_string(wanted)) {
-      return true
-    }
-  }
-  return false
-}
-
-fn __job_summary(event_kind, payload) {
-  if event_kind == "workflow_run" {
-    return "Workflow " + to_string(payload?.name ?? payload?.workflow_id ?? "") + " "
-      + to_string(
-      payload?.status ?? "updated",
-    )
-      + ": "
-      + to_string(payload?.conclusion ?? "pending")
-  }
-  if event_kind == "check_run" {
-    return "Check " + to_string(payload?.name ?? payload?.check_id ?? "") + " "
-      + to_string(
-      payload?.status ?? "updated",
-    )
-      + ": "
-      + to_string(payload?.conclusion ?? "pending")
-  }
-  if event_kind == "check_suite" {
-    return "Check suite " + to_string(payload?.status ?? "updated") + ": "
-      + to_string(
-      payload?.conclusion ?? "pending",
-    )
-  }
-  if event_kind == "status" {
-    return "Status " + to_string(payload?.context ?? "") + ": " + to_string(payload?.state ?? "")
-  }
-  if event_kind == "deployment_status" {
-    return "Deployment " + to_string(payload?.deployment?.environment ?? "") + ": "
-      + to_string(
-      payload?.deployment_status?.state ?? "",
-    )
-  }
-  if event_kind == "merge_group" {
-    return "Merge queue group " + to_string(payload?.merge_group_id ?? "") + " for "
-      + to_string(
-      payload?.base_ref ?? "",
-    )
-  }
-  if event_kind == "push" {
-    return "Push to " + to_string(payload?.ref_name ?? payload?.ref ?? "") + ": "
-      + to_string(
-      payload?.distinct_size ?? len(payload?.commits ?? []),
-    )
-      + " commit(s)"
-  }
-  if event_kind == "release" {
-    return "Release " + to_string(payload?.tag_name ?? payload?.name ?? "") + " "
-      + to_string(
-      payload?.action ?? "updated",
-    )
-  }
-  return "GitHub job updated"
-}
-
-fn __job_status(event_kind, payload) {
-  if payload?.status != nil {
-    return payload.status
-  }
-  if payload?.state != nil {
-    return payload.state
-  }
-  if event_kind == "deployment_status" {
-    return payload?.deployment_status?.state
-  }
-  if event_kind == "push" {
-    if payload?.deleted ?? false {
-      return "deleted"
-    }
-    return "pushed"
-  }
-  if event_kind == "release" {
-    return payload?.action ?? "release"
-  }
-  if event_kind == "merge_group" {
-    return payload?.action ?? "queued"
-  }
-  return "updated"
-}
-
-fn __job_conclusion(event_kind, payload) {
-  if payload?.conclusion != nil {
-    return payload.conclusion
-  }
-  if event_kind == "status" {
-    const state = lowercase(to_string(payload?.state ?? ""))
-    if state == "success" {
-      return "success"
-    }
-    if state == "failure" || state == "error" {
-      return "failure"
-    }
-  }
-  if event_kind == "deployment_status" {
-    const state = lowercase(to_string(payload?.deployment_status?.state ?? ""))
-    if state == "success" {
-      return "success"
-    }
-    if state == "failure" || state == "error" || state == "inactive" {
-      return "failure"
-    }
-  }
-  return nil
-}
-
-fn __truncate_summary(value) {
-  const text = to_string(value ?? "")
-  if len(text) <= 80 {
-    return text
-  }
-  return text[0:77] + "..."
-}
-
-fn __topic(event_kind, action) {
-  const prefix = "github." + to_string(event_kind)
-  if action == nil || trim(to_string(action)) == "" {
-    return prefix
-  }
-  return prefix + "." + to_string(action)
-}
-
-fn __first(values) {
-  const list = values ?? []
-  if len(list) == 0 {
-    return nil
-  }
-  return list[0]
-}
-
-fn __pull_request_numbers(pulls) {
-  let numbers = []
-  for pr in pulls ?? [] {
-    if pr?.number != nil {
-      numbers = numbers + [pr.number]
-    }
-  }
-  return numbers
-}
-
-fn __ref_name(ref) {
-  if ref == nil {
-    return nil
-  }
-  const text = to_string(ref)
-  if starts_with(text, "refs/heads/") {
-    return text[11:len(text)]
-  }
-  if starts_with(text, "refs/tags/") {
-    return text[10:len(text)]
-  }
-  return text
-}
-
-fn __installation_state(action) {
-  const value = to_string(action ?? "")
-  if __is_suspension_action(value) {
-    return "suspended"
-  }
-  if value == "unsuspend" || value == "unsuspended" {
-    return "active"
-  }
-  if __is_revocation_action(value) {
-    return "revoked"
-  }
-  return nil
-}
-
-fn __is_suspension_action(action) {
-  const value = to_string(action ?? "")
-  return value == "suspend" || value == "suspended"
-}
-
-fn __is_revocation_action(action) {
-  const value = to_string(action ?? "")
-  return value == "deleted" || value == "removed" || value == "revoked"
-}
-
-fn __repo(payload) {
-  const repo = payload?.repository ?? {}
-  const owner = repo?.owner ?? {}
-  const owner_name = owner?.login ?? owner?.name ?? ""
-  const repo_name = repo?.name ?? ""
-  const fallback_full_name = if owner_name == "" || repo_name == "" {
-    ""
-  } else {
-    owner_name + "/" + repo_name
-  }
-  return {owner: owner_name, name: repo_name, full_name: repo?.full_name ?? fallback_full_name}
-}
-
-fn __occurred_at(event_kind, payload, raw) {
-  if raw?.occurred_at != nil {
-    return raw.occurred_at
-  }
-  if event_kind == "push" {
-    return payload?.head_commit?.timestamp ?? payload?.repository?.pushed_at
-  }
-  if event_kind == "pull_request" {
-    return payload?.pull_request?.updated_at ?? payload?.pull_request?.created_at
-  }
-  if event_kind == "issues" {
-    return payload?.issue?.updated_at ?? payload?.issue?.created_at
-  }
-  if event_kind == "issue_comment" {
-    return payload?.comment?.updated_at ?? payload?.comment?.created_at
-  }
-  if event_kind == "pull_request_review" {
-    return payload?.review?.submitted_at ?? payload?.review?.updated_at
-      ?? payload?.pull_request
-      ?.updated_at
-      ?? payload?.pull_request?.created_at
-  }
-  if event_kind == "workflow_run" {
-    return payload?.workflow_run?.updated_at ?? payload?.workflow_run?.created_at
-      ?? payload
-      ?.workflow_run?.run_started_at
-  }
-  if event_kind == "check_suite" {
-    return payload?.check_suite?.updated_at ?? payload?.check_suite?.created_at
-  }
-  if event_kind == "deployment_status" {
-    return payload?.deployment_status?.created_at ?? payload?.deployment_status?.updated_at
-      ?? payload
-      ?.deployment?.created_at
-  }
-  if event_kind == "status" {
-    return payload?.updated_at ?? payload?.created_at
-  }
-  if event_kind == "merge_group" {
-    return payload?.merge_group?.updated_at ?? payload?.merge_group?.created_at
-      ?? payload?.merge_group
-      ?.head_commit?.timestamp
-  }
-  if event_kind == "installation" || event_kind == "installation_repositories" {
-    return payload?.installation?.updated_at ?? payload?.installation?.created_at
-      ?? payload
-      ?.installation?.suspended_at
-  }
-  if event_kind == "release" {
-    return payload?.release?.published_at ?? payload?.release?.updated_at
-      ?? payload?.release
-      ?.created_at
-  }
-  return payload?.check_run?.completed_at ?? payload?.check_run?.started_at
-    ?? payload?.check_run
-    ?.created_at
-}
-
-fn __outbound_config(harness: Harness, args) {
-  const api_base_url = args?.api_base_url
-    ?? harness.env.get_or(
-    "GITHUB_API_BASE_URL",
-    GITHUB_API_BASE_URL,
-  )
-  const base_check = __validate_api_base_url(api_base_url)
-  if is_err(base_check) {
-    return base_check
-  }
-  const configured_installation_token = args?.installation_token
-    ?? args?.bindings?.installation_token
-    ?? args?.secrets?.installation_token
-    ?? harness.env.get("GITHUB_INSTALLATION_TOKEN")
-  const direct_token = configured_installation_token ?? args?.token
-  if direct_token != nil && trim(to_string(direct_token)) != "" {
-    const auth_identity = if configured_installation_token != nil
-      && trim(
-      to_string(configured_installation_token),
-    )
-      != "" {
-      "github_app"
-    } else {
-      "unknown"
-    }
-    return Ok(
-      {
-        api_base_url: to_string(api_base_url),
-        installation_token: to_string(direct_token),
-        token_mode: "direct",
-        auth_identity: auth_identity,
-        installation_id: args?.installation_id,
-        now: args?.now,
-        timeout_ms: args?.timeout_ms,
-        rate_limit_max_sleep_seconds: args?.rate_limit_max_sleep_seconds
-          ?? DEFAULT_RATE_LIMIT_MAX_SLEEP_SECONDS,
-      }
-        + __http_policy_config(args),
-    )
-  }
-  const app_id = args?.app_id ?? harness.env.get("GITHUB_APP_ID")
-  const installation_id = args?.installation_id ?? harness.env.get("GITHUB_INSTALLATION_ID")
-  if app_id == nil || trim(to_string(app_id)) == "" || installation_id == nil
-    || trim(
-    to_string(installation_id),
-  )
-    == "" {
-    if __allow_gh_auth_fallback(harness.env, args) {
-      const gh_token = __gh_auth_token(harness.env, harness.process, args)
-      if is_err(gh_token) {
-        return gh_token
-      }
-      return Ok(
-        {
-          api_base_url: to_string(api_base_url),
-          installation_token: to_string(unwrap(gh_token)),
-          token_mode: "gh_auth",
-          auth_identity: "user",
-          installation_id: nil,
-          now: args?.now,
-          timeout_ms: args?.timeout_ms,
-          rate_limit_max_sleep_seconds: args?.rate_limit_max_sleep_seconds
-            ?? DEFAULT_RATE_LIMIT_MAX_SLEEP_SECONDS,
-        }
-          + __http_policy_config(args),
-      )
-    }
-    return __err(
-      "missing_credentials",
-      "github connector requires installation_token, or app_id + installation_id + private_key",
-    )
-  }
-  const resolved = {
-    api_base_url: to_string(api_base_url),
-    app_id: app_id,
-    installation_id: installation_id,
-    private_key_pem: args?.private_key_pem,
-    private_key_secret: args?.private_key_secret ?? args?.secrets?.private_key,
-    jwt_alg: args?.jwt_alg ?? "RS256",
-    jwt_backdate_seconds: args?.jwt_backdate_seconds ?? DEFAULT_JWT_BACKDATE_SECONDS,
-    jwt_ttl_seconds: args?.jwt_ttl_seconds ?? DEFAULT_JWT_TTL_SECONDS,
-    token_refresh_skew_seconds: args?.token_refresh_skew_seconds
-      ?? DEFAULT_TOKEN_REFRESH_SKEW_SECONDS,
-    now: args?.now,
-    timeout_ms: args?.timeout_ms,
-    rate_limit_max_sleep_seconds: args?.rate_limit_max_sleep_seconds
-      ?? DEFAULT_RATE_LIMIT_MAX_SLEEP_SECONDS,
-  }
-    + __http_policy_config(args)
-  const token_result = installation_token(harness, resolved)
-  if is_err(token_result) {
-    return token_result
-  }
-  return Ok(
-    resolved
-      + {
-      installation_token: to_string(token_result),
-      token_mode: "jwt",
-      auth_identity: "github_app",
-    },
-  )
-}
-
-fn __http_policy_config(args) {
-  return {
-    retry: args?.retry,
-    retry_policy: args?.retry_policy,
-    retry_on: args?.retry_on,
-    retry_unsafe: args?.retry_unsafe,
-    idempotency_key: args?.idempotency_key,
-    max_attempts: args?.max_attempts,
-    base_ms: args?.base_ms,
-    backoff_ms: args?.backoff_ms,
-    cap_ms: args?.cap_ms,
-    respect_retry_after: args?.respect_retry_after,
-  }
-}
-
-fn __config_keys() {
-  return [
-    "api_base_url",
-    "installation_token",
-    "token",
-    "bindings",
-    "secrets",
-    "app_id",
-    "installation_id",
-    "private_key_pem",
-    "private_key_secret",
-    "jwt_alg",
-    "jwt_backdate_seconds",
-    "jwt_ttl_seconds",
-    "token_refresh_skew_seconds",
-    "now",
-    "timeout_ms",
-    "rate_limit_max_sleep_seconds",
-    "retry",
-    "retry_policy",
-    "retry_on",
-    "retry_unsafe",
-    "idempotency_key",
-    "max_attempts",
-    "base_ms",
-    "backoff_ms",
-    "cap_ms",
-    "respect_retry_after",
-    "poll_interval_ms",
-    "max_wait_ms",
-    "allow_gh_auth_fallback",
-    "gh_auth_fallback",
-    "gh_token",
-    "github_author_choice",
-    "author_choice",
-    "author_mode",
-  ]
-}
-
-/** Resolve gh-auth fallback with explicit caller policy ahead of ambient configuration. */
-pub fn github_auth_fallback_enabled(
-  args: GithubAuthFallbackPolicy = {},
-  environment_enabled: bool = false,
-) -> bool {
-  if args.keys().contains("allow_gh_auth_fallback") {
-    return args.allow_gh_auth_fallback ?? false
-  }
-  if args.keys().contains("gh_auth_fallback") {
-    return args.gh_auth_fallback ?? false
-  }
-  return environment_enabled
-}
-
-fn __allow_gh_auth_fallback(env: HarnessEnv, args) {
-  return github_auth_fallback_enabled(
-    args,
-    env.get_or("HARN_GITHUB_ALLOW_GH_AUTH_FALLBACK", "") == "1",
-  )
-}
-
-fn __gh_auth_token(env: HarnessEnv, process: HarnessProcess, args) {
-  const env_token = args?.gh_token ?? env.get("GH_TOKEN") ?? env.get("GITHUB_TOKEN")
-  if env_token != nil && trim(to_string(env_token)) != "" {
-    return Ok(to_string(env_token))
-  }
-  const output = try {
-    process.exec("gh", "auth", "token")
-  }
-  if is_err(output) {
-    return __err(
-      "auth",
-      "gh auth fallback is enabled, but `gh auth token` failed: " + to_string(unwrap_err(output)),
-    )
-  }
-  const result = unwrap(output)
-  if !(result?.success ?? false) {
-    return __err("auth", "gh auth fallback is enabled, but `gh auth token` exited non-zero")
-  }
-  const token = trim(to_string(result?.stdout ?? ""))
-  if token == "" {
-    return __err("auth", "gh auth fallback is enabled, but `gh auth token` returned an empty token")
-  }
-  return Ok(token)
-}
-
-fn __body_without(args, keys) {
-  const body = (args ?? {}) + {}
-  for key in keys {
-    body.remove(key)
-  }
-  return body
-}
-
-fn __github_api_url(api_base_url, path) {
-  const base = trim(to_string(api_base_url))
-  const prefix = if ends_with(base, "/") {
-    base[0:len(base) - 1]
-  } else {
-    base
-  }
-  if starts_with(path, "/") {
-    return prefix + path
-  }
-  return prefix + "/" + path
-}
-
-@complexity(allow)
-fn __validate_api_base_url(api_base_url) {
-  if api_base_url == nil || trim(to_string(api_base_url)) == "" {
-    return __err("invalid_api_base_url", "api_base_url is required")
-  }
-  const url = trim(to_string(api_base_url))
-  if !starts_with(lowercase(url), "https://") {
-    return __err("invalid_api_base_url", "api_base_url must use https:// scheme")
-  }
-  const after_scheme = url[8:len(url)]
-  const slash_idx = __index_of(after_scheme, "/")
-  const host_port = if slash_idx >= 0 {
-    after_scheme[0:slash_idx]
-  } else {
-    after_scheme
-  }
-  const host = __strip_port(host_port)
-  if host == "" {
-    return __err("invalid_api_base_url", "api_base_url is missing a host")
-  }
-  const host_lc = lowercase(host)
-  if __is_disallowed_host(host_lc) {
-    return __err(
-      "invalid_api_base_url",
-      "api_base_url host `" + host
-        + "` is not allowed (loopback/private/link-local/.internal/.local are blocked)",
-    )
-  }
-  return Ok(true)
-}
-
-fn __strip_port(host_port) {
-  if starts_with(host_port, "[") {
-    const close = __index_of(host_port, "]")
-    if close >= 0 {
-      return host_port[1:close]
-    }
-    return host_port
-  }
-  const colon = __index_of(host_port, ":")
-  if colon >= 0 {
-    return host_port[0:colon]
-  }
-  return host_port
-}
-
-fn __index_of(text, needle) {
-  const n = len(text)
-  const m = len(needle)
-  if m == 0 {
-    return 0
-  }
-  let i = 0
-  while i + m <= n {
-    if text[i:i + m] == needle {
-      return i
-    }
-    i = i + 1
-  }
-  return -1
-}
-
-@complexity(allow)
-fn __is_disallowed_host(host_lc) {
-  if host_lc == "localhost" {
-    return true
-  }
-  if ends_with(host_lc, ".localhost") || ends_with(host_lc, ".local")
-    || ends_with(
-    host_lc,
-    ".internal",
-  ) {
-    return true
-  }
-  if host_lc == "::1" || host_lc == "0:0:0:0:0:0:0:1" {
-    return true
-  }
-  if starts_with(host_lc, "127.") || starts_with(host_lc, "10.")
-    || starts_with(host_lc, "169.254.")
-    || starts_with(host_lc, "192.168.") {
-    return true
-  }
-  if starts_with(host_lc, "172.") {
-    const rest = host_lc[4:len(host_lc)]
-    const dot = __index_of(rest, ".")
-    if dot > 0 {
-      const octet_str = rest[0:dot]
-      const parsed = try {
-        to_int(octet_str)
-      }
-      if !is_err(parsed) {
-        const octet = unwrap(parsed)
-        if octet >= 16 && octet <= 31 {
-          return true
-        }
-      }
-    }
-  }
-  return false
-}
-
-fn __trim_leading_slash(path) {
-  const text = to_string(path)
-  if starts_with(text, "/") {
-    return text[1:len(text)]
-  }
-  return text
-}
-
-fn __pagination_query(args) {
-  let parts = []
-  if args?.per_page != nil {
-    parts = parts + ["per_page=" + url_encode(to_string(args.per_page))]
-  }
-  if args?.page != nil {
-    parts = parts + ["page=" + url_encode(to_string(args.page))]
-  }
-  if len(parts) == 0 {
-    return ""
-  }
-  return "?" + join(parts, "&")
-}
-
-fn __workflow_runs_query(args) {
-  let parts = []
-  const keys = [
-    "actor",
-    "branch",
-    "event",
-    "status",
-    "created",
-    "check_suite_id",
-    "head_sha",
-    "per_page",
-    "page",
-  ]
-  for key in keys {
-    const value = args.get(key)
-    if value != nil {
-      parts = parts + [key + "=" + url_encode(to_string(value))]
-    }
-  }
-  if len(parts) == 0 {
-    return ""
-  }
-  return "?" + join(parts, "&")
-}
-
-fn __workflow_run_jobs_query(args) {
-  let parts = []
-  const keys = ["filter", "per_page", "page"]
-  for key in keys {
-    const value = args.get(key)
-    if value != nil {
-      parts = parts + [key + "=" + url_encode(to_string(value))]
-    }
-  }
-  if len(parts) == 0 {
-    return ""
-  }
-  return "?" + join(parts, "&")
-}
-
-fn __pulls_list_query(args) {
-  let parts = []
-  if args?.state != nil {
-    parts = parts + ["state=" + url_encode(to_string(args.state))]
-  }
-  if args?.head != nil {
-    parts = parts + ["head=" + url_encode(to_string(args.head))]
-  }
-  if args?.base != nil {
-    parts = parts + ["base=" + url_encode(to_string(args.base))]
-  }
-  if args?.sort != nil {
-    parts = parts + ["sort=" + url_encode(to_string(args.sort))]
-  }
-  if args?.direction != nil {
-    parts = parts + ["direction=" + url_encode(to_string(args.direction))]
-  }
-  if args?.per_page != nil || args?.limit != nil {
-    parts = parts + ["per_page=" + url_encode(to_string(args?.per_page ?? args?.limit))]
-  }
-  if args?.page != nil {
-    parts = parts + ["page=" + url_encode(to_string(args.page))]
-  }
-  if len(parts) == 0 {
-    return ""
-  }
-  return "?" + join(parts, "&")
-}
-
-fn __ref_query(args) {
-  if args?.ref == nil || trim(to_string(args.ref)) == "" {
-    return ""
-  }
-  return "?ref=" + url_encode(to_string(args.ref))
-}
-
 fn __api_call(harness: Harness, args, cfg) {
   const path = args?.path
   if path == nil || trim(to_string(path)) == "" {
-    return __err("schema_drift", "api_call requires path")
+    return connector_error("schema_drift", "api_call requires path")
   }
   const method = uppercase(to_string(args?.method ?? "GET"))
   const body_result = __api_call_author_mode_body(args, method, path, cfg)
@@ -7852,7 +5065,7 @@ fn __author_mode(args) {
   if mode == "human" || mode == "bot" {
     return mode
   }
-  return __err("author_mode", "author_mode must be `human` or `bot`, got `" + mode + "`")
+  return connector_error("author_mode", "author_mode must be `human` or `bot`, got `" + mode + "`")
 }
 
 fn __git_signature(value, label) {
@@ -7862,7 +5075,7 @@ fn __git_signature(value, label) {
   const name = trim(to_string(value?.name ?? ""))
   const email = trim(to_string(value?.email ?? ""))
   if name == "" || email == "" {
-    return __err("author_mode", label + " must include name and email")
+    return connector_error("author_mode", label + " must include name and email")
   }
   return Ok({name: name, email: email})
 }
@@ -7871,7 +5084,7 @@ fn __human_commit_author(args) {
   const choice = __choice(args)
   const value = args?.author ?? choice?.commit_author ?? choice?.author
   if value == nil {
-    return __err(
+    return connector_error(
       "author_mode",
       "author_mode=human requires a commit author from args.author or github_author_choice.commit_author",
     )
@@ -7893,7 +5106,7 @@ fn __author_mode_requires_identity(mode, cfg, required, surface) {
   if cfg?.auth_identity == required {
     return Ok(true)
   }
-  return __err(
+  return connector_error(
     "author_mode",
     surface + " with author_mode=" + mode + " requires `" + required + "` authentication, got `"
       + to_string(
@@ -7917,7 +5130,7 @@ fn __line_present(text, line) -> bool {
 }
 
 fn __append_author_trailers(text, trailers) -> string {
-  let out = trim(to_string(text ?? ""))
+  const out = trim(to_string(text ?? ""))
   let lines = []
   for line in split(trim(to_string(trailers ?? "")), "\n") {
     const cleaned = trim(line)
@@ -7954,7 +5167,7 @@ fn __commit_write_body(args, strip_keys, cfg) {
       return identity
     }
     if args?.author != nil || args?.committer != nil {
-      return __err(
+      return connector_error(
         "author_mode",
         "author_mode=bot must omit custom author and committer fields so GitHub uses the App [bot] identity",
       )
@@ -8056,7 +5269,10 @@ fn __pulls_update_body(args) {
 fn __pulls_update(harness: Harness, args, cfg) {
   const number = args?.pull_number ?? args?.number ?? args?.pr_number
   if number == nil {
-    return __err("schema_drift", "pulls.update requires pull_number, number, or pr_number")
+    return connector_error(
+      "schema_drift",
+      "pulls.update requires pull_number, number, or pr_number",
+    )
   }
   const body = __pulls_update_body(args)
   if is_err(body) {
@@ -8224,399 +5440,7 @@ fn __prove_repository_access(harness: Harness, repo, cfg) {
   }
   if lowercase(trim(to_string(visible?.full_name ?? "")))
     != lowercase(repo.owner + "/" + repo.name) {
-    return __err("invalid_response", "GitHub repository access proof omitted full_name")
+    return connector_error("invalid_response", "GitHub repository access proof omitted full_name")
   }
   return Ok(true)
-}
-
-@complexity(allow)
-fn __github_json(harness: Harness, method, url, body, cfg) {
-  return __github_request(harness, method, url, body, cfg, "application/vnd.github+json", true)
-}
-
-fn __github_text(harness: Harness, method, url, cfg, accept) {
-  return __github_request(harness, method, url, nil, cfg, accept, false)
-}
-
-@complexity(allow)
-fn __github_request(harness: Harness, method, url, body, cfg, accept, parse_json) {
-  let current_token = cfg.installation_token
-  let retried_rate_limit = false
-  let retried_auth = false
-  while true {
-    const response = __github_policy_request(
-      harness.clock,
-      harness.net,
-      method,
-      url,
-      body,
-      cfg,
-      current_token,
-      accept,
-      parse_json,
-    )
-    if response.status == 401 && cfg.token_mode == "jwt" && !retried_auth {
-      retried_auth = true
-      invalidate_installation_token(harness.runtime, cfg.installation_id)
-      const refreshed = installation_token(harness, cfg)
-      if is_err(refreshed) {
-        return refreshed
-      }
-      current_token = to_string(refreshed)
-      continue
-    }
-    const limited = __maybe_wait_for_rate_limit(harness.clock, response, cfg)
-    if is_err(limited) {
-      return limited
-    }
-    if (response.status == 403 || response.status == 429) && unwrap(limited)
-      && !retried_rate_limit {
-      retried_rate_limit = true
-      continue
-    }
-    if !(response.ok ?? false) {
-      return __github_request_error(harness.clock, response)
-    }
-    if trim(response.body ?? "") == "" {
-      return {status: response.status, headers: response.headers, body: ""}
-    }
-    if !parse_json {
-      return response.body
-    }
-    return response.json
-  }
-}
-
-fn __github_policy_request(
-  clock: HarnessClock,
-  net: HarnessNet,
-  method,
-  url,
-  body,
-  cfg,
-  current_token,
-  accept,
-  parse_json,
-) {
-  const options = __github_policy_request_options(body, cfg, current_token, accept)
-  if parse_json {
-    return connector_http_json(clock, net, method, url, options)
-  }
-  return connector_http_request(clock, net, method, url, options)
-}
-
-fn __github_policy_request_options(body, cfg, current_token, accept) {
-  let options = {
-    provider: "github",
-    headers: {
-      Accept: accept,
-      "X-GitHub-Api-Version": GITHUB_API_VERSION,
-      "User-Agent": GITHUB_USER_AGENT,
-      Authorization: "Bearer " + current_token,
-    },
-    retry: __github_retry_policy(cfg),
-  }
-  if body != nil {
-    options["body"] = json_stringify(body)
-    options.headers["Content-Type"] = "application/json"
-  }
-  if cfg?.timeout_ms != nil {
-    options["timeout_ms"] = cfg.timeout_ms
-  }
-  if cfg?.idempotency_key != nil {
-    options["idempotency_key"] = cfg.idempotency_key
-  }
-  if cfg?.retry_unsafe != nil {
-    options["retry_unsafe"] = cfg.retry_unsafe
-  }
-  return options
-}
-
-fn __github_retry_policy(cfg) {
-  const source = cfg?.retry_policy ?? cfg?.retry ?? {}
-  let policy = {}
-  for entry in source.entries() {
-    policy[entry.key] = entry.value
-  }
-  if cfg?.max_attempts != nil && policy?.max_attempts == nil {
-    policy["max_attempts"] = cfg.max_attempts
-  }
-  if cfg?.base_ms != nil && policy?.base_ms == nil {
-    policy["base_ms"] = cfg.base_ms
-  }
-  if cfg?.backoff_ms != nil && policy?.backoff_ms == nil {
-    policy["backoff_ms"] = cfg.backoff_ms
-  }
-  if cfg?.cap_ms != nil && policy?.cap_ms == nil {
-    policy["cap_ms"] = cfg.cap_ms
-  }
-  if cfg?.respect_retry_after != nil && policy?.respect_retry_after == nil {
-    policy["respect_retry_after"] = cfg.respect_retry_after
-  }
-  if policy?.max_attempts == nil && policy?.max == nil {
-    policy["max_attempts"] = 1
-  }
-  policy["retry_on"] = __github_generic_retry_statuses(
-    policy?.retry_on ?? cfg?.retry_on ?? [408, 500, 502, 503, 504],
-  )
-  return policy
-}
-
-fn __github_generic_retry_statuses(statuses) {
-  let out = []
-  for status in statuses ?? [] {
-    const code = to_int(status)
-    if code != nil && code != 403 && code != 429 {
-      out = out + [code]
-    }
-  }
-  return out
-}
-
-fn __github_request_error(clock: HarnessClock, response) {
-  if response?.error?.category == "invalid_json" {
-    return __err("invalid_response", "GitHub API returned invalid JSON")
-  }
-  if response?.status == nil || to_int(response.status) == 0 {
-    return __err("network", response?.error?.message ?? to_string(response?.error ?? response))
-  }
-  if response.status == 422 {
-    const message = __github_error_message(response)
-    const lowered = lowercase(message)
-    if contains(lowered, "author") || contains(lowered, "committer")
-      || (contains(lowered, "commit")
-      && contains(
-      lowered,
-      "email",
-    )) {
-      return __err(
-        "restricted_commit_author",
-        "GitHub rejected the configured commit author/committer: " + message,
-        {http_status: response.status},
-      )
-    }
-    return __err(
-      "validation_failed",
-      "GitHub API validation failed: " + message,
-      {http_status: response.status},
-    )
-  }
-  const code = __github_error_code(clock, response)
-  return __err(
-    code,
-    "github API request failed with status " + to_string(response.status),
-    {http_status: response.status},
-  )
-}
-
-fn __github_error_code(clock: HarnessClock, response) {
-  if response.status == 401 {
-    return "auth"
-  }
-  if response.status == 403 || response.status == 429 {
-    if __is_rate_limit_response(clock, response) {
-      return "rate_limited"
-    }
-    const message = lowercase(__github_error_message(response))
-    if contains(message, "resource not accessible by integration") || contains(message, "scope")
-      || contains(
-      message,
-      "permission",
-    ) {
-      return "missing_scopes"
-    }
-    return "permission"
-  }
-  if response.status == 404 {
-    return "inaccessible_resource"
-  }
-  return "network"
-}
-
-fn __github_error_message(response) {
-  const body_text = response?.body ?? response?.error?.body ?? ""
-  const parsed = try {
-    json_parse(body_text)
-  }
-  if !is_err(parsed) {
-    const body = unwrap(parsed)
-    if body?.message != nil {
-      return to_string(body.message)
-    }
-  }
-  return to_string(body_text ?? response?.error?.message ?? "")
-}
-
-fn __is_rate_limit_response(clock: HarnessClock, response) {
-  if response.status == 429 {
-    return true
-  }
-  return trim(to_string(connector_http_rate_limit(clock, response)?.remaining ?? "")) == "0"
-}
-
-fn __maybe_wait_for_rate_limit(clock: HarnessClock, response, cfg) {
-  const rate_limit = connector_http_rate_limit(clock, response)
-  const remaining = rate_limit?.remaining
-  if remaining == nil || trim(to_string(remaining)) != "0" {
-    return Ok(false)
-  }
-  const reset = rate_limit?.x_ratelimit_reset ?? rate_limit?.reset
-  if reset == nil || trim(to_string(reset)) == "" {
-    return Ok(true)
-  }
-  const parsed_reset = try {
-    to_int(reset)
-  }
-  if is_err(parsed_reset) {
-    return Ok(true)
-  }
-  const wait_seconds = unwrap(parsed_reset) - __now_seconds(clock, cfg ?? {})
-  const max_sleep = max(
-    0,
-    to_int(cfg?.rate_limit_max_sleep_seconds ?? DEFAULT_RATE_LIMIT_MAX_SLEEP_SECONDS)
-      ?? DEFAULT_RATE_LIMIT_MAX_SLEEP_SECONDS,
-  )
-  if wait_seconds > max_sleep {
-    return __err(
-      "rate_limited",
-      "github API rate limit reset is more than " + to_string(max_sleep) + " seconds away",
-    )
-  }
-  if wait_seconds > 0 {
-    clock.sleep_ms(wait_seconds * 1000)
-  }
-  return Ok(true)
-}
-
-fn __resolve_token_config(config) {
-  const api_base_url = config?.api_base_url ?? GITHUB_API_BASE_URL
-  const base_check = __validate_api_base_url(api_base_url)
-  if is_err(base_check) {
-    return base_check
-  }
-  const app_id = config?.app_id
-  const installation_id = config?.installation_id
-  if app_id == nil || installation_id == nil {
-    return __err("missing_credentials", "installation_token requires app_id and installation_id")
-  }
-  return Ok(
-    {
-      api_base_url: to_string(api_base_url),
-      app_id: app_id,
-      installation_id: installation_id,
-      private_key_pem: config?.private_key_pem,
-      private_key_secret: config?.private_key_secret,
-      jwt_alg: config?.jwt_alg ?? "RS256",
-      jwt_backdate_seconds: config?.jwt_backdate_seconds ?? DEFAULT_JWT_BACKDATE_SECONDS,
-      jwt_ttl_seconds: config?.jwt_ttl_seconds ?? DEFAULT_JWT_TTL_SECONDS,
-      token_refresh_skew_seconds: config?.token_refresh_skew_seconds
-        ?? DEFAULT_TOKEN_REFRESH_SKEW_SECONDS,
-      now: config?.now,
-      timeout_ms: config?.timeout_ms,
-      rate_limit_max_sleep_seconds: config?.rate_limit_max_sleep_seconds
-        ?? DEFAULT_RATE_LIMIT_MAX_SLEEP_SECONDS,
-    }
-      + __http_policy_config(config),
-  )
-}
-
-fn __token_cache(runtime: HarnessRuntime) {
-  return runtime.store_get(TOKEN_CACHE_KEY) ?? {}
-}
-
-fn __private_key_pem(secrets: HarnessSecrets, config) {
-  if config?.private_key_secret != nil && trim(to_string(config.private_key_secret)) != "" {
-    const resolved = try {
-      secrets.read(to_string(config.private_key_secret))
-    }
-    if is_err(resolved) {
-      return __err(
-        "missing_private_key",
-        "failed to resolve private_key_secret: " + to_string(unwrap_err(resolved)),
-      )
-    }
-    return Ok(to_string(unwrap(resolved)))
-  }
-  if config?.private_key_pem != nil && trim(to_string(config.private_key_pem)) != "" {
-    return Ok(to_string(config.private_key_pem))
-  }
-  return __err(
-    "missing_private_key",
-    "github connector requires private_key_secret or private_key_pem",
-  )
-}
-
-@complexity(allow)
-fn __exchange_installation_token(harness: Harness, config) {
-  const jwt_result = mint_app_jwt(harness.clock, harness.secrets, config)
-  if is_err(jwt_result) {
-    return jwt_result
-  }
-  const jwt = unwrap(jwt_result)
-  const url = __github_api_url(
-    config.api_base_url,
-    "/app/installations/" + to_string(config.installation_id) + "/access_tokens",
-  )
-  const response = connector_http_json(
-    harness.clock,
-    harness.net,
-    "POST",
-    url,
-    {
-      provider: "github",
-      operation: "installation_token",
-      headers: {
-        Accept: "application/vnd.github+json",
-        "X-GitHub-Api-Version": GITHUB_API_VERSION,
-        "User-Agent": GITHUB_USER_AGENT,
-        Authorization: "Bearer " + jwt,
-        "Content-Type": "application/json",
-      },
-      body: "",
-      timeout_ms: config?.timeout_ms ?? 30000,
-      retry: __github_retry_policy(config),
-    },
-  )
-  if !(response.ok ?? false) {
-    if response?.error?.category == "invalid_json" {
-      return __err("invalid_response", "GitHub installation token response was not valid JSON")
-    }
-    if response?.status == nil {
-      return __err("transport", response?.error?.message ?? to_string(response?.error ?? response))
-    }
-    return __err(
-      "installation_token_failed",
-      "failed to create GitHub installation token (status " + to_string(response.status) + ")",
-    )
-  }
-  const payload = response.json
-  if payload?.token == nil {
-    return __err("invalid_response", "GitHub installation token response did not include token")
-  }
-  return Ok(payload)
-}
-
-fn __token_refresh_at(expires_at, now, config) {
-  const skew = config?.token_refresh_skew_seconds ?? DEFAULT_TOKEN_REFRESH_SKEW_SECONDS
-  if expires_at == nil || expires_at == "" {
-    return now + 3000
-  }
-  const parsed_result = try {
-    to_int(date_parse(to_string(expires_at)))
-  }
-  if is_err(parsed_result) {
-    return now + 3000
-  }
-  const refresh_at = unwrap(parsed_result) - skew
-  if refresh_at <= now {
-    return now
-  }
-  return refresh_at
-}
-
-fn __now_seconds(clock: HarnessClock, config) {
-  if config?.now != nil {
-    return to_int(config.now)
-  }
-  return to_int(date_parse(clock.date_iso()))
 }

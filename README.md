@@ -1,564 +1,71 @@
 # harn-github-connector
 
-Pure-Harn GitHub App connector for the Harn orchestrator. It verifies inbound
-webhook signatures, normalizes GitHub events to Harn `TriggerEvent` payloads,
-and dispatches outbound REST and GraphQL calls.
+Pure-Harn GitHub App connector for signed webhooks and typed REST and GraphQL
+operations. It implements Harn Connector Contract v1.
 
-The package implements the Harn Connector Contract v1. Shared connector rules
-live in the
-[Harn connector authoring guide](https://github.com/burin-labs/harn/blob/main/docs/src/connectors/authoring.md).
-
-Use `.harn-version` as the source of truth for the tested `harn-cli` release.
-The package manifest supports Harn `>=0.10,<0.11`.
+The [Harn connector authoring guide](https://github.com/burin-labs/harn/blob/main/docs/src/connectors/authoring.md)
+defines the shared connector contract. This repository documents GitHub-specific
+setup and behavior.
 
 ## Install
 
-Install the pinned Harn CLI:
+Install the Harn version pinned by this repository:
 
 ```sh
 cargo install harn-cli --version "$(cat .harn-version)" --locked
 harn --version
 ```
 
-Add the released connector:
+Add the released package:
 
 ```sh
-harn add github.com/burin-labs/harn-github-connector@v0.4.0
+harn add github.com/burin-labs/harn-github-connector@v0.5.0
 ```
 
-For local multi-repo development, use a path dependency:
+For local development, use a path dependency:
 
 ```toml
 [dependencies]
 harn-github-connector = { path = "../harn-github-connector" }
 ```
 
-## Usage
+## Make an outbound call
+
+Every call returns `Result<value, GithubConnectorError>`. Pass `Harness` so the
+connector uses the host's network, secrets, clock, process, and runtime state.
 
 ```harn
-import github_connector from "harn-github-connector/default"
-
-trigger pr_review on github {
-  source = {
-    kind: "webhook",
-    app_id: env("GITHUB_APP_ID"),
-    installation_id: env("GITHUB_INSTALLATION_ID"),
-    events: ["pull_request"],
-  }
-
-  on event {
-    if event.kind == "pull_request" && event.payload.action == "opened" {
-      unwrap(github_connector.call("issues.create_comment", {
-        owner: event.payload.repository.owner.login,
-        repo: event.payload.repository.name,
-        issue_number: event.payload.pull_request.number,
-        body: "Thanks for the PR!",
-      }))
-    }
-  }
-}
-```
-
-## Inbound webhooks
-
-Supported GitHub events:
-
-```text
-issues
-pull_request
-issue_comment
-pull_request_review
-push
-workflow_run
-deployment_status
-check_run
-check_suite
-status
-merge_group
-installation
-installation_repositories
-release
-```
-
-Normalized payloads keep the raw GitHub payload under `raw` and promote stable
-fields for Harn consumers:
-
-| Field | Notes |
-|---|---|
-| `provider` | Always `github`. |
-| `event` | GitHub event kind, such as `pull_request` or `merge_group`. |
-| `topic` | `github.<event>` or `github.<event>.<action>`. |
-| `reaction_topics` | Semantic `github.reaction.*` topics derived from the payload. |
-| `action` | GitHub payload action when present. |
-| `delivery_id` | `X-GitHub-Delivery`; also used for the dedupe key. |
-| `installation_id` | GitHub App installation id when present. |
-| `repository` / `repo` | Raw repository plus normalized `{owner, name, full_name}`. |
-| `source` / `source_refs` | Provider-neutral source refs with repo slugs, resource ids, and links. |
-| `mention` | `@handle command args...` directives parsed from issue/PR/comment bodies: `{candidates: [{handle, command, rest}], actor, command, handle, rest, issue_number?, comment_id?, html_url?}`. CPU-only; downstream filters `candidates` by bot identity. |
-| `triage_event` | `harn.triage_event.v1` envelope for issues, PRs, comments, and reviews. |
-| `job_event` | `harn.job_event.v1` envelope for checks, runs, releases, pushes, deployments, and merge queue events. |
-| `raw` | Original GitHub payload for fields not promoted by the connector. |
-
-Dashboard envelopes promote the fields orchestration hosts need to render
-source-linked task and job cards: URL, timestamp, actors, summary, proposed
-action, priority/status, dedupe key, privacy flags, related refs, and action
-intents. Provider write intents are descriptive and carry
-`requires_approval: true`; hosts decide whether to approve and execute them.
-
-Merge Captain and release consumers should subscribe to these topics:
-
-| Topic | Promoted fields |
-|---|---|
-| `github.pull_request.<action>` | `pull_request`, `pull_request_number`, `head_sha`, `head_ref`, `base_sha`, `base_ref`, `draft`, `merged`, `labels` |
-| `github.check_run.<action>` | `check_run`, `check_id`, `check_run_id`, `check_suite_id`, `pull_request_number`, `head_sha`, `head_ref`, `base_ref`, `name`, `status`, `conclusion` |
-| `github.check_suite.<action>` | `check_suite`, `check_suite_id`, `pull_request_number`, `head_sha`, `head_ref`, `base_ref`, `status`, `conclusion` |
-| `github.workflow_run.<action>` | `workflow_run`, `run_id`, `run_number`, `workflow_id`, `check_suite_id`, `pull_request_number`, `head_sha`, `head_ref`, `base_ref`, `name`, `status`, `conclusion` |
-| `github.status` | `commit_status`, `status_id`, `head_sha`, `head_ref`, `base_ref`, `state`, `context`, `target_url` |
-| `github.merge_group.<action>` | `merge_group`, `merge_group_id`, `head_sha`, `head_ref`, `base_sha`, `base_ref`, `pull_requests`, `pull_request_numbers` |
-| `github.push` | `ref`, `ref_name`, `before`, `after`, `head_sha`, `head_ref`, `commits`, `distinct_size`, `head_commit`, `pusher`, `created`, `deleted`, `forced` |
-| `github.installation.<action>` | `installation`, `account`, `installation_state`, `suspended`, `revoked`, `repositories` |
-| `github.installation_repositories.<action>` | `installation`, `account`, `installation_state`, `suspended`, `revoked`, `repository_selection`, `repositories_added`, `repositories_removed` |
-| `github.release.<action>` | `release`, `release_id`, `tag_name`, `name`, `draft`, `prerelease`, `target_commitish`, `published_at`, `assets` |
-
-Semantic reaction topics:
-
-| Topic | Emitted when |
-|---|---|
-| `github.reaction.ci_failure` | A `check_run`, `check_suite`, `workflow_run`, or legacy `status` payload concludes in a failure/error state. |
-| `github.reaction.merge_conflict` | A pull request payload reports `mergeable_state: "dirty"`. |
-
-## Outbound calls
-
-Every outbound operation has one fallible boundary. `call(method, args)` always
-returns `Result<unknown, GithubConnectorError>`; unwrap or narrow the Result
-before reading the success value. Prefer a named helper when available because
-its return type names the normalized success contract. `call_typed` adds an
-explicit runtime schema check when using a dynamic escape hatch.
-
-```harn
-import {
-  GithubConnectorResult,
-  GithubReleaseLookup,
-  github_release,
-} from "harn-github-connector/default"
-
-const result: GithubConnectorResult<GithubReleaseLookup> = github_release(
-  "octo-org",
-  "octo-repo",
-  "v1.2.3",
-  auth,
-)
-if is_err(result) {
-  throw unwrap_err(result).message
-}
-const release = unwrap(result)
-```
-
-The default module exports closed records for pull requests, checks, workflow
-runs and dispatches, releases, merge queues, mergeability, auto-merge receipts,
-commit signatures, and connector errors. These records are importable in
-downstream annotations and compose through `GithubConnectorResult<T>`.
-
-| Area | Methods |
-|---|---|
-| Pull requests | `github.pr.list`, `github.pr.create`, `github.pr.view`, `github.pr.edit`, `github.pr.files`, `github.pr.commits`, `github.pr.checks`, `github.pr.merge`, `github.pr.enable_auto_merge`, `github.pr.comment`, `pulls.list`, `pulls.list_with_checks`, `pulls.get`, `pulls.update`, `pulls.create`, `pulls.merge`, `pulls.merge_safe`, `pulls.create_review_comment`, `pulls.get_diff`, `pulls.list_files`, `pulls.list_reviews`, `pull_requests.resolve_mergeable`, `repos.commit_pulls` |
-| Actions and checks | `github.actions.workflow_dispatch`, `github.actions.runs`, `github.actions.run`, `github.actions.run_jobs`, `github.actions.run_cancel`, `github.actions.logs`, `actions.workflow_dispatch`, `actions.workflow_runs.list`, `actions.workflow_run.get`, `actions.workflow_run.jobs`, `actions.workflow_run.cancel`, `check_runs.create`, `check_runs.update` |
-| Self-hosted runners | `actions.runners.registration_token`, `actions.runners.remove_token`, `actions.runners.generate_jitconfig`, `actions.runners.list`, `actions.runners.get`, `actions.runners.delete`, `actions.runners.downloads`, `actions.runners.labels.list`, `actions.runners.labels.add`, `actions.runners.labels.replace`, `actions.runners.labels.remove`, `actions.runner_groups.list`, `actions.runner_groups.create`, `actions.runner_groups.get`, `actions.runner_groups.update`, `actions.runner_groups.delete` |
-| User OAuth | `oauth.user.device_code`, `oauth.user.device_poll`, `oauth.user.exchange_code`, `oauth.user.refresh` |
-| Issues | `github.issue.create`, `github.issue.comment`, `issues.create_comment`, `issues.create`, `issues.create_with_template`, `issues.update`, `issues.add_labels` |
-| Repository and release data | `github.file.view`, `github.release.view`, `github.release.edit_body`, `github.release.latest`, `github.release.assets`, `github.commit.signature`, `github.branch.protection`, `github.branch.create_signed_commit`, `repos.get_content`, `repos.get_text`, `repos.create_or_update_file`, `repos.put_content`, `repos.delete_file`, `repos.get_latest_release`, `repos.list_release_assets`, `repos.get_branch_protection`, `git.create_commit`, `git.delete_ref` |
-| Merge queue | `github.merge_queue.entries`, `github.merge_queue.membership`, `github.merge_queue.enqueue` |
-| Raw access | `api_call`, `graphql` |
-
-The namespaced methods above are the canonical automation boundary. Covered
-operations return `Ok(closed_normalized_record)` or a typed
-`Err({code, category, message, http_status?})`; callers should not issue their own GraphQL or parse
-raw REST responses for the same operation.
-
-- `github.pr.enable_auto_merge` and `github.merge_queue.enqueue` require
-  `expected_head_oid`. A mismatched lease returns `stale_head` without mutating.
-- `github.merge_queue.membership` reports `queued: true` only when GitHub
-  returns a `mergeQueueEntry`. An `autoMergeRequest` is reported separately as
-  `auto_merge_armed`.
-- `github.pr.view` keeps the base PR read when branch-protection administration
-  permission is unavailable. Its `branch_protection.available` is `false` and
-  retains the structured permission error.
-- Canonical PR summaries, details, views, and lists expose `merged_at` and
-  `merge_commit_oid`. A PR reported as merged must carry both fields or the
-  response fails closed. `github.pr.commits` reads every commit page under one
-  stable head lease and returns each commit's message plus normalized signature
-  evidence; unsigned commits remain successful `verified: false` evidence. The
-  method fails closed rather than claim completeness when GitHub reports more
-  than the pull-request endpoint's 250-commit limit. Open-PR test-merge SHAs are
-  not exposed as actual merge commit OIDs.
-- `github.actions.workflow_dispatch` requires GitHub's returned run id and
-  resolves that exact accepted identity; a legacy empty response fails closed
-  without polling workflow lists. Dispatch and run records include workflow
-  path/id, run attempt, branch, SHA, event, and URL.
-  `github.actions.run_cancel` requests cancellation of one exact run;
-  `github.actions.runs`, `github.actions.run`, and `github.actions.run_jobs`
-  return closed run, job, and step evidence. The run-list envelope uses typed
-  `runs`, never GitHub's raw `workflow_runs` payload.
-- `github.file.view` requires an exact `ref`, and `github.release.view` requires
-  an exact `tag`. They return `state: "found" | "absent"`; a `404` is absence
-  only after the same credential proves repository access. Masked private
-  resources and transport failures remain `Err`. Exact release views include
-  the release id, tag-ref object, and peeled tag target as a mutation lease.
-- `github.release.edit_body` accepts that complete lease and re-observes it
-  before issuing one body-only metadata update. Stale release ids or tag
-  identities fail closed; tags and assets cannot be included in the request.
-- `github.commit.signature` returns GitHub's normalized `verified`, `reason`,
-  material-presence, and `verified_at` evidence. Unsigned and invalid
-  signatures are successful reads with `verified: false`, not transport errors.
-
-`api_call`, `graphql`, and the unnamespaced methods remain low-level escape
-hatches for operations without a canonical method. They are not compatibility
-paths for the methods above.
-
-Named helpers:
-
-| Helper | Purpose |
-|---|---|
-| `pulls_list_with_checks(owner, repo, state, limit, options)` | List PRs with merge state and CI rollup. |
-| `pulls_update(owner, repo, number, edits, options)` | Update a closed set of editable PR fields. |
-| `pulls_merge_safe(owner, repo, number, options)` | Merge after checking branch protection. |
-| `pulls_enable_auto_merge(owner, repo, number, options)` | Enable GitHub auto-merge; `options.expected_head_oid` is required. |
-| `github_pr_commits(owner, repo, number, options)` | Read every commit and normalized signature under one stable PR head; `options.expected_head_oid` is optional. |
-| `actions_workflow_dispatch(owner, repo, workflow_id, ref, inputs, options)` | Dispatch a workflow. |
-| `actions_workflow_runs(owner, repo, options)` | List workflow runs. |
-| `actions_workflow_run(owner, repo, run_id, options)` | Fetch one workflow run by its exact id. |
-| `actions_workflow_run_jobs(owner, repo, run_id, options)` | List a workflow run's jobs and steps; options support `filter`, `per_page`, and `page`. |
-| `actions_workflow_run_cancel(owner, repo, run_id, options)` | Request cancellation of one exact workflow run. |
-| `api_call(path, method, body, options)` | Call one REST endpoint. Prefer typed helpers when available. |
-| `repos_get_text(owner, repo, path, ref, options)` | Decode repository file content as UTF-8 text. |
-| `repos_get_latest_release(owner, repo, options)` | Fetch latest release metadata. |
-| `repos_list_release_assets(owner, repo, release_id, options)` | List assets for a release id. |
-| `github_latest_release(owner, repo, options)` | Fetch latest release metadata in a stable envelope. |
-| `github_release_assets(owner, repo, release_id, options)` | List release assets in a stable envelope; defaults to the latest release. |
-| `issues_create_with_template(owner, repo, template, vars, options)` | Render a small title/body template, then create an issue. |
-| `github_dispatch_workflow_and_resolve_run(owner, repo, workflow_id, ref, inputs, options)` | Dispatch a workflow and return its exact run identity before terminal monitoring. |
-| `github_dispatch_workflow_and_wait(owner, repo, workflow_id, ref, inputs, options)` | Dispatch a workflow, require GitHub's returned run id, and wait on only that exact run. |
-| `github_wait_for_workflow_run(owner, repo, run_id_or_filter, options)` | Poll an existing workflow run or a filtered run lookup. |
-| `github_ensure_auto_merge(owner, repo, pull_number, options)` | Enable auto-merge under required `options.expected_head_oid`; returns the canonical `Result`. |
-| `github_wait_for_pr_checks(owner, repo, pull_number_or_ref, options)` | Wait for visible PR or commit checks; optionally attach failing Actions log tails. |
-| `github_find_open_pr(owner, repo, options)` | Find the first open PR matching `head_ref`, `base_ref`, `title`, or `labels`. |
-| `github_close_pr(owner, repo, pull_number, comment, options)` | Close a PR and optionally post a final comment. |
-| `github_resolve_mergeable(owner, repo, pull_number, options)` | Resolve a PR's async `mergeable`/`mergeable_state` with bounded polling; returns `GithubConnectorResult<GithubMergeability>`. |
-| `github_resolve_pr_for_sha(owner, repo, sha, options)` | Resolve the PR for a commit SHA, preferring payload `pull_requests[]` and falling back to `repos.commit_pulls`. |
-| `github_create_signed_commit(request, options)` | Atomically append file additions/deletions at an expected head OID through GitHub's verified App-signing path. |
-| `github_release(owner, repo, tag, options)` | Look up one exact release tag with proven-absence semantics. |
-| `github_release_edit_body(owner, repo, tag, body, lease, options)` | Replace an exact release body under its observed release and tag lease. |
-| `github_extract_mentions(body)` | Pure string parse of `@handle command args...` mentions in a body. |
-| `actions_runner_registration_token(scope, options)` | Create a self-hosted runner registration token (`scope` is `{org}` or `{owner, repo}`). |
-| `actions_runner_generate_jitconfig(scope, name, runner_group_id, labels, options)` | Generate a stateless single-use JIT runner config. |
-| `actions_runners_list(scope, options)` | List self-hosted runners for a repo or org scope. |
-| `oauth_user_device_code(client_id, scope, options)` | Begin the user OAuth device flow. |
-| `oauth_user_device_poll(client_id, device_code, options)` | Poll for the device-flow user token. |
-| `oauth_user_exchange_code(client_id, code, options)` | Exchange a web-flow code for a user token. |
-| `oauth_user_refresh(client_id, refresh_token, options)` | Refresh an expiring `ghu_` user token (rotates the `ghr_` refresh token). |
-
-Token helpers:
-
-| Helper | Purpose |
-|---|---|
-| `mint_app_jwt(clock, secrets, config)` | Mint a GitHub App JWT with Harn `jwt_sign`. |
-| `installation_token(harness, config)` | Return a cached installation token or refresh it when stale. |
-| `reset_token_cache(runtime)` | Clear all cached installation tokens. |
-| `invalidate_installation_token(runtime, installation_id)` | Remove one cached installation token. |
-
-Common auth options include `installation_token`,
-`app_id`/`installation_id`/`private_key_secret`, `api_base_url`, and
-`allow_gh_auth_fallback`. Wait helpers accept `poll_interval_ms`, `timeout_ms`,
-and `max_attempts`; `max_attempts` wins over wall-clock timeout to keep tests
-deterministic.
-
-## Worktree-to-signed-commit adapter
-
-`harn-github-connector/worktree` is a separate export that turns one exact
-local Git state into a GitHub-signed commit. It is the only part of this
-package that shells out to `git`; the default export stays a pure HTTP surface.
-
-```harn,ignore
-import {
-  GithubWorktreeCommitRequest,
-  github_commit_worktree,
-} from "harn-github-connector/worktree"
-
-const request: GithubWorktreeCommitRequest = {
-  owner: "octo-org",
-  repo: "octo-repo",
-  branch: "automation/bump",
-  headline: "Bump the pinned runtime",
-  repo_dir: "/path/to/checkout",
-  source: "worktree",
-  create_branch: true,
-  reset_branch: true,
-}
-const receipt = unwrap(github_commit_worktree(harness, request, {installation_token: token}))
-```
-
-| Helper | Purpose |
-|---|---|
-| `github_worktree_delta(process, selector)` | Derive typed additions/deletions from an exact Git state. No network I/O. |
-| `github_commit_worktree(harness, request, options)` | Derive, take the branch lease, publish through `github_create_signed_commit`, return one receipt. |
-
-Behavior worth knowing before you use it:
-
-- `source` is `"worktree"` (HEAD versus the full working tree, including
-  untracked non-ignored files, staged through a scratch `GIT_INDEX_FILE`) or
-  `"index"` (HEAD versus the caller's real index). Neither mutates the caller's
-  index or working tree.
-- `base_oid` must equal the local `HEAD`; it defaults to it. A payload derived
-  against a different tree would not describe the leased commit.
-- Renames become delete-old plus add-new. Blob bytes are preserved exactly,
-  binary included.
-- `createCommitOnBranch` carries only `path` and `contents`, so it cannot
-  *specify* a mode — but it does preserve the base tree entry's mode for a path
-  it already tracks. Modes are gated accordingly, always before any network
-  request:
-
-  | Case | Outcome |
-  |---|---|
-  | Tracked `100755` edited, mode unchanged | Published; GitHub keeps `100755` |
-  | New path with mode `100755` (added, copied, or a rename destination) | `unsupported_new_executable` |
-  | Mode changes between the base tree and the selected state | `unsupported_mode_change` |
-  | Symlink `120000` or submodule `160000` on either side | `unsupported_file_mode` |
-
-  Deletions carry no mode and are always supported.
-- An empty delta returns `committed: false`, `branch_action: "skipped"`, and
-  performs no network call.
-- A branch head that differs from the lease fails with `stale_head` unless
-  `reset_branch` is set.
-
-### Publishing from CI
-
-`harn-github-connector/publish` is a command-line front end for the adapter, so
-a workflow does not have to hand-roll argument parsing, a step summary, and
-exit codes around it. Harn packages export modules rather than commands, so a
-consumer keeps one entry file for `harn run` to target:
-
-```harn,ignore
-import { publish_main } from "harn-github-connector/publish"
+import { call } from "harn-github-connector/default"
 
 fn main(harness: Harness) {
-  harness.runtime.exit(publish_main(harness, argv ?? []))
-}
-```
-
-```bash
-harn run --no-sandbox scripts/signed-commit/publish.harn -- \
-  --repo octo-org/octo-repo \
-  --branch automation/bump \
-  --headline "Bump the pinned runtime" \
-  --source index
-```
-
-`--no-sandbox` is required: the adapter shells out to `git` plumbing, writes a
-scratch index outside the checkout, and calls the GitHub API.
-
-| Flag | Meaning |
-|---|---|
-| `--repo` | Target repository as `owner/repo`. Required. |
-| `--branch` | Automation branch to create or reset onto the base commit. Required. |
-| `--headline` | Commit headline. Required. |
-| `--body` | Optional commit body. An absent body stays absent, not empty. |
-| `--repo-dir` | Checkout to read from. Defaults to the current directory. |
-| `--source` | `worktree` (default) or `index`. |
-| `--no-reset` | Fail instead of force-moving a branch that is not at the base commit. |
-
-Exit status is `0` published, `1` the publish failed, `2` the invocation was
-wrong — so a CI step can tell a broken workflow edit apart from a GitHub-side
-failure. An empty delta exits `1` rather than reporting success for a commit
-that was never made; callers that stage their own change have already
-established there is something to publish.
-
-Credentials are the connector's contract: set `GITHUB_INSTALLATION_TOKEN`, or
-`GITHUB_APP_ID` + `GITHUB_INSTALLATION_ID` with a private key.
-
-## GitHub App setup
-
-Create a GitHub App and install it into the target account or repository set.
-Set its webhook URL to `https://<public-host>/webhooks/github`, record the App
-ID and Installation ID, configure a webhook secret, then store the private key
-PEM in a Harn SecretProvider. Do not commit real GitHub App private keys or
-webhook secrets.
-
-```sh
-harn connect github --app-slug harn-example --app-id 12345 \
-  --private-key-file ./harn-example.private-key.pem \
-  --webhook-secret-file ./github-webhook-secret --json
-harn connect status --connector github --json
-```
-
-After status is healthy, remove the temporary files. Rotate an App key by
-adding and validating the replacement before deleting the old key in GitHub.
-Rotate the webhook secret by updating GitHub and the Harn secret provider in
-the same maintenance window, then prove the old signature is rejected and the
-new signature is accepted.
-
-Inbound webhooks must include GitHub's `X-GitHub-Event`,
-`X-GitHub-Delivery`, and `X-Hub-Signature-256` headers. The connector verifies
-the signature against the raw request body with `signing_secret`.
-
-Managed ingress hosts can pass the webhook secret by value as `signing_secret`
-or by secret-provider alias through `signing_secret_id`,
-`secret_ids.signing_secret`, or `config.secrets.signing_secret`.
-
-Example outbound call configuration:
-
-```harn
-unwrap(github_connector.call("issues.create_comment", {
-  app_id: env("GITHUB_APP_ID"),
-  installation_id: env("GITHUB_INSTALLATION_ID"),
-  private_key_secret: "github/app-private-key",
-  owner: "octo-org",
-  repo: "demo",
-  issue_number: 123,
-  body: "Thanks for the PR!",
-}))
-```
-
-For local fixture tests only, `private_key_pem` can be passed inline.
-Production setup should use `private_key_secret` so Harn resolves the PEM
-through `secret_get`.
-
-Required GitHub App permissions depend on the method:
-
-| Methods | GitHub App permission |
-|---|---|
-| Issue helpers and issue comments | Issues read/write, or Pull requests read/write when acting on PRs. |
-| PR read helpers, diffs, files, and reviews | Pull requests read. |
-| PR merge, safe merge, auto-merge, and review comments | Pull requests write; protected branches may also require administrator or bypass permissions. |
-| Repository content and release helpers | Contents read. |
-| Repository content write helpers and `git.create_commit` | Contents write. Pass `github_author_choice` from `std/disclosure` to enforce `author_mode`. |
-| `git.delete_ref` | Contents write. |
-| Branch protection helpers | Administration read. |
-| Actions dispatch | Actions write. |
-| Actions run and log reads | Actions read. |
-| Self-hosted runner reads (list/get/labels.list/downloads) | Repo `administration:read` or org `organization_self_hosted_runners:read`. |
-| Self-hosted runner writes (registration/remove tokens, JIT config, delete, label add/replace/remove, runner groups) | Repo `administration:write` or org `organization_self_hosted_runners:write`. |
-| Check run create/update | Checks read/write. |
-| `api_call` and `graphql` | Whatever the endpoint, query, or mutation requires. |
-
-The connector signs a GitHub App JWT with Harn `jwt_sign`, exchanges it for an
-installation access token, caches that token until its refresh window, and
-invalidates the cache after a `401` before retrying once.
-
-Callers that already have an installation token can pass `installation_token`.
-For local development only, callers may pass `allow_gh_auth_fallback: true`.
-When enabled and no installation credentials are present, the connector uses an
-explicit `gh_token`, `GH_TOKEN`, `GITHUB_TOKEN`, or `gh auth token`.
-
-## Operational notes
-
-- Webhook normalization rejects missing, unsupported, or invalid signatures.
-- Webhook signing secrets may be supplied directly for local tests or resolved
-  from the active Harn SecretProvider.
-- Outbound calls use GitHub App installation tokens or a caller-provided
-  installation token. The `oauth.user.*` methods add a separate
-  user-to-server flow (device and web-flow) for "connect your GitHub account";
-  they post to github.com, not the REST API host, and do not affect the App
-  flow that drives webhooks. `ghu_` user tokens last 8h and `ghr_` refresh
-  tokens 6 months; both rotate on refresh, so persist the returned
-  `refresh_token`.
-- Outbound HTTP dispatch uses Harn's shared connector policy layer for request
-  envelopes, retries, rate-limit header extraction, and JSON parse categories.
-- GitHub primary rate-limit responses with short reset windows are retried
-  once. Longer waits return `rate_limited` instead of sleeping in CI or webhook
-  paths.
-- Generic retries do not replay `POST` or `PATCH` requests unless the caller
-  supplies `idempotency_key` or opts into `retry_unsafe`.
-- Author-mode-aware commit and PR write helpers accept `github_author_choice`
-  from `std/disclosure`. Human commit mode sends the selected human
-  `commit_author` and appends actor-chain trailers. Bot mode requires GitHub
-  App installation auth and omits custom author/committer fields so GitHub
-  uses the App `[bot]` identity. Human PR creation requires user auth because
-  GitHub assigns PR authorship from the authenticated identity.
-- Outbound errors carry deterministic `category` values for typed callers:
-  `auth`, `permission`, `rate_limit`, `branch_protection`, `merge_queue`,
-  `checks_pending`, `checks_failed`, `validation_failed`,
-  `restricted_commit_author`, `network`, and `schema_drift`.
-- The connector exposes a focused REST/GraphQL surface rather than vendoring a
-  generated GitHub SDK.
-
-## Development
-
-Install the pinned Harn CLI from crates.io:
-
-```sh
-cargo install harn-cli --version "$(cat .harn-version)" --locked
-harn --version
-```
-
-Run the local CI equivalent:
-
-```sh
-harn install
-harn check src
-harn lint src
-harn fmt --check src tests
-harn package verify . --provider github
-printf '%s\0' tests/*.harn \
-  | xargs -0 -n1 -P 4 env HARN_EGRESS_BLOCK_PRIVATE=off harn run
-harn test tests --parallel
-```
-
-`harn package verify . --provider github` runs the package, import, docs, and
-deterministic connector-contract gates, including supported event variants and
-a signature rejection case.
-The `tests/fixtures/webhooks/` payloads are synthetic compatibility fixtures;
-they should stay free of live GitHub secrets or private repository data.
-
-For the package install/import smoke used by CI:
-
-```sh
-smoke_root="$(mktemp -d)"
-cat > "$smoke_root/harn.toml" <<'EOF'
-[package]
-name = "harn-github-connector-consumer-smoke"
-version = "0.0.0"
-EOF
-cd "$smoke_root"
-harn add /path/to/harn-github-connector@HEAD
-cat > smoke.harn <<'EOF'
-import {
-  GithubConnectorResult,
-  GithubReleaseLookup,
-} from "harn-github-connector/default"
-
-fn release_state(result: GithubConnectorResult<GithubReleaseLookup>) -> string {
+  const result = call(harness, "github.issue.comment", {
+    owner: "octo-org",
+    repo: "octo-repo",
+    issue_number: 123,
+    body: "Thanks for the pull request.",
+  })
   if is_err(result) {
-    return unwrap_err(result).code
+    throw unwrap_err(result).message
   }
-  return unwrap(result).state
 }
-EOF
-harn check smoke.harn
 ```
 
-## Release process
+Configure a GitHub App before making live calls. The connector can mint and
+cache installation tokens or accept a caller-provided installation token.
 
-Release validation is tag-driven. Before tagging, update `[package].version` in
-`harn.toml` and add a matching `CHANGELOG.md` heading, then run:
+## Documentation
 
-```sh
-scripts/check-release.sh vX.Y.Z
-```
-
-After the release PR lands on `main`, create and push the tag:
-
-```sh
-git tag vX.Y.Z
-git push origin vX.Y.Z
-```
-
-The Release workflow verifies that the tag, manifest version, and changelog
-heading match, reruns the Harn connector gate, performs a clean consumer smoke,
-and creates or updates the GitHub Release from the matching changelog section.
+- [Configure a GitHub App](docs/how-to/configure-github-app.md)
+- [Publish a worktree as a GitHub-signed commit](docs/how-to/publish-a-worktree-commit.md)
+- [Webhook reference](docs/reference/webhooks.md)
+- [Outbound API reference](docs/reference/outbound-api.md)
+- [Generated API index](docs/api.md)
+- [Runtime policy reference](docs/reference/runtime-policy.md)
+- [Develop and release the connector](docs/development.md)
 
 ## License
 
 Dual-licensed under MIT and Apache-2.0.
 
-- [LICENSE-MIT](./LICENSE-MIT)
-- [LICENSE-APACHE](./LICENSE-APACHE)
+- [MIT license](LICENSE-MIT)
+- [Apache 2.0 license](LICENSE-APACHE)

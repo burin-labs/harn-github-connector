@@ -1,0 +1,476 @@
+import {
+  __body_without,
+  __config_keys,
+  __github_api_url,
+  __github_json,
+  __pagination_query,
+  __workflow_run_jobs_query,
+  __workflow_runs_query,
+} from "./client"
+import {
+  GithubConnectorResult,
+  GithubWorkflowDispatchReceipt,
+  GithubWorkflowJob,
+  GithubWorkflowRun,
+  GithubWorkflowStep,
+} from "./contracts"
+import { connector_error } from "./errors"
+import { __actions_run_id, __positive_decimal } from "./validation"
+
+pub fn __actions_workflow_dispatch(harness: Harness, args, cfg) {
+  const workflow_id = args?.workflow_id ?? args?.workflow ?? args?.workflow_file
+  if workflow_id == nil || trim(to_string(workflow_id)) == "" {
+    return connector_error(
+      "schema_drift",
+      "actions.workflow_dispatch requires workflow_id, workflow, or workflow_file",
+    )
+  }
+  const ref = args?.ref ?? args?.branch ?? "main"
+  const body = {ref: ref, inputs: args?.inputs ?? {}, return_run_details: true}
+  return __github_json(
+    harness,
+    "POST",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/actions/workflows/"
+        + url_encode(
+        to_string(workflow_id),
+      )
+        + "/dispatches",
+    ),
+    body,
+    cfg,
+  )
+}
+
+pub fn __actions_workflow_runs_list(harness: Harness, args, cfg) {
+  const workflow_id = args?.workflow_id ?? args?.workflow ?? args?.workflow_file
+  const path = if workflow_id == nil || trim(to_string(workflow_id)) == "" {
+    "/repos/" + args.owner + "/" + args.repo + "/actions/runs"
+  } else {
+    "/repos/" + args.owner + "/" + args.repo + "/actions/workflows/"
+      + url_encode(
+      to_string(workflow_id),
+    )
+      + "/runs"
+  }
+  return __github_json(
+    harness,
+    "GET",
+    __github_api_url(cfg.api_base_url, path + __workflow_runs_query(args)),
+    nil,
+    cfg,
+  )
+}
+
+pub fn __actions_workflow_run_get(harness: Harness, args, cfg) {
+  const run_id = __actions_run_id(args?.run_id ?? args?.id)
+  if run_id == nil {
+    return connector_error(
+      "schema_drift",
+      "actions.workflow_run.get requires a positive decimal run_id or id",
+    )
+  }
+  return __github_json(
+    harness,
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/actions/runs/" + to_string(run_id),
+    ),
+    nil,
+    cfg,
+  )
+}
+
+pub fn __actions_workflow_run_jobs(harness: Harness, args, cfg) {
+  const run_id = __actions_run_id(args?.run_id)
+  if run_id == nil {
+    return connector_error(
+      "schema_drift",
+      "actions.workflow_run.jobs requires a positive decimal run_id",
+    )
+  }
+  const filter = trim(to_string(args?.filter ?? ""))
+  if filter != "" && filter != "latest" && filter != "all" {
+    return connector_error("schema_drift", "actions.workflow_run.jobs filter must be latest or all")
+  }
+  if args?.per_page != nil && __positive_decimal(args.per_page, 100) == nil {
+    return connector_error(
+      "schema_drift",
+      "actions.workflow_run.jobs per_page must be an integer from 1 to 100",
+    )
+  }
+  if args?.page != nil && __positive_decimal(args.page, nil) == nil {
+    return connector_error(
+      "schema_drift",
+      "actions.workflow_run.jobs page must be a positive integer",
+    )
+  }
+  return __github_json(
+    harness,
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/actions/runs/" + to_string(run_id) + "/jobs"
+        + __workflow_run_jobs_query(
+        args,
+      ),
+    ),
+    nil,
+    cfg,
+  )
+}
+
+pub fn __actions_workflow_run_cancel(harness: Harness, args, cfg) {
+  const run_id = __actions_run_id(args?.run_id)
+  if run_id == nil {
+    return connector_error("schema_drift", "actions.workflow_run.cancel requires a positive run_id")
+  }
+  return __github_json(
+    harness,
+    "POST",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/actions/runs/" + to_string(run_id)
+        + "/cancel",
+    ),
+    nil,
+    cfg,
+  )
+}
+
+fn __runner_scope_prefix(args) {
+  const org = args?.org
+  if org != nil && trim(to_string(org)) != "" {
+    return Ok("/orgs/" + url_encode(to_string(org)))
+  }
+  if args?.owner != nil && trim(to_string(args.owner)) != "" && args?.repo != nil
+    && trim(
+    to_string(args.repo),
+  )
+    != "" {
+    return Ok("/repos/" + to_string(args.owner) + "/" + to_string(args.repo))
+  }
+  return connector_error(
+    "schema_drift",
+    "self-hosted runner methods require `org`, or `owner` + `repo`",
+  )
+}
+
+@complexity(allow)
+pub fn __actions_runners_dispatch(harness: Harness, method, args, cfg) {
+  const runner_id = args?.runner_id ?? args?.id
+  if method == "actions.runner_groups.list" || method == "actions.runner_groups.create" {
+    const org = args?.org
+    if org == nil || trim(to_string(org)) == "" {
+      return connector_error("schema_drift", method + " requires `org`")
+    }
+    const url = __github_api_url(
+      cfg.api_base_url,
+      "/orgs/" + url_encode(to_string(org)) + "/actions/runner-groups",
+    )
+    if method == "actions.runner_groups.create" {
+      return __github_json(
+        harness,
+        "POST",
+        url,
+        __body_without(args, __config_keys() + ["org"]),
+        cfg,
+      )
+    }
+    return __github_json(harness, "GET", url + __pagination_query(args), nil, cfg)
+  }
+  if method == "actions.runner_groups.get" || method == "actions.runner_groups.update"
+    || method
+    == "actions.runner_groups.delete" {
+    const org = args?.org
+    const group_id = args?.runner_group_id ?? args?.group_id ?? args?.id
+    if org == nil || trim(to_string(org)) == "" || group_id == nil {
+      return connector_error("schema_drift", method + " requires `org` and `runner_group_id`")
+    }
+    const url = __github_api_url(
+      cfg.api_base_url,
+      "/orgs/" + url_encode(to_string(org)) + "/actions/runner-groups/" + to_string(group_id),
+    )
+    if method == "actions.runner_groups.update" {
+      return __github_json(
+        harness,
+        "PATCH",
+        url,
+        __body_without(args, __config_keys() + ["org", "runner_group_id", "group_id", "id"]),
+        cfg,
+      )
+    }
+    if method == "actions.runner_groups.delete" {
+      return __github_json(harness, "DELETE", url, nil, cfg)
+    }
+    return __github_json(harness, "GET", url, nil, cfg)
+  }
+  const prefix = __runner_scope_prefix(args)
+  if is_err(prefix) {
+    return prefix
+  }
+  const base = unwrap(prefix) + "/actions/runners"
+  if method == "actions.runners.registration_token" {
+    return __github_json(
+      harness,
+      "POST",
+      __github_api_url(cfg.api_base_url, base + "/registration-token"),
+      nil,
+      cfg,
+    )
+  }
+  if method == "actions.runners.remove_token" {
+    return __github_json(
+      harness,
+      "POST",
+      __github_api_url(cfg.api_base_url, base + "/remove-token"),
+      nil,
+      cfg,
+    )
+  }
+  if method == "actions.runners.generate_jitconfig" {
+    if args?.name == nil || trim(to_string(args.name)) == "" {
+      return connector_error("schema_drift", "actions.runners.generate_jitconfig requires `name`")
+    }
+    return __github_json(
+      harness,
+      "POST",
+      __github_api_url(cfg.api_base_url, base + "/generate-jitconfig"),
+      __runner_jitconfig_body(args),
+      cfg,
+    )
+  }
+  if method == "actions.runners.downloads" {
+    return __github_json(
+      harness,
+      "GET",
+      __github_api_url(cfg.api_base_url, base + "/downloads"),
+      nil,
+      cfg,
+    )
+  }
+  if method == "actions.runners.list" {
+    return __github_json(
+      harness,
+      "GET",
+      __github_api_url(cfg.api_base_url, base + __pagination_query(args)),
+      nil,
+      cfg,
+    )
+  }
+  if method == "actions.runners.get" || method == "actions.runners.delete" {
+    if runner_id == nil {
+      return connector_error("schema_drift", method + " requires `runner_id`")
+    }
+    const url = __github_api_url(cfg.api_base_url, base + "/" + to_string(runner_id))
+    if method == "actions.runners.delete" {
+      return __github_json(harness, "DELETE", url, nil, cfg)
+    }
+    return __github_json(harness, "GET", url, nil, cfg)
+  }
+  if starts_with(method, "actions.runners.labels.") {
+    if runner_id == nil {
+      return connector_error("schema_drift", method + " requires `runner_id`")
+    }
+    const url = __github_api_url(cfg.api_base_url, base + "/" + to_string(runner_id) + "/labels")
+    if method == "actions.runners.labels.list" {
+      return __github_json(harness, "GET", url, nil, cfg)
+    }
+    if method == "actions.runners.labels.add" {
+      return __github_json(harness, "POST", url, {labels: args?.labels ?? []}, cfg)
+    }
+    if method == "actions.runners.labels.replace" {
+      return __github_json(harness, "PUT", url, {labels: args?.labels ?? []}, cfg)
+    }
+    if method == "actions.runners.labels.remove" {
+      const label = args?.name ?? args?.label
+      if label != nil && trim(to_string(label)) != "" {
+        return __github_json(harness, "DELETE", url + "/" + url_encode(to_string(label)), nil, cfg)
+      }
+      return __github_json(harness, "DELETE", url, nil, cfg)
+    }
+  }
+  return connector_error("method_not_found", "unsupported runner method `" + method + "`")
+}
+
+fn __runner_jitconfig_body(args) {
+  let body = {
+    name: to_string(args?.name),
+    runner_group_id: args?.runner_group_id ?? 1,
+    labels: args?.labels ?? [],
+  }
+  if args?.work_folder != nil {
+    body["work_folder"] = args.work_folder
+  }
+  return body
+}
+
+pub fn __typed_workflow_dispatch(
+  repo,
+  ref,
+  resolved,
+) -> GithubConnectorResult<GithubWorkflowDispatchReceipt> {
+  if resolved?.run_id == nil || trim(to_string(resolved?.head_sha ?? "")) == ""
+    || trim(
+    to_string(resolved?.event ?? ""),
+  )
+    == ""
+    || trim(to_string(resolved?.workflow_path ?? "")) == ""
+    || trim(to_string(resolved?.run_url ?? ""))
+    == "" {
+    return connector_error(
+      "invalid_response",
+      "github.actions.workflow_dispatch could not prove an exact run identity",
+    )
+  }
+  const receipt: GithubWorkflowDispatchReceipt = {
+    repo: repo,
+    accepted: true,
+    run_id: to_int(resolved.run_id),
+    workflow_id: if resolved?.workflow_id == nil {
+      nil
+    } else {
+      to_string(resolved.workflow_id)
+    },
+    workflow_path: to_string(resolved.workflow_path),
+    run_attempt: if resolved?.run_attempt == nil {
+      nil
+    } else {
+      to_int(resolved.run_attempt)
+    },
+    ref: to_string(ref),
+    head_sha: to_string(resolved.head_sha),
+    head_branch: to_string(resolved?.head_branch ?? ""),
+    event: to_string(resolved.event),
+    url: to_string(resolved.run_url),
+    created_at: resolved?.created_at,
+  }
+  return Ok(receipt)
+}
+
+pub fn __typed_workflow_run(repo, run) {
+  const id = __actions_run_id(run?.id)
+  if type_of(run) != "dict" || id == nil || trim(to_string(run?.status ?? "")) == ""
+    || trim(
+    to_string(run?.event ?? ""),
+  )
+    == ""
+    || trim(to_string(run?.path ?? "")) == ""
+    || trim(to_string(run?.head_sha ?? "")) == "" {
+    return connector_error(
+      "invalid_response",
+      "github.actions.run response omitted exact run evidence",
+    )
+  }
+  const typed: GithubWorkflowRun = {
+    repo: repo,
+    id: id,
+    workflow_id: if run?.workflow_id == nil {
+      nil
+    } else {
+      to_int(run.workflow_id)
+    },
+    workflow_path: to_string(run.path),
+    run_number: if run?.run_number == nil {
+      nil
+    } else {
+      to_int(run.run_number)
+    },
+    run_attempt: if run?.run_attempt == nil {
+      nil
+    } else {
+      to_int(run.run_attempt)
+    },
+    name: to_string(run?.name ?? ""),
+    event: to_string(run.event),
+    status: lowercase(to_string(run.status)),
+    conclusion: if run?.conclusion == nil {
+      nil
+    } else {
+      lowercase(to_string(run.conclusion))
+    },
+    head_branch: to_string(run?.head_branch ?? ""),
+    head_sha: to_string(run.head_sha),
+    url: to_string(run?.html_url ?? run?.url ?? ""),
+    created_at: if run?.created_at == nil {
+      nil
+    } else {
+      to_string(run.created_at)
+    },
+    run_started_at: if run?.run_started_at == nil {
+      nil
+    } else {
+      to_string(run.run_started_at)
+    },
+    updated_at: if run?.updated_at == nil {
+      nil
+    } else {
+      to_string(run.updated_at)
+    },
+  }
+  return Ok(typed)
+}
+
+pub fn __typed_workflow_job(job) -> GithubConnectorResult<GithubWorkflowJob> {
+  if type_of(job) != "dict" || job?.id == nil || job?.run_id == nil
+    || trim(
+    to_string(job?.name ?? ""),
+  )
+    == ""
+    || trim(to_string(job?.status ?? "")) == ""
+    || type_of(job?.steps ?? []) != "list" {
+    return connector_error(
+      "invalid_response",
+      "github.actions.run_jobs response contained a malformed job",
+    )
+  }
+  let steps: list<GithubWorkflowStep> = []
+  for step in job?.steps ?? [] {
+    if step?.number == nil || trim(to_string(step?.name ?? "")) == ""
+      || trim(
+      to_string(step?.status ?? ""),
+    )
+      == "" {
+      return connector_error(
+        "invalid_response",
+        "github.actions.run_jobs response contained a malformed step",
+      )
+    }
+    steps = steps
+      + [
+      {
+        number: to_int(step.number),
+        name: to_string(step.name),
+        status: lowercase(to_string(step.status)),
+        conclusion: if step?.conclusion == nil {
+          nil
+        } else {
+          lowercase(to_string(step.conclusion))
+        },
+        started_at: step?.started_at,
+        completed_at: step?.completed_at,
+      },
+    ]
+  }
+  return Ok(
+    {
+      id: to_int(job.id),
+      run_id: to_int(job.run_id),
+      name: to_string(job.name),
+      status: lowercase(to_string(job.status)),
+      conclusion: if job?.conclusion == nil {
+        nil
+      } else {
+        lowercase(to_string(job.conclusion))
+      },
+      head_sha: to_string(job?.head_sha ?? ""),
+      url: to_string(job?.html_url ?? job?.url ?? ""),
+      runner_name: to_string(job?.runner_name ?? ""),
+      started_at: job?.started_at,
+      completed_at: job?.completed_at,
+      steps: steps,
+    },
+  )
+}

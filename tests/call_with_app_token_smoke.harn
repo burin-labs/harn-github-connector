@@ -1,12 +1,10 @@
 import { call, reset_token_cache } from "../src/lib"
 
-fn fixture_key(harness: Harness) {
-  return harness.fs.read_text(
-    path_join(harness.fs.source_dir(), "fixtures/github_app_test_key.pem"),
-  )
+fn fixture_key(harness: HarnessFs) {
+  return harness.read_text(path_join(harness.source_dir(), "fixtures/github_app_test_key.pem"))
 }
 
-fn config(harness: Harness, now) {
+fn config(harness: HarnessFs, now) {
   return {
     app_id: 12345,
     installation_id: 77,
@@ -47,7 +45,8 @@ pipeline test_call_with_app_token_smoke(harness: Harness, task) {
     call(
       harness,
       "issues.create_comment",
-      config(harness, 1700000000) + {owner: "octo", repo: "demo", issue_number: 123, body: "hello"},
+      config(harness.fs, 1700000000)
+        + {owner: "octo", repo: "demo", issue_number: 123, body: "hello"},
     ),
   )
   assert_eq(comment.id, 99, "issues.create_comment id")
@@ -64,8 +63,13 @@ pipeline test_call_with_app_token_smoke(harness: Harness, task) {
     call(
       harness,
       "issues.update",
-      config(harness, 1700000000)
-        + {owner: "octo", repo: "demo", issue_number: 123, state: "closed"},
+      config(harness.fs, 1700000000)
+        + {
+        owner: "octo",
+        repo: "demo",
+        issue_number: 123,
+        state: "closed",
+      },
     ),
   )
   assert_eq(issue.state, "closed", "issues.update state")
@@ -78,7 +82,7 @@ pipeline test_call_with_app_token_smoke(harness: Harness, task) {
     call(
       harness,
       "pulls.create_review_comment",
-      config(harness, 1700000000)
+      config(harness.fs, 1700000000)
         + {
         owner: "octo",
         repo: "demo",
@@ -105,7 +109,7 @@ pipeline test_call_with_app_token_smoke(harness: Harness, task) {
     call(
       harness,
       "pulls.get",
-      config(harness, 1700000000) + {owner: "octo", repo: "demo", pull_number: 5},
+      config(harness.fs, 1700000000) + {owner: "octo", repo: "demo", pull_number: 5},
     ),
   )
   assert_eq(pull.head.sha, "abc", "pulls.get head sha")
@@ -122,7 +126,7 @@ pipeline test_call_with_app_token_smoke(harness: Harness, task) {
     call(
       harness,
       "pulls.get_diff",
-      config(harness, 1700000000) + {owner: "octo", repo: "demo", pull_number: 5},
+      config(harness.fs, 1700000000) + {owner: "octo", repo: "demo", pull_number: 5},
     ),
   )
   assert(diff.contains("src/lib.harn"), "pulls.get_diff raw diff")
@@ -135,7 +139,8 @@ pipeline test_call_with_app_token_smoke(harness: Harness, task) {
     call(
       harness,
       "repos.get_content",
-      config(harness, 1700000000) + {owner: "octo", repo: "demo", path: "README.md", ref: "main"},
+      config(harness.fs, 1700000000)
+        + {owner: "octo", repo: "demo", path: "README.md", ref: "main"},
     ),
   )
   assert_eq(content.name, "README.md", "repos.get_content name")
@@ -148,7 +153,7 @@ pipeline test_call_with_app_token_smoke(harness: Harness, task) {
     call(
       harness,
       "check_runs.create",
-      config(harness, 1700000000)
+      config(harness.fs, 1700000000)
         + {
         owner: "octo",
         repo: "demo",
@@ -172,7 +177,7 @@ pipeline test_call_with_app_token_smoke(harness: Harness, task) {
     call(
       harness,
       "check_runs.update",
-      config(harness, 1700000000)
+      config(harness.fs, 1700000000)
         + {
         owner: "octo",
         repo: "demo",
@@ -195,7 +200,7 @@ pipeline test_call_with_app_token_smoke(harness: Harness, task) {
     call(
       harness,
       "graphql",
-      config(harness, 1700000000) + {query: "query { viewer { login } }", variables: {}},
+      config(harness.fs, 1700000000) + {query: "query { viewer { login } }", variables: {}},
     ),
   )
   assert_eq(graph.data.viewer.login, "octo", "graphql viewer login")
@@ -217,7 +222,7 @@ pipeline test_call_with_app_token_smoke(harness: Harness, task) {
     call(
       harness,
       "pulls.list_files",
-      config(harness, 1700000000) + {owner: "octo", repo: "demo", pull_number: 5},
+      config(harness.fs, 1700000000) + {owner: "octo", repo: "demo", pull_number: 5},
     ),
   )
   assert_eq(files[0].filename, "src/lib.harn", "list files filename after 401 retry")

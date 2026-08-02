@@ -1,0 +1,16 @@
+/** Return the first byte index of a substring, or -1 when it is absent. */
+pub fn text_index_of(text, needle) {
+  const n = len(text)
+  const m = len(needle)
+  if m == 0 {
+    return 0
+  }
+  let i = 0
+  while i + m <= n {
+    if text[i:i + m] == needle {
+      return i
+    }
+    i = i + 1
+  }
+  return -1
+}

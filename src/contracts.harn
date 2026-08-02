@@ -24,10 +24,13 @@ pub type GithubConnectorError = {
 /** Canonical fallible boundary for every normalized GitHub operation. */
 pub type GithubConnectorResult<T> = Result<T, GithubConnectorError>
 
+/** A pull request branch and commit, including its repository owner. */
 pub type GithubPullRequestRef = {ref: string, sha: string, repo: string, owner: string}
 
+/** The GitHub account attached to a pull request. */
 pub type GithubPullRequestUser = {id: int?, login: string, type: string}
 
+/** Pull request identity and merge state used by list operations. */
 pub type GithubPullRequestSummary = {
   repo: string,
   number: int,
@@ -48,6 +51,7 @@ pub type GithubPullRequestSummary = {
   in_merge_queue: bool?,
 }
 
+/** A pull request summary with its body, author, and timestamps. */
 pub type GithubPullRequestDetails = GithubPullRequestSummary \
   & {
   body: string,
@@ -57,10 +61,13 @@ pub type GithubPullRequestDetails = GithubPullRequestSummary \
   closed_at: string?,
 }
 
+/** The created pull request and whether this call created it. */
 pub type GithubPullRequestCreateReceipt = GithubPullRequestDetails & {created: bool}
 
+/** The updated pull request and whether GitHub changed it. */
 pub type GithubPullRequestEditReceipt = GithubPullRequestDetails & {ok: bool, updated: bool}
 
+/** Branch protection settings, or a typed error when GitHub cannot return them. */
 pub type GithubBranchProtection = {
   available: bool,
   branch: string,
@@ -75,6 +82,7 @@ pub type GithubBranchProtection = {
   error: GithubConnectorError?,
 }
 
+/** One pull request in a branch's merge queue. */
 pub type GithubMergeQueueEntry = {
   id: string,
   pull_number: int,
@@ -89,6 +97,7 @@ pub type GithubMergeQueueEntry = {
   estimated_time_to_merge_seconds: int?,
 }
 
+/** Whether one pull request is in the merge queue. */
 pub type GithubMergeQueueMembership = {
   repo: string,
   pull_number: int,
@@ -99,6 +108,7 @@ pub type GithubMergeQueueMembership = {
   error: GithubConnectorError?,
 }
 
+/** The merge queue configuration and entries for one branch. */
 pub type GithubMergeQueueEntries = {
   repo: string,
   branch: string,
@@ -107,6 +117,7 @@ pub type GithubMergeQueueEntries = {
   entries: list<GithubMergeQueueEntry>,
 }
 
+/** Evidence that GitHub queued a pull request at the expected commit. */
 pub type GithubMergeQueueEnqueueReceipt = {
   repo: string,
   pull_number: int,
@@ -114,9 +125,11 @@ pub type GithubMergeQueueEnqueueReceipt = {
   entry: GithubMergeQueueEntry,
 }
 
+/** Pull request details with branch protection and merge queue state. */
 pub type GithubPullRequestView = GithubPullRequestDetails \
   & {branch_protection: GithubBranchProtection, queue_membership: GithubMergeQueueMembership}
 
+/** One file changed by a pull request. */
 pub type GithubPullRequestFile = {
   sha: string,
   filename: string,
@@ -130,6 +143,7 @@ pub type GithubPullRequestFile = {
   contents_url: string?,
 }
 
+/** One page of files changed by a pull request. */
 pub type GithubPullRequestFiles = {
   repo: string,
   pull_number: int,
@@ -138,6 +152,7 @@ pub type GithubPullRequestFiles = {
   per_page: int,
 }
 
+/** GitHub's verification result for one commit signature. */
 pub type GithubCommitSignature = {
   repo: string,
   sha: string,
@@ -148,8 +163,10 @@ pub type GithubCommitSignature = {
   verified_at: string?,
 }
 
+/** One pull request commit with its signature result. */
 pub type GithubPullRequestCommit = {sha: string, message: string, signature: GithubCommitSignature}
 
+/** Every commit read from one stable pull request head. */
 pub type GithubPullRequestCommits = {
   repo: string,
   pull_number: int,
@@ -161,6 +178,7 @@ pub type GithubPullRequestCommits = {
   per_page: int,
 }
 
+/** One check run attached to a commit. */
 pub type GithubCheckRun = {
   id: int?,
   name: string,
@@ -175,6 +193,7 @@ pub type GithubCheckRun = {
   external_id: string?,
 }
 
+/** Counts and overall state for a commit's checks. */
 pub type GithubCheckRollup = {
   state: string,
   total: int,
@@ -185,6 +204,7 @@ pub type GithubCheckRollup = {
   conclusion: string?,
 }
 
+/** The check runs and overall state for a pull request head. */
 pub type GithubPullRequestChecks = {
   repo: string,
   pull_number: int?,
@@ -194,6 +214,7 @@ pub type GithubPullRequestChecks = {
   checks: list<GithubCheckRun>,
 }
 
+/** The exact workflow run accepted by a dispatch request. */
 pub type GithubWorkflowDispatchReceipt = {
   repo: string,
   accepted: bool,
@@ -209,6 +230,7 @@ pub type GithubWorkflowDispatchReceipt = {
   created_at: string?,
 }
 
+/** One normalized GitHub Actions workflow run. */
 pub type GithubWorkflowRun = {
   repo: string,
   id: int,
@@ -228,6 +250,7 @@ pub type GithubWorkflowRun = {
   updated_at: string?,
 }
 
+/** One page of GitHub Actions workflow runs. */
 pub type GithubWorkflowRuns = {
   repo: string,
   workflow_id: string?,
@@ -237,6 +260,7 @@ pub type GithubWorkflowRuns = {
   per_page: int,
 }
 
+/** One step in a GitHub Actions job. */
 pub type GithubWorkflowStep = {
   number: int,
   name: string,
@@ -246,6 +270,7 @@ pub type GithubWorkflowStep = {
   completed_at: string?,
 }
 
+/** One GitHub Actions job and its steps. */
 pub type GithubWorkflowJob = {
   id: int,
   run_id: int,
@@ -260,6 +285,7 @@ pub type GithubWorkflowJob = {
   steps: list<GithubWorkflowStep>,
 }
 
+/** One page of jobs for a workflow run. */
 pub type GithubWorkflowJobs = {
   repo: string,
   run_id: int,
@@ -269,6 +295,7 @@ pub type GithubWorkflowJobs = {
   per_page: int,
 }
 
+/** Evidence that GitHub accepted a workflow cancellation request. */
 pub type GithubWorkflowCancelReceipt = {
   repo: string,
   run_id: int,
@@ -276,6 +303,7 @@ pub type GithubWorkflowCancelReceipt = {
   state: "cancel_requested",
 }
 
+/** One downloadable file attached to a GitHub release. */
 pub type GithubReleaseAsset = {
   id: int,
   name: string,
@@ -288,6 +316,7 @@ pub type GithubReleaseAsset = {
   updated_at: string?,
 }
 
+/** One GitHub release and its downloadable files. */
 pub type GithubRelease = {
   id: int,
   tag_name: string,
@@ -301,6 +330,7 @@ pub type GithubRelease = {
   assets: list<GithubReleaseAsset>,
 }
 
+/** Immutable Git ref and release identifiers used to guard an update. */
 pub type GithubReleaseLease = {
   tag_ref_oid: string,
   tag_target_oid: string,
@@ -308,6 +338,7 @@ pub type GithubReleaseLease = {
   release_id: int,
 }
 
+/** The result of looking up one exact release tag. */
 pub type GithubReleaseLookup = {
   repo: string,
   tag: string,
@@ -317,6 +348,7 @@ pub type GithubReleaseLookup = {
   lease?: GithubReleaseLease,
 }
 
+/** Evidence that a release body changed under the expected lease. */
 pub type GithubReleaseEditReceipt = {
   repo: string,
   tag: string,
@@ -328,6 +360,7 @@ pub type GithubReleaseEditReceipt = {
   url: string,
 }
 
+/** GitHub's resolved mergeability state after bounded retries. */
 pub type GithubMergeability = {
   mergeable: bool?,
   mergeable_state: string,
@@ -337,6 +370,7 @@ pub type GithubMergeability = {
   raw: unknown,
 }
 
+/** Auto-merge state tied to the pull request's expected head commit. */
 pub type GithubAutoMergeReceipt = {
   repo: string,
   pull_number: int,
@@ -348,10 +382,13 @@ pub type GithubAutoMergeReceipt = {
   url: string,
 }
 
+/** A path and exact bytes to add or replace in a signed commit. */
 pub type GithubCommitFileAddition = {path: string, contents_base64: string}
 
+/** A path to delete in a signed commit. */
 pub type GithubCommitFileDeletion = {path: string}
 
+/** All inputs needed to create one GitHub-signed commit. */
 pub type GithubSignedCommitRequest = {
   owner: string,
   repo: string,
@@ -363,6 +400,7 @@ pub type GithubSignedCommitRequest = {
   deletions: list<GithubCommitFileDeletion>,
 }
 
+/** The published commit and GitHub's signature verification result. */
 pub type GithubSignedCommitReceipt = {
   oid: string,
   url: string,
@@ -396,7 +434,7 @@ pub type GithubWorktreeSelector = {repo_dir: string, source?: string?, base_oid?
  * One path-level change with the Git blob object id that carries its bytes.
  *
  * `status` is `"added"`, `"modified"`, or `"deleted"`. `blob_oid` is the Git
- * blob object id — the content digest — of the bytes the change carries: the
+ * blob object id is the content digest of the bytes the change carries: the
  * new content for `added`/`modified`, the removed content for `deleted`.
  * `size_bytes` is that blob's exact byte length, and is `0` for a deletion.
  * A rename appears as two changes: the `deleted` half carries `rename_to` and

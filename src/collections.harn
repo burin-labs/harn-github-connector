@@ -1,0 +1,8 @@
+/** Return the first list item, or nil for an absent or empty list. */
+pub fn first_or_nil(values) {
+  const list = values ?? []
+  if len(list) == 0 {
+    return nil
+  }
+  return list[0]
+}

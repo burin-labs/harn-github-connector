@@ -1,0 +1,471 @@
+import { GITHUB_PROVIDER_ID } from "./provider"
+
+@complexity(allow)
+pub fn __source_refs(event_kind, payload) {
+  let refs = []
+  if event_kind == "issues" {
+    refs = __append_ref(refs, __issue_source_ref(payload))
+  }
+  if event_kind == "issue_comment" {
+    refs = __append_ref(refs, __comment_source_ref(payload))
+    refs = __append_ref(refs, __issue_source_ref(payload))
+  }
+  if event_kind == "pull_request" {
+    refs = __append_ref(refs, __pull_request_source_ref(payload))
+  }
+  if event_kind == "pull_request_review" {
+    refs = __append_ref(refs, __review_source_ref(payload))
+    refs = __append_ref(refs, __pull_request_source_ref(payload))
+  }
+  if event_kind == "check_run" {
+    refs = __append_ref(refs, __check_run_source_ref(payload))
+    refs = __append_ref(
+      refs,
+      __pull_request_number_source_ref(payload, payload?.pull_request_number),
+    )
+  }
+  if event_kind == "check_suite" {
+    refs = __append_ref(refs, __check_suite_source_ref(payload))
+    refs = __append_ref(
+      refs,
+      __pull_request_number_source_ref(payload, payload?.pull_request_number),
+    )
+  }
+  if event_kind == "workflow_run" {
+    refs = __append_ref(refs, __workflow_run_source_ref(payload))
+    refs = __append_ref(
+      refs,
+      __pull_request_number_source_ref(payload, payload?.pull_request_number),
+    )
+  }
+  if event_kind == "status" {
+    refs = __append_ref(refs, __status_source_ref(payload))
+  }
+  if event_kind == "merge_group" {
+    refs = __append_ref(refs, __merge_group_source_ref(payload))
+    for number in payload?.pull_request_numbers ?? [] {
+      refs = __append_ref(refs, __pull_request_number_source_ref(payload, number))
+    }
+  }
+  if event_kind == "push" {
+    refs = __append_ref(refs, __push_source_ref(payload))
+  }
+  if event_kind == "deployment_status" {
+    refs = __append_ref(refs, __deployment_source_ref(payload))
+  }
+  if event_kind == "installation" || event_kind == "installation_repositories" {
+    refs = __append_ref(refs, __installation_source_ref(payload))
+  }
+  if event_kind == "release" {
+    refs = __append_ref(refs, __release_source_ref(payload))
+  }
+  refs = __append_ref(refs, __repo_source_ref(payload))
+  return refs
+}
+
+fn __append_ref(refs, ref) {
+  if ref == nil {
+    return refs
+  }
+  return refs + [ref]
+}
+
+fn __source_ref(kind, id, payload, fields = nil) {
+  const data = fields ?? {}
+  const repo = payload?.repo ?? {}
+  const repo_name = repo?.full_name ?? ""
+  const url = data?.url ?? data?.html_url
+  return {
+    provider: GITHUB_PROVIDER_ID,
+    kind: kind,
+    id: if id == nil {
+      ""
+    } else {
+      to_string(id)
+    },
+    repo: repo_name,
+    key: __source_key(kind, repo_name, id),
+    url: url,
+    html_url: data?.html_url ?? url,
+    api_url: data?.api_url,
+  }
+    + data
+}
+
+fn __source_key(kind, repo, id) {
+  const value = if id == nil || trim(to_string(id)) == "" {
+    "unknown"
+  } else {
+    to_string(id)
+  }
+  const repo_part = if repo == nil || trim(to_string(repo)) == "" {
+    "unknown"
+  } else {
+    to_string(repo)
+  }
+  return "github:" + to_string(kind) + ":" + repo_part + ":" + value
+}
+
+fn __repo_source_ref(payload) {
+  const repo = payload?.repo ?? {}
+  if repo?.full_name == nil || repo.full_name == "" {
+    return nil
+  }
+  const url = __repo_url(payload)
+  return __source_ref(
+    "github.repository",
+    repo.full_name,
+    payload,
+    {name: repo?.name, owner: repo?.owner, full_name: repo.full_name, url: url, html_url: url},
+  )
+}
+
+fn __issue_source_ref(payload) {
+  const issue = payload?.issue
+  if issue == nil || issue?.number == nil {
+    return nil
+  }
+  return __source_ref(
+    "github.issue",
+    issue?.id ?? issue.number,
+    payload,
+    {
+      number: issue.number,
+      title: issue?.title,
+      state: issue?.state,
+      url: issue?.html_url ?? __issue_url(payload, issue.number),
+      html_url: issue?.html_url ?? __issue_url(payload, issue.number),
+      api_url: issue?.url,
+    },
+  )
+}
+
+fn __comment_source_ref(payload) {
+  const comment = payload?.comment
+  if comment == nil || comment?.id == nil {
+    return nil
+  }
+  const number = payload?.issue?.number
+  return __source_ref(
+    "github.comment",
+    comment.id,
+    payload,
+    {
+      issue_number: number,
+      url: comment?.html_url ?? __issue_url(payload, number),
+      html_url: comment?.html_url ?? __issue_url(payload, number),
+      api_url: comment?.url,
+    },
+  )
+}
+
+fn __pull_request_source_ref(payload) {
+  const pr = payload?.pull_request
+  const number = payload?.pull_request_number ?? pr?.number
+  if number == nil {
+    return nil
+  }
+  return __source_ref(
+    "github.pull_request",
+    pr?.id ?? number,
+    payload,
+    {
+      number: number,
+      title: pr?.title,
+      state: pr?.state,
+      url: pr?.html_url ?? __pull_request_url(payload, number),
+      html_url: pr?.html_url ?? __pull_request_url(payload, number),
+      api_url: pr?.url,
+    },
+  )
+}
+
+fn __pull_request_number_source_ref(payload, number) {
+  if number == nil {
+    return nil
+  }
+  return __source_ref(
+    "github.pull_request",
+    number,
+    payload,
+    {
+      number: number,
+      url: __pull_request_url(payload, number),
+      html_url: __pull_request_url(payload, number),
+    },
+  )
+}
+
+fn __review_source_ref(payload) {
+  const review = payload?.review
+  if review == nil || review?.id == nil {
+    return nil
+  }
+  return __source_ref(
+    "github.review",
+    review.id,
+    payload,
+    {
+      pull_request_number: payload?.pull_request_number,
+      state: review?.state,
+      url: review?.html_url ?? __pull_request_url(payload, payload?.pull_request_number),
+      html_url: review?.html_url ?? __pull_request_url(payload, payload?.pull_request_number),
+      api_url: review?.url,
+    },
+  )
+}
+
+fn __check_run_source_ref(payload) {
+  if payload?.check_id == nil {
+    return nil
+  }
+  const check = payload?.check_run ?? {}
+  return __source_ref(
+    "github.check_run",
+    payload.check_id,
+    payload,
+    {
+      name: check?.name ?? payload?.name,
+      status: payload?.status,
+      conclusion: payload?.conclusion,
+      sha: payload?.head_sha,
+      url: check?.html_url ?? check?.details_url ?? __commit_url(payload, payload?.head_sha),
+      html_url: check?.html_url ?? check?.details_url ?? __commit_url(payload, payload?.head_sha),
+      api_url: check?.url,
+    },
+  )
+}
+
+fn __check_suite_source_ref(payload) {
+  if payload?.check_suite_id == nil {
+    return nil
+  }
+  return __source_ref(
+    "github.check_suite",
+    payload.check_suite_id,
+    payload,
+    {
+      status: payload?.status,
+      conclusion: payload?.conclusion,
+      sha: payload?.head_sha,
+      url: __check_suite_url(payload, payload.check_suite_id),
+      html_url: __check_suite_url(payload, payload.check_suite_id),
+    },
+  )
+}
+
+fn __workflow_run_source_ref(payload) {
+  if payload?.run_id == nil {
+    return nil
+  }
+  const run = payload?.workflow_run ?? {}
+  return __source_ref(
+    "github.workflow_run",
+    payload.run_id,
+    payload,
+    {
+      name: payload?.name ?? run?.name,
+      run_number: payload?.run_number,
+      workflow_id: payload?.workflow_id,
+      status: payload?.status,
+      conclusion: payload?.conclusion,
+      sha: payload?.head_sha,
+      branch: payload?.head_ref,
+      url: run?.html_url ?? __actions_run_url(payload, payload.run_id),
+      html_url: run?.html_url ?? __actions_run_url(payload, payload.run_id),
+      api_url: run?.url,
+    },
+  )
+}
+
+fn __status_source_ref(payload) {
+  const id = payload?.status_id ?? payload?.head_sha
+  if id == nil {
+    return nil
+  }
+  return __source_ref(
+    "github.status",
+    id,
+    payload,
+    {
+      context: payload?.context,
+      state: payload?.state,
+      sha: payload?.head_sha,
+      url: payload?.target_url ?? __commit_url(payload, payload?.head_sha),
+      html_url: payload?.target_url ?? __commit_url(payload, payload?.head_sha),
+    },
+  )
+}
+
+fn __merge_group_source_ref(payload) {
+  if payload?.merge_group_id == nil {
+    return nil
+  }
+  return __source_ref(
+    "github.merge_group",
+    payload.merge_group_id,
+    payload,
+    {
+      branch: payload?.head_ref,
+      base_ref: payload?.base_ref,
+      sha: payload?.head_sha,
+      url: __commit_url(payload, payload?.head_sha) ?? __repo_url(payload),
+      html_url: __commit_url(payload, payload?.head_sha) ?? __repo_url(payload),
+    },
+  )
+}
+
+fn __push_source_ref(payload) {
+  const id = payload?.after ?? payload?.ref
+  if id == nil {
+    return nil
+  }
+  const url = payload?.raw?.compare
+    ?? __branch_or_commit_url(
+    payload,
+    payload?.ref_name,
+    payload?.after,
+  )
+  return __source_ref(
+    "github.push",
+    id,
+    payload,
+    {branch: payload?.ref_name, sha: payload?.after, url: url, html_url: url},
+  )
+}
+
+fn __deployment_source_ref(payload) {
+  const status = payload?.deployment_status ?? {}
+  const deployment = payload?.deployment ?? {}
+  const id = status?.id ?? deployment?.id
+  if id == nil {
+    return nil
+  }
+  const url = status?.target_url ?? status?.environment_url ?? __repo_url(payload)
+  return __source_ref(
+    "github.deployment_status",
+    id,
+    payload,
+    {
+      environment: deployment?.environment,
+      state: status?.state,
+      url: url,
+      html_url: url,
+      api_url: status?.url,
+    },
+  )
+}
+
+fn __installation_source_ref(payload) {
+  if payload?.installation_id == nil {
+    return nil
+  }
+  const account = payload?.account ?? payload?.installation?.account
+  return __source_ref(
+    "github.installation",
+    payload.installation_id,
+    payload,
+    {
+      account: account?.login ?? account?.name,
+      state: payload?.installation_state,
+      url: account?.html_url,
+      html_url: account?.html_url,
+      api_url: payload?.installation?.url,
+    },
+  )
+}
+
+fn __release_source_ref(payload) {
+  if payload?.release_id == nil {
+    return nil
+  }
+  const release = payload?.release ?? {}
+  return __source_ref(
+    "github.release",
+    payload.release_id,
+    payload,
+    {
+      tag_name: payload?.tag_name,
+      name: payload?.name,
+      draft: payload?.draft ?? false,
+      prerelease: payload?.prerelease ?? false,
+      url: release?.html_url ?? payload?.html_url ?? __release_url(payload, payload?.tag_name),
+      html_url: release?.html_url ?? payload?.html_url ?? __release_url(payload, payload?.tag_name),
+      api_url: release?.url,
+    },
+  )
+}
+
+fn __repo_url(payload) {
+  const explicit = payload?.repository?.html_url
+  if explicit != nil && explicit != "" {
+    return explicit
+  }
+  const full_name = payload?.repo?.full_name
+  if full_name == nil || full_name == "" {
+    return nil
+  }
+  return "https://github.com/" + full_name
+}
+
+fn __issue_url(payload, number) {
+  const repo_url = __repo_url(payload)
+  if repo_url == nil || number == nil {
+    return nil
+  }
+  return repo_url + "/issues/" + to_string(number)
+}
+
+fn __pull_request_url(payload, number) {
+  const repo_url = __repo_url(payload)
+  if repo_url == nil || number == nil {
+    return nil
+  }
+  return repo_url + "/pull/" + to_string(number)
+}
+
+fn __commit_url(payload, sha) {
+  const repo_url = __repo_url(payload)
+  if repo_url == nil || sha == nil || sha == "" {
+    return nil
+  }
+  return repo_url + "/commit/" + to_string(sha)
+}
+
+fn __branch_or_commit_url(payload, branch, sha) {
+  const repo_url = __repo_url(payload)
+  if repo_url == nil {
+    return nil
+  }
+  if branch != nil && branch != "" {
+    return repo_url + "/tree/" + url_encode(to_string(branch))
+  }
+  if sha != nil && sha != "" {
+    return __commit_url(payload, sha)
+  }
+  return repo_url
+}
+
+fn __actions_run_url(payload, run_id) {
+  const repo_url = __repo_url(payload)
+  if repo_url == nil || run_id == nil {
+    return nil
+  }
+  return repo_url + "/actions/runs/" + to_string(run_id)
+}
+
+fn __check_suite_url(payload, suite_id) {
+  const commit = __commit_url(payload, payload?.head_sha)
+  if commit == nil || suite_id == nil {
+    return commit
+  }
+  return commit + "/checks?check_suite_id=" + to_string(suite_id)
+}
+
+fn __release_url(payload, tag_name) {
+  const repo_url = __repo_url(payload)
+  if repo_url == nil || tag_name == nil || tag_name == "" {
+    return nil
+  }
+  return repo_url + "/releases/tag/" + url_encode(to_string(tag_name))
+}

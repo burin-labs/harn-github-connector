@@ -20,7 +20,7 @@
  * behind it lives here, which is the point: four repositories were about to
  * grow four copies of the same argument parser.
  *
- * Credentials are the connector's contract, not this module's — set
+ * Credentials are the connector's contract, not this module's. Set
  * `GITHUB_INSTALLATION_TOKEN`, or `GITHUB_APP_ID` + `GITHUB_INSTALLATION_ID`
  * with a private key.
  */
@@ -30,6 +30,7 @@ import {
   github_commit_worktree,
 } from "./worktree_commit"
 
+/** Command help for publishing one local Git state as a signed commit. */
 pub const PUBLISH_USAGE =
   """Publish a local Git state to a GitHub branch as one GitHub-signed commit.
 

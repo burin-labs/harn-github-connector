@@ -14,7 +14,10 @@ pipeline test_dashboard_events(harness: Harness, task) {
   const secret = "test-signing-secret"
   shutdown(harness)
   init(harness, {signing_secret: secret})
-  const issue = github_normalize(harness, fixture_raw(harness, "issues_opened", secret, "issues"))
+  const issue = github_normalize(
+    harness,
+    fixture_raw(harness.fs, "issues_opened", secret, "issues"),
+  )
   const issue_payload = issue.event.payload
   assert_eq(issue_payload.source.kind, "github.issue", "issue primary source kind")
   assert_eq(issue_payload.source.number, 7, "issue source number")
@@ -40,7 +43,7 @@ pipeline test_dashboard_events(harness: Harness, task) {
   assert_eq(issue_payload.triage_event.raw, nil, "triage event keeps raw payload separate")
   const pr = github_normalize(
     harness,
-    fixture_raw(harness, "pull_request_opened", secret, "pull_request"),
+    fixture_raw(harness.fs, "pull_request_opened", secret, "pull_request"),
   )
   assert_eq(pr.event.payload.source.kind, "github.pull_request", "pr primary source kind")
   assert_eq(
@@ -56,7 +59,7 @@ pipeline test_dashboard_events(harness: Harness, task) {
   assert(auto_merge_intent.requires_approval, "pr auto-merge requires approval")
   const check = github_normalize(
     harness,
-    fixture_raw(harness, "check_run_completed", secret, "check_run"),
+    fixture_raw(harness.fs, "check_run_completed", secret, "check_run"),
   )
   assert_eq(check.event.payload.source.kind, "github.check_run", "check source kind")
   assert_eq(check.event.payload.source_refs[1].kind, "github.pull_request", "check related pr")
@@ -72,7 +75,7 @@ pipeline test_dashboard_events(harness: Harness, task) {
   assert(check_rerun_intent.requires_approval, "check rerun requires approval")
   const workflow = github_normalize(
     harness,
-    fixture_raw(harness, "workflow_run_completed", secret, "workflow_run"),
+    fixture_raw(harness.fs, "workflow_run_completed", secret, "workflow_run"),
   )
   assert_eq(workflow.event.payload.job_event.run_id, 6001, "workflow run id")
   assert_eq(workflow.event.payload.job_event.workflow_id, 6101, "workflow id")
@@ -88,7 +91,7 @@ pipeline test_dashboard_events(harness: Harness, task) {
   assert(workflow_dispatch_intent.requires_approval, "workflow dispatch requires approval")
   const release = github_normalize(
     harness,
-    fixture_raw(harness, "release_published", secret, "release"),
+    fixture_raw(harness.fs, "release_published", secret, "release"),
   )
   assert_eq(release.event.payload.source.kind, "github.release", "release source kind")
   assert_eq(release.event.payload.job_event.release_id, 501, "release job id")

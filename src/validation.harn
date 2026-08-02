@@ -1,0 +1,23 @@
+pub fn __actions_run_id(value) {
+  const raw = trim(to_string(value ?? ""))
+  if len(regex_captures("^[1-9][0-9]*$", raw)) == 0 {
+    return nil
+  }
+  return to_int(raw)
+}
+
+pub fn __positive_decimal(value, max_value) {
+  const parsed = __actions_run_id(value)
+  if parsed == nil || (max_value != nil && parsed > max_value) {
+    return nil
+  }
+  return parsed
+}
+
+pub fn __nonnegative_decimal(value) {
+  const raw = trim(to_string(value ?? ""))
+  if len(regex_captures("^[0-9]+$", raw)) == 0 {
+    return nil
+  }
+  return to_int(raw)
+}

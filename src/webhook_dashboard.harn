@@ -1,0 +1,621 @@
+import { first_or_nil } from "./collections"
+import { GITHUB_PROVIDER_ID } from "./provider"
+import { text_index_of } from "./text"
+import { __source_refs } from "./webhook_sources"
+
+const MENTION_HANDLE_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_/"
+
+pub fn github_extract_mentions(body) {
+  const text = to_string(body ?? "")
+  const n = len(text)
+  let out = []
+  let i = 0
+  while i < n {
+    const ch = text[i:i + 1]
+    const prev_is_boundary = i == 0 || __is_mention_boundary(text[i - 1:i])
+    if ch == "@" && prev_is_boundary {
+      let j = i + 1
+      while j < n && contains(MENTION_HANDLE_CHARS, text[j:j + 1]) {
+        j = j + 1
+      }
+      const handle = text[i + 1:j]
+      if handle != "" {
+        out = out + [__mention_from(handle, text, j, n)]
+      }
+      i = j
+    } else {
+      i = i + 1
+    }
+  }
+  return out
+}
+
+fn __is_mention_boundary(ch) {
+  return ch == " " || ch == "\n" || ch == "\t" || ch == "\r" || ch == "(" || ch == "["
+}
+
+fn __mention_from(handle, text, after_handle, n) {
+  // A command must be separated from the handle by whitespace; punctuation
+  // directly attached to the handle (e.g. `@reviewer!`) yields no command.
+  if after_handle < n {
+    const next = text[after_handle:after_handle + 1]
+    if next != " " && next != "\t" && next != "\n" && next != "\r" {
+      return {handle: handle, command: nil, rest: ""}
+    }
+  }
+  // Skip spaces/tabs (but not newlines) to find the command on the same line.
+  let k = after_handle
+  while k < n && (text[k:k + 1] == " " || text[k:k + 1] == "\t") {
+    k = k + 1
+  }
+  // Stop the command/rest scan at a newline.
+  let line_end = k
+  while line_end < n && text[line_end:line_end + 1] != "\n" {
+    line_end = line_end + 1
+  }
+  const rest_line = trim(text[k:line_end])
+  if rest_line == "" {
+    return {handle: handle, command: nil, rest: ""}
+  }
+  const space = text_index_of(rest_line, " ")
+  if space < 0 {
+    return {handle: handle, command: rest_line, rest: ""}
+  }
+  return {handle: handle, command: rest_line[0:space], rest: trim(rest_line[space:len(rest_line)])}
+}
+
+fn __mention_block(event_kind, payload) {
+  const body = __mention_body(event_kind, payload)
+  if body == nil || trim(to_string(body)) == "" {
+    return nil
+  }
+  const candidates = github_extract_mentions(body)
+  if len(candidates) == 0 {
+    return nil
+  }
+  const first = first_or_nil(candidates)
+  const actor = payload?.sender?.login ?? payload?.comment?.user?.login
+    ?? payload?.issue?.user?.login
+    ?? payload?.pull_request?.user?.login
+  return {
+    candidates: candidates,
+    actor: actor,
+    command: first?.command,
+    handle: first?.handle,
+    rest: first?.rest,
+    issue_number: payload?.issue?.number ?? payload?.pull_request?.number ?? payload?.number,
+    comment_id: payload?.comment?.id,
+    html_url: payload?.comment?.html_url ?? payload?.issue?.html_url
+      ?? payload?.pull_request?.html_url,
+  }
+}
+
+fn __mention_body(event_kind, payload) {
+  if event_kind == "issue_comment" || event_kind == "pull_request_review_comment" {
+    return payload?.comment?.body
+  }
+  if event_kind == "issues" {
+    return payload?.issue?.body
+  }
+  if event_kind == "pull_request" {
+    return payload?.pull_request?.body
+  }
+  return nil
+}
+
+@complexity(allow)
+pub fn __decorate_dashboard_payload(event_kind, payload, dedupe_key, occurred_at) {
+  const source_refs = __source_refs(event_kind, payload)
+  const source = first_or_nil(source_refs)
+  let out = payload + {source: source, source_refs: source_refs}
+  const mention = __mention_block(event_kind, payload)
+  if mention != nil {
+    out["mention"] = mention
+  }
+  const triage = __triage_event(event_kind, out, source, source_refs, dedupe_key, occurred_at)
+  if triage != nil {
+    out["triage_event"] = triage
+  }
+  const job = __job_event(event_kind, out, source, source_refs, dedupe_key, occurred_at)
+  if job != nil {
+    out["job_event"] = job
+  }
+  return out
+}
+
+fn __triage_event(event_kind, payload, source, source_refs, dedupe_key, occurred_at) {
+  if !contains(["issues", "issue_comment", "pull_request", "pull_request_review"], event_kind) {
+    return nil
+  }
+  return {
+    schema: "harn.triage_event.v1",
+    kind: "triage_event",
+    provider: GITHUB_PROVIDER_ID,
+    source_kind: source?.kind,
+    source_ref: source,
+    source_url: source?.url,
+    source_timestamp: occurred_at,
+    actor: __primary_actor(payload),
+    actors: __actors(payload),
+    summary: __triage_summary(event_kind, payload),
+    why_it_matters: __triage_reason(event_kind, payload),
+    proposed_action: __triage_proposed_action(event_kind, payload),
+    urgency: __triage_urgency(event_kind, payload),
+    priority: __triage_priority(event_kind, payload),
+    confidence: 0.9,
+    related_refs: source_refs,
+    dedupe_key: dedupe_key,
+    privacy: __privacy(payload),
+    privacy_flags: __privacy_flags(payload),
+    action_intents: __read_action_intents(source, source_refs)
+      + __host_task_action_intents(
+      source,
+      source_refs,
+    )
+      + __triage_write_action_intents(event_kind, payload),
+  }
+}
+
+fn __job_event(event_kind, payload, source, source_refs, dedupe_key, occurred_at) {
+  if !contains(
+    [
+      "workflow_run",
+      "check_run",
+      "check_suite",
+      "status",
+      "deployment_status",
+      "merge_group",
+      "push",
+      "release",
+    ],
+    event_kind,
+  ) {
+    return nil
+  }
+  return {
+    schema: "harn.job_event.v1",
+    kind: "job_event",
+    provider: GITHUB_PROVIDER_ID,
+    source_kind: source?.kind,
+    source_ref: source,
+    source_url: source?.url,
+    source_timestamp: occurred_at,
+    actor: __primary_actor(payload),
+    actors: __actors(payload),
+    summary: __job_summary(event_kind, payload),
+    status: __job_status(event_kind, payload),
+    conclusion: __job_conclusion(event_kind, payload),
+    repo: payload?.repo,
+    branch: payload?.head_ref ?? payload?.ref_name,
+    sha: payload?.head_sha ?? payload?.after,
+    run_id: payload?.run_id,
+    run_number: payload?.run_number,
+    workflow_id: payload?.workflow_id,
+    check_id: payload?.check_id,
+    check_suite_id: payload?.check_suite_id,
+    release_id: payload?.release_id,
+    pull_request_number: payload?.pull_request_number,
+    related_refs: source_refs,
+    dedupe_key: dedupe_key,
+    receipt_url: source?.url,
+    replay_url: source?.url,
+    privacy: __privacy(payload),
+    privacy_flags: __privacy_flags(payload),
+    action_intents: __read_action_intents(source, source_refs)
+      + __host_task_action_intents(
+      source,
+      source_refs,
+    )
+      + __job_write_action_intents(event_kind, payload),
+  }
+}
+
+fn __read_action_intents(source, source_refs) {
+  if source == nil || source?.url == nil {
+    return []
+  }
+  return [
+    {
+      kind: "open_source",
+      name: "open_source",
+      requires_approval: false,
+      source_ref: source,
+      related_refs: source_refs,
+    },
+  ]
+}
+
+fn __host_task_action_intents(source, source_refs) {
+  return [
+    {kind: "host", name: "dismiss", requires_approval: false, source_ref: source},
+    {kind: "host", name: "snooze", requires_approval: false, source_ref: source},
+    {
+      kind: "host",
+      name: "convert_to_task",
+      requires_approval: false,
+      source_ref: source,
+      related_refs: source_refs,
+    },
+  ]
+}
+
+fn __triage_write_action_intents(event_kind, payload) {
+  let intents = []
+  const repo = payload?.repo ?? {}
+  const issue_number = payload?.issue?.number
+  const pr_number = payload?.pull_request_number ?? payload?.pull_request?.number
+  if event_kind == "issues" || event_kind == "issue_comment" {
+    intents = __append_intent(
+      intents,
+      __provider_write_intent(
+        "comment",
+        "github.issue.comment",
+        {repo: repo?.full_name, number: issue_number},
+      ),
+    )
+    intents = __append_intent(
+      intents,
+      __provider_write_intent(
+        "add_labels",
+        "issues.add_labels",
+        {owner: repo?.owner, repo: repo?.name, issue_number: issue_number},
+      ),
+    )
+  }
+  if event_kind == "pull_request" || event_kind == "pull_request_review" {
+    intents = __append_intent(
+      intents,
+      __provider_write_intent(
+        "comment",
+        "github.pr.comment",
+        {repo: repo?.full_name, number: pr_number},
+      ),
+    )
+    intents = __append_intent(
+      intents,
+      __provider_write_intent(
+        "enable_auto_merge",
+        "github.pr.enable_auto_merge",
+        {repo: repo?.full_name, number: pr_number},
+      ),
+    )
+  }
+  return intents
+}
+
+fn __job_write_action_intents(event_kind, payload) {
+  let intents = []
+  const repo = payload?.repo ?? {}
+  if event_kind == "workflow_run" && payload?.workflow_id != nil {
+    intents = __append_intent(
+      intents,
+      __provider_write_intent(
+        "dispatch_workflow",
+        "github.actions.workflow_dispatch",
+        {
+          repo: repo?.full_name,
+          workflow_id: payload.workflow_id,
+          ref: payload?.head_ref ?? payload?.base_ref,
+        },
+      ),
+    )
+    intents = __append_intent(
+      intents,
+      __provider_operation_intent("rerun_workflow", "actions.rerun_workflow", false),
+    )
+  }
+  if event_kind == "check_run" {
+    intents = __append_intent(
+      intents,
+      __provider_operation_intent("rerun_check", "checks.rerequest", false),
+    )
+  }
+  if event_kind == "release" {
+    intents = __append_intent(
+      intents,
+      __provider_operation_intent("mutate_release", "releases.mutate", false),
+    )
+  }
+  return intents
+}
+
+fn __append_intent(intents, intent) {
+  if intent == nil {
+    return intents
+  }
+  return intents + [intent]
+}
+
+fn __provider_write_intent(name, method, args) {
+  if args?.repo == nil {
+    return nil
+  }
+  return {
+    kind: "provider_write",
+    name: name,
+    provider: GITHUB_PROVIDER_ID,
+    requires_approval: true,
+    method: method,
+    args: args,
+  }
+}
+
+fn __provider_operation_intent(name, operation, available) {
+  return {
+    kind: "provider_write",
+    name: name,
+    provider: GITHUB_PROVIDER_ID,
+    requires_approval: true,
+    operation: operation,
+    available: available,
+  }
+}
+
+fn __primary_actor(payload) {
+  return first_or_nil(__actors(payload))
+}
+
+fn __actors(payload) {
+  let actors = []
+  actors = __append_actor(actors, payload?.sender)
+  actors = __append_actor(actors, payload?.issue?.user)
+  actors = __append_actor(actors, payload?.pull_request?.user)
+  actors = __append_actor(actors, payload?.comment?.user)
+  actors = __append_actor(actors, payload?.review?.user)
+  actors = __append_actor(actors, payload?.workflow_run?.actor)
+  actors = __append_actor(actors, payload?.workflow_run?.triggering_actor)
+  actors = __append_actor(actors, payload?.check_run?.app)
+  actors = __append_actor(actors, payload?.release?.author)
+  actors = __append_actor(actors, payload?.pusher)
+  return actors
+}
+
+fn __append_actor(actors, raw_actor) {
+  const actor = __actor(raw_actor)
+  if actor == nil || actor?.handle == nil || actor.handle == "" {
+    return actors
+  }
+  for existing in actors {
+    if existing?.handle == actor.handle {
+      return actors
+    }
+  }
+  return actors + [actor]
+}
+
+fn __actor(raw_actor) {
+  if raw_actor == nil {
+    return nil
+  }
+  const handle = raw_actor?.login ?? raw_actor?.slug ?? raw_actor?.name
+  if handle == nil || handle == "" {
+    return nil
+  }
+  return {
+    provider: GITHUB_PROVIDER_ID,
+    id: raw_actor?.id,
+    login: raw_actor?.login,
+    handle: handle,
+    type: raw_actor?.type,
+    url: raw_actor?.html_url,
+  }
+}
+
+fn __privacy(payload) {
+  return {redacted: false, contains_private_repo: payload?.repository?.private ?? false}
+}
+
+fn __privacy_flags(payload) {
+  if payload?.repository?.private ?? false {
+    return ["private_repository"]
+  }
+  return []
+}
+
+fn __triage_summary(event_kind, payload) {
+  if event_kind == "issues" {
+    return "Issue #" + to_string(payload?.issue?.number ?? "") + " "
+      + to_string(
+      payload?.action ?? "updated",
+    )
+      + ": "
+      + to_string(payload?.issue?.title ?? "")
+  }
+  if event_kind == "issue_comment" {
+    return "Comment on issue #" + to_string(payload?.issue?.number ?? "") + ": "
+      + __truncate_summary(
+      payload?.comment?.body,
+    )
+  }
+  if event_kind == "pull_request" {
+    return "PR #" + to_string(payload?.pull_request_number ?? "") + " "
+      + to_string(
+      payload?.action ?? "updated",
+    )
+      + ": "
+      + to_string(payload?.pull_request?.title ?? "")
+  }
+  if event_kind == "pull_request_review" {
+    return "PR #" + to_string(payload?.pull_request_number ?? "") + " review "
+      + to_string(
+      payload?.action ?? "updated",
+    )
+      + ": "
+      + to_string(payload?.review?.state ?? "")
+  }
+  return "GitHub item updated"
+}
+
+fn __triage_reason(event_kind, payload) {
+  if event_kind == "issues" {
+    return "A tracked GitHub issue changed and may need triage or conversion into a task."
+  }
+  if event_kind == "pull_request" {
+    return "A pull request changed and may need review, merge, or follow-up work."
+  }
+  if event_kind == "issue_comment" || event_kind == "pull_request_review" {
+    return "A GitHub conversation changed and may need a response."
+  }
+  return "A GitHub source item changed."
+}
+
+fn __triage_proposed_action(event_kind, payload) {
+  if event_kind == "issues" {
+    return "triage_issue"
+  }
+  if event_kind == "pull_request" {
+    if payload?.draft ?? false {
+      return "watch_pr"
+    }
+    return "review_pr"
+  }
+  if event_kind == "issue_comment" {
+    return "review_comment"
+  }
+  if event_kind == "pull_request_review" {
+    return "review_pr_feedback"
+  }
+  return "review"
+}
+
+fn __triage_urgency(event_kind, payload) {
+  if event_kind == "pull_request_review"
+    && lowercase(to_string(payload?.review?.state ?? ""))
+    == "changes_requested" {
+    return "high"
+  }
+  if event_kind == "issues"
+    && __labels_include(payload?.labels ?? payload?.issue?.labels, "urgent") {
+    return "high"
+  }
+  return "normal"
+}
+
+fn __triage_priority(event_kind, payload) {
+  if __triage_urgency(event_kind, payload) == "high" {
+    return "high"
+  }
+  return "normal"
+}
+
+fn __labels_include(labels, wanted) {
+  for label in labels ?? [] {
+    const name = lowercase(to_string(label?.name ?? label))
+    if name == lowercase(to_string(wanted)) {
+      return true
+    }
+  }
+  return false
+}
+
+fn __job_summary(event_kind, payload) {
+  if event_kind == "workflow_run" {
+    return "Workflow " + to_string(payload?.name ?? payload?.workflow_id ?? "") + " "
+      + to_string(
+      payload?.status ?? "updated",
+    )
+      + ": "
+      + to_string(payload?.conclusion ?? "pending")
+  }
+  if event_kind == "check_run" {
+    return "Check " + to_string(payload?.name ?? payload?.check_id ?? "") + " "
+      + to_string(
+      payload?.status ?? "updated",
+    )
+      + ": "
+      + to_string(payload?.conclusion ?? "pending")
+  }
+  if event_kind == "check_suite" {
+    return "Check suite " + to_string(payload?.status ?? "updated") + ": "
+      + to_string(
+      payload?.conclusion ?? "pending",
+    )
+  }
+  if event_kind == "status" {
+    return "Status " + to_string(payload?.context ?? "") + ": " + to_string(payload?.state ?? "")
+  }
+  if event_kind == "deployment_status" {
+    return "Deployment " + to_string(payload?.deployment?.environment ?? "") + ": "
+      + to_string(
+      payload?.deployment_status?.state ?? "",
+    )
+  }
+  if event_kind == "merge_group" {
+    return "Merge queue group " + to_string(payload?.merge_group_id ?? "") + " for "
+      + to_string(
+      payload?.base_ref ?? "",
+    )
+  }
+  if event_kind == "push" {
+    return "Push to " + to_string(payload?.ref_name ?? payload?.ref ?? "") + ": "
+      + to_string(
+      payload?.distinct_size ?? len(payload?.commits ?? []),
+    )
+      + " commit(s)"
+  }
+  if event_kind == "release" {
+    return "Release " + to_string(payload?.tag_name ?? payload?.name ?? "") + " "
+      + to_string(
+      payload?.action ?? "updated",
+    )
+  }
+  return "GitHub job updated"
+}
+
+fn __job_status(event_kind, payload) {
+  if payload?.status != nil {
+    return payload.status
+  }
+  if payload?.state != nil {
+    return payload.state
+  }
+  if event_kind == "deployment_status" {
+    return payload?.deployment_status?.state
+  }
+  if event_kind == "push" {
+    if payload?.deleted ?? false {
+      return "deleted"
+    }
+    return "pushed"
+  }
+  if event_kind == "release" {
+    return payload?.action ?? "release"
+  }
+  if event_kind == "merge_group" {
+    return payload?.action ?? "queued"
+  }
+  return "updated"
+}
+
+fn __job_conclusion(event_kind, payload) {
+  if payload?.conclusion != nil {
+    return payload.conclusion
+  }
+  if event_kind == "status" {
+    const state = lowercase(to_string(payload?.state ?? ""))
+    if state == "success" {
+      return "success"
+    }
+    if state == "failure" || state == "error" {
+      return "failure"
+    }
+  }
+  if event_kind == "deployment_status" {
+    const state = lowercase(to_string(payload?.deployment_status?.state ?? ""))
+    if state == "success" {
+      return "success"
+    }
+    if state == "failure" || state == "error" || state == "inactive" {
+      return "failure"
+    }
+  }
+  return nil
+}
+
+fn __truncate_summary(value) {
+  const text = to_string(value ?? "")
+  if len(text) <= 80 {
+    return text
+  }
+  return text[0:77] + "..."
+}

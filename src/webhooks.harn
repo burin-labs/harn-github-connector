@@ -1,0 +1,838 @@
+import { first_or_nil } from "./collections"
+import { connector_error } from "./errors"
+import { GITHUB_PROVIDER_ID } from "./provider"
+import { __decorate_dashboard_payload } from "./webhook_dashboard"
+pub import { github_extract_mentions } from "./webhook_dashboard"
+
+const GITHUB_WEBHOOK_EVENTS = [
+  "issues",
+  "pull_request",
+  "issue_comment",
+  "pull_request_review",
+  "push",
+  "workflow_run",
+  "deployment_status",
+  "check_run",
+  "check_suite",
+  "status",
+  "merge_group",
+  "installation",
+  "installation_repositories",
+  "release",
+]
+
+const GITHUB_CI_FAILURE_CONCLUSIONS = ["failure", "timed_out", "startup_failure", "action_required"]
+
+const GITHUB_CI_FAILURE_STATES = ["failure", "error"]
+
+type GithubConnectorState = {initialized: bool, active: bool, bindings: dict, ctx: dict}
+
+const MAX_BODY_BYTES = 1048576
+
+let GITHUB_STATE: GithubConnectorState = {initialized: false, active: false, bindings: {}, ctx: {}}
+
+/** Return this connector's Harn provider id. */
+pub fn provider_id() {
+  return GITHUB_PROVIDER_ID
+}
+
+/** Return the trigger kinds supported by this connector. */
+pub fn kinds() {
+  return ["webhook"]
+}
+
+/** Return the canonical normalized GitHub webhook payload schema. */
+pub fn payload_schema() {
+  return {
+    harn_schema_name: "GitHubEventPayload",
+    json_schema: {
+      type: "object",
+      required: ["event", "raw"],
+      additionalProperties: true,
+      properties: {
+        provider: {type: "string"},
+        event: {type: "string"},
+        topic: {type: "string"},
+        reaction_topics: {type: "array", items: {type: "string"}},
+        action: {type: ["string", "null"]},
+        delivery_id: {type: ["string", "null"]},
+        installation_id: {type: ["integer", "null"]},
+        repository: {type: ["object", "null"]},
+        repo: {type: ["object", "null"]},
+        pull_request_number: {type: ["integer", "null"]},
+        head_sha: {type: ["string", "null"]},
+        head_ref: {type: ["string", "null"]},
+        base_ref: {type: ["string", "null"]},
+        run_id: {type: ["integer", "null"]},
+        check_id: {type: ["integer", "null"]},
+        check_suite_id: {type: ["integer", "null"]},
+        merge_group_id: {type: ["integer", "null", "string"]},
+        release_id: {type: ["integer", "null"]},
+        source: {type: ["object", "null"]},
+        source_refs: {type: ["array", "null"]},
+        triage_event: {type: ["object", "null"]},
+        job_event: {type: ["object", "null"]},
+        mention: {type: ["object", "null"]},
+        raw: {type: "object"},
+        issue: {type: ["object", "null"]},
+        pull_request: {type: ["object", "null"]},
+        comment: {type: ["object", "null"]},
+        review: {type: ["object", "null"]},
+        commits: {type: ["array", "null"]},
+        workflow_run: {type: ["object", "null"]},
+        deployment_status: {type: ["object", "null"]},
+        deployment: {type: ["object", "null"]},
+        check_run: {type: ["object", "null"]},
+        check_suite: {type: ["object", "null"]},
+        status: {type: ["string", "null"]},
+        commit_status: {type: ["object", "null"]},
+        merge_group: {type: ["object", "null"]},
+        installation: {type: ["object", "null"]},
+        release: {type: ["object", "null"]},
+        repositories_added: {type: ["array", "null"]},
+        repositories_removed: {type: ["array", "null"]},
+      },
+    },
+  }
+}
+
+/** Initialize connector state with orchestrator context. */
+pub fn init(_harness: Harness, ctx = nil) {
+  const next = __state()
+    + {
+    initialized: true,
+    ctx: if type_of(ctx) == "dict" {
+      ctx
+    } else {
+      {}
+    },
+  }
+  __set_state(next)
+  return next
+}
+
+/** Activate webhook bindings and reject duplicate configured paths. */
+pub fn activate(_harness: Harness, bindings = []) {
+  let by_id = {}
+  let seen_paths = {}
+  for binding in bindings ?? [] {
+    const fallback_id = "binding-" + to_string(len(by_id.keys()))
+    const binding_id = binding?.binding_id ?? binding?.id ?? fallback_id
+    const path = binding?.path ?? binding?.match?.path
+    if path != nil && path != "" {
+      if seen_paths.get(path) {
+        return connector_error(
+          "activation",
+          "github connector path `" + path + "` is configured by multiple bindings",
+        )
+      }
+      seen_paths[path] = true
+    }
+    by_id[binding_id] = binding + {binding_id: binding_id}
+  }
+  const next = __state() + {bindings: by_id, active: true}
+  __set_state(next)
+  return {provider: GITHUB_PROVIDER_ID, kind: "webhook", bindings: len(by_id.keys())}
+}
+
+/**
+ * Clear connector lifecycle state. Cached installation tokens persist
+ * across restarts so subsequent runs can refresh them lazily. Call
+ * `reset_token_cache(harness.runtime)` explicitly to invalidate the persistent cache.
+ */
+pub fn shutdown(_harness: Harness) {
+  GITHUB_STATE = {initialized: false, active: false, bindings: {}, ctx: {}}
+  return {provider: GITHUB_PROVIDER_ID, active: false}
+}
+
+@complexity(allow)
+/** Verify and normalize a raw GitHub webhook request into NormalizeResult v1. */
+pub fn normalize_inbound(harness: Harness, raw) {
+  const body_text = raw?.body_text ?? raw?.body ?? ""
+  if len(body_text) > MAX_BODY_BYTES {
+    return __reject(413, "payload_too_large", "github webhook body exceeds 1 MiB cap")
+  }
+  const headers = raw?.headers ?? {}
+  const verified = __verify_github_signature(harness.secrets, raw, headers, body_text)
+  if is_err(verified) {
+    return __reject_err(unwrap_err(verified))
+  }
+  const signature_status = unwrap(verified)
+  const parsed = try {
+    json_parse(body_text)
+  }
+  if is_err(parsed) {
+    return __reject(400, "invalid_json", "github payload body is not valid JSON")
+  }
+  const payload = unwrap(parsed)
+  const event_kind = __event_kind(raw, headers)
+  if event_kind == nil || event_kind == "" {
+    return __reject(400, "missing_event", "missing x-github-event header")
+  }
+  if !contains(GITHUB_WEBHOOK_EVENTS, event_kind) {
+    return __reject(
+      400,
+      "unsupported_event",
+      "unsupported GitHub event type `" + to_string(event_kind) + "`",
+    )
+  }
+  const event = __build_event(event_kind, payload, raw, headers, signature_status)
+  return {type: "event", event: event}
+}
+
+fn __state() -> GithubConnectorState {
+  return GITHUB_STATE
+}
+
+fn __set_state(state: GithubConnectorState) {
+  GITHUB_STATE = state
+  return state
+}
+
+fn __reject(status, code, message) {
+  return {
+    type: "reject",
+    reject: {
+      status: status,
+      body: json_stringify({error: code, message: message}),
+      content_type: "application/json",
+    },
+  }
+}
+
+fn __reject_err(err) {
+  const code = err?.code ?? "rejected"
+  const message = err?.message ?? "request rejected"
+  const status = if code == "missing_signature" || code == "invalid_signature"
+    || code
+    == "missing_secret" {
+    401
+  } else {
+    400
+  }
+  return __reject(status, code, message)
+}
+
+fn __header(headers, name) {
+  const wanted = lowercase(name)
+  for entry in (headers ?? {}).entries() {
+    if lowercase(trim(to_string(entry.key))) == wanted {
+      return trim(to_string(entry.value))
+    }
+  }
+  return nil
+}
+
+fn __event_kind(raw, headers) {
+  return __header(headers, "x-github-event") ?? raw?.kind ?? raw?.event
+}
+
+fn __signing_secret(secrets: HarnessSecrets, raw) {
+  const state = __state()
+  const ctx_secret = state.ctx?.signing_secret ?? state.ctx?.secrets?.signing_secret
+  if ctx_secret != nil && trim(to_string(ctx_secret)) != "" {
+    return to_string(ctx_secret)
+  }
+  const bindings = state.bindings ?? {}
+  const binding_id = raw?.metadata?.binding_id ?? raw?.binding_id
+  if binding_id != nil {
+    const binding = bindings.get(binding_id)
+    const binding_secret = binding?.signing_secret ?? binding?.secrets?.signing_secret
+      ?? binding
+      ?.config?.signing_secret
+    if binding_secret != nil && trim(to_string(binding_secret)) != "" {
+      return to_string(binding_secret)
+    }
+  }
+  const secret_id = __signing_secret_id(raw)
+  const secret = __secret_get_optional(secrets, secret_id)
+  if secret != nil && trim(to_string(secret)) != "" {
+    return secret
+  }
+  return nil
+}
+
+fn __signing_secret_id(raw) {
+  const metadata = raw?.metadata ?? {}
+  const id = metadata?.secret_ids?.signing_secret ?? metadata?.config?.secret_ids?.signing_secret
+  const direct_id = __secret_id_candidate(id, "signing_secret")
+  if direct_id != nil {
+    return direct_id
+  }
+  const bindings = __state().bindings ?? {}
+  const binding_id = metadata?.binding_id ?? raw?.binding_id
+  if binding_id != nil {
+    const binding = bindings.get(binding_id)
+    return __binding_signing_secret_id(binding)
+  }
+  return nil
+}
+
+fn __binding_signing_secret_id(binding) {
+  const id = binding?.signing_secret_id ?? binding?.signing_secret_secret
+    ?? binding?.secrets
+    ?.signing_secret_id
+    ?? binding?.config?.signing_secret_id
+    ?? binding?.config?.signing_secret_secret
+    ?? binding?.config?.secret_ids?.signing_secret
+    ?? binding?.config?.secrets?.signing_secret
+  return __secret_id_candidate(id, "signing_secret")
+}
+
+fn __secret_id_candidate(value, fallback_name) {
+  if value == nil || trim(to_string(value)) == "" {
+    return nil
+  }
+  const text = trim(to_string(value))
+  if contains(text, "/") {
+    return text
+  }
+  if fallback_name != nil && trim(to_string(fallback_name)) != "" {
+    return GITHUB_PROVIDER_ID + "/" + to_string(fallback_name)
+  }
+  return nil
+}
+
+fn __secret_get_optional(secrets: HarnessSecrets, secret_id) {
+  if secret_id == nil || trim(to_string(secret_id)) == "" {
+    return nil
+  }
+  const resolved = try {
+    secrets.read(to_string(secret_id))
+  }
+  if is_err(resolved) {
+    return nil
+  }
+  return to_string(unwrap(resolved))
+}
+
+fn __verify_github_signature(secrets: HarnessSecrets, raw, headers, body_text) {
+  const signature = __header(headers, "x-hub-signature-256")
+  if signature == nil || signature == "" {
+    return connector_error("missing_signature", "missing x-hub-signature-256 header")
+  }
+  if !starts_with(signature, "sha256=") {
+    return connector_error("invalid_signature", "x-hub-signature-256 must start with sha256=")
+  }
+  const secret = __signing_secret(secrets, raw)
+  if secret == nil || trim(to_string(secret)) == "" {
+    return connector_error("missing_secret", "github signing_secret is required")
+  }
+  const actual = signature[7:len(signature)]
+  const expected = hmac_sha256(to_string(secret), body_text)
+  if !constant_time_eq(expected, actual) {
+    return connector_error(
+      "invalid_signature",
+      "x-hub-signature-256 did not match the request body",
+    )
+  }
+  return Ok("verified")
+}
+
+@complexity(allow)
+fn __build_event(event_kind, payload, raw, headers, signature_status) {
+  const repo = __repo(payload)
+  const occurred_at = __occurred_at(event_kind, payload, raw)
+  const delivery_id = __header(headers, "x-github-delivery")
+  const dedupe_key = __dedupe_key(event_kind, payload, repo, delivery_id)
+  const normalized_payload = __normalize_github_payload(
+    event_kind,
+    payload,
+    delivery_id,
+    dedupe_key,
+    occurred_at,
+  )
+  return {
+    kind: event_kind,
+    topic: normalized_payload.topic,
+    occurred_at: occurred_at,
+    dedupe_key: dedupe_key,
+    delivery_id: delivery_id,
+    signature_status: __signature_status(signature_status),
+    payload: normalized_payload,
+    headers: {"x-github-event": event_kind, "x-github-delivery": delivery_id},
+  }
+}
+
+fn __signature_status(status) {
+  if status == "verified" || status == "signed" {
+    return {state: "verified"}
+  }
+  return {state: "unsigned"}
+}
+
+fn __dedupe_key(event_kind, payload, repo, delivery_id) {
+  if delivery_id != nil && delivery_id != "" {
+    return "github:delivery:" + to_string(delivery_id)
+  }
+  const repo_part = if repo?.full_name != nil && repo.full_name != "" {
+    repo.full_name
+  } else {
+    "unknown"
+  }
+  if event_kind == "push" {
+    return "github:push:" + repo_part + ":" + to_string(payload?.after ?? "")
+  }
+  const action = payload?.action ?? ""
+  const resource_id = to_string(
+    payload?.pull_request?.id ?? payload?.issue?.id ?? payload?.comment?.id ?? payload?.review?.id
+      ?? payload
+      ?.workflow_run?.id
+      ?? payload?.deployment_status?.id
+      ?? payload?.check_run?.id
+      ?? payload?.check_suite?.id
+      ?? payload?.merge_group?.id
+      ?? payload?.installation?.id
+      ?? payload?.release?.id
+      ?? payload?.sha
+      ?? "",
+  )
+  return "github:" + event_kind + ":" + repo_part + ":" + to_string(action) + ":" + resource_id
+}
+
+@complexity(allow)
+fn __normalize_github_payload(event_kind, raw, delivery_id, dedupe_key, occurred_at) {
+  const common = {
+    provider: GITHUB_PROVIDER_ID,
+    event: event_kind,
+    topic: __topic(event_kind, raw?.action),
+    reaction_topics: __reaction_topics(event_kind, raw),
+    action: raw?.action,
+    delivery_id: delivery_id,
+    installation_id: raw?.installation?.id,
+    installation: raw?.installation,
+    repository: raw?.repository,
+    repo: __repo(raw),
+    sender: raw?.sender,
+    raw: raw,
+  }
+  if event_kind == "pull_request" {
+    const pr = raw?.pull_request ?? {}
+    return __decorate_dashboard_payload(
+      event_kind,
+      common
+        + {
+        pull_request: pr,
+        pull_request_id: pr?.id,
+        pull_request_number: raw?.number ?? pr?.number,
+        head_sha: pr?.head?.sha,
+        head_ref: pr?.head?.ref,
+        base_sha: pr?.base?.sha,
+        base_ref: pr?.base?.ref,
+        draft: pr?.draft,
+        merged: pr?.merged,
+        labels: pr?.labels ?? [],
+      },
+      dedupe_key,
+      occurred_at,
+    )
+  }
+  if event_kind == "check_run" {
+    const check = raw?.check_run ?? {}
+    const pr = first_or_nil(check?.pull_requests)
+    return __decorate_dashboard_payload(
+      event_kind,
+      common
+        + {
+        check_run: check,
+        check_id: check?.id,
+        check_run_id: check?.id,
+        check_suite_id: check?.check_suite?.id,
+        pull_request_number: pr?.number,
+        head_sha: check?.head_sha ?? pr?.head?.sha,
+        head_ref: pr?.head?.ref,
+        base_ref: pr?.base?.ref,
+        name: check?.name,
+        status: check?.status,
+        conclusion: check?.conclusion,
+      },
+      dedupe_key,
+      occurred_at,
+    )
+  }
+  if event_kind == "check_suite" {
+    const suite = raw?.check_suite ?? {}
+    const pr = first_or_nil(suite?.pull_requests)
+    return __decorate_dashboard_payload(
+      event_kind,
+      common
+        + {
+        check_suite: suite,
+        check_suite_id: suite?.id,
+        pull_request_number: pr?.number,
+        head_sha: suite?.head_sha,
+        head_ref: suite?.head_branch ?? pr?.head?.ref,
+        base_ref: pr?.base?.ref,
+        status: suite?.status,
+        conclusion: suite?.conclusion,
+      },
+      dedupe_key,
+      occurred_at,
+    )
+  }
+  if event_kind == "workflow_run" {
+    const run = raw?.workflow_run ?? {}
+    const pr = first_or_nil(run?.pull_requests)
+    return __decorate_dashboard_payload(
+      event_kind,
+      common
+        + {
+        workflow_run: run,
+        run_id: run?.id,
+        run_number: run?.run_number,
+        workflow_id: run?.workflow_id,
+        check_suite_id: run?.check_suite_id,
+        pull_request_number: pr?.number,
+        head_sha: run?.head_sha ?? pr?.head?.sha,
+        head_ref: run?.head_branch ?? pr?.head?.ref,
+        base_ref: pr?.base?.ref,
+        name: run?.name,
+        status: run?.status,
+        conclusion: run?.conclusion,
+      },
+      dedupe_key,
+      occurred_at,
+    )
+  }
+  if event_kind == "status" {
+    const branch = first_or_nil(raw?.branches)
+    return __decorate_dashboard_payload(
+      event_kind,
+      common
+        + {
+        commit_status: raw,
+        status_id: raw?.id,
+        head_sha: raw?.sha,
+        head_ref: branch?.name,
+        base_ref: branch?.name,
+        state: raw?.state,
+        context: raw?.context,
+        target_url: raw?.target_url,
+      },
+      dedupe_key,
+      occurred_at,
+    )
+  }
+  if event_kind == "merge_group" {
+    const group = raw?.merge_group ?? {}
+    return __decorate_dashboard_payload(
+      event_kind,
+      common
+        + {
+        merge_group: group,
+        merge_group_id: group?.id,
+        head_sha: group?.head_sha,
+        head_ref: group?.head_ref,
+        base_sha: group?.base_sha,
+        base_ref: group?.base_ref,
+        pull_requests: group?.pull_requests ?? raw?.pull_requests ?? [],
+        pull_request_numbers: __pull_request_numbers(group?.pull_requests ?? raw?.pull_requests),
+      },
+      dedupe_key,
+      occurred_at,
+    )
+  }
+  if event_kind == "push" {
+    return __decorate_dashboard_payload(
+      event_kind,
+      common
+        + {
+        ref: raw?.ref,
+        ref_name: __ref_name(raw?.ref),
+        before: raw?.before,
+        after: raw?.after,
+        head_sha: raw?.after,
+        head_ref: __ref_name(raw?.ref),
+        commits: raw?.commits ?? [],
+        distinct_size: raw?.distinct_size,
+        head_commit: raw?.head_commit,
+        pusher: raw?.pusher,
+        deleted: raw?.deleted ?? false,
+        forced: raw?.forced ?? false,
+        created: raw?.created ?? false,
+      },
+      dedupe_key,
+      occurred_at,
+    )
+  }
+  if event_kind == "installation" {
+    return __decorate_dashboard_payload(
+      event_kind,
+      common
+        + {
+        installation: raw?.installation,
+        account: raw?.installation?.account ?? raw?.account,
+        installation_id: raw?.installation?.id,
+        installation_state: __installation_state(raw?.action),
+        suspended: __is_suspension_action(raw?.action),
+        revoked: __is_revocation_action(raw?.action),
+        repositories: raw?.repositories ?? [],
+      },
+      dedupe_key,
+      occurred_at,
+    )
+  }
+  if event_kind == "installation_repositories" {
+    return __decorate_dashboard_payload(
+      event_kind,
+      common
+        + {
+        installation: raw?.installation,
+        account: raw?.installation?.account ?? raw?.account,
+        installation_id: raw?.installation?.id,
+        installation_state: __installation_state(raw?.action),
+        suspended: __is_suspension_action(raw?.action),
+        revoked: __is_revocation_action(raw?.action),
+        repository_selection: raw?.repository_selection,
+        repositories_added: raw?.repositories_added ?? [],
+        repositories_removed: raw?.repositories_removed ?? [],
+      },
+      dedupe_key,
+      occurred_at,
+    )
+  }
+  if event_kind == "release" {
+    const release = raw?.release ?? {}
+    return __decorate_dashboard_payload(
+      event_kind,
+      common
+        + {
+        release: release,
+        release_id: release?.id,
+        tag_name: release?.tag_name,
+        name: release?.name,
+        draft: release?.draft ?? false,
+        prerelease: release?.prerelease ?? false,
+        target_commitish: release?.target_commitish,
+        html_url: release?.html_url,
+        published_at: release?.published_at,
+        assets: release?.assets ?? [],
+      },
+      dedupe_key,
+      occurred_at,
+    )
+  }
+  if event_kind == "issues" {
+    return __decorate_dashboard_payload(
+      event_kind,
+      common + {issue: raw?.issue},
+      dedupe_key,
+      occurred_at,
+    )
+  }
+  if event_kind == "issue_comment" {
+    return __decorate_dashboard_payload(
+      event_kind,
+      common + {issue: raw?.issue, comment: raw?.comment},
+      dedupe_key,
+      occurred_at,
+    )
+  }
+  if event_kind == "pull_request_review" {
+    const pr = raw?.pull_request ?? {}
+    return __decorate_dashboard_payload(
+      event_kind,
+      common
+        + {
+        pull_request: pr,
+        review: raw?.review,
+        pull_request_number: pr?.number,
+        head_sha: pr?.head?.sha,
+        head_ref: pr?.head?.ref,
+        base_sha: pr?.base?.sha,
+        base_ref: pr?.base?.ref,
+      },
+      dedupe_key,
+      occurred_at,
+    )
+  }
+  if event_kind == "deployment_status" {
+    return __decorate_dashboard_payload(
+      event_kind,
+      common + {deployment_status: raw?.deployment_status, deployment: raw?.deployment},
+      dedupe_key,
+      occurred_at,
+    )
+  }
+  return __decorate_dashboard_payload(event_kind, common, dedupe_key, occurred_at)
+}
+
+fn __reaction_topics(event_kind, raw) {
+  if event_kind == "pull_request" && __pull_request_has_conflict(raw?.pull_request) {
+    return ["github.reaction.merge_conflict"]
+  }
+  if __ci_concluded_failed(event_kind, raw) {
+    return ["github.reaction.ci_failure"]
+  }
+  return []
+}
+
+fn __pull_request_has_conflict(pr) {
+  return lowercase(to_string(pr?.mergeable_state ?? "")) == "dirty"
+}
+
+fn __ci_concluded_failed(event_kind, raw) {
+  if event_kind == "status" {
+    return contains(GITHUB_CI_FAILURE_STATES, lowercase(to_string(raw?.state ?? "")))
+  }
+  if event_kind == "check_run" {
+    return contains(
+      GITHUB_CI_FAILURE_CONCLUSIONS,
+      lowercase(to_string(raw?.check_run?.conclusion ?? "")),
+    )
+  }
+  if event_kind == "check_suite" {
+    return contains(
+      GITHUB_CI_FAILURE_CONCLUSIONS,
+      lowercase(to_string(raw?.check_suite?.conclusion ?? "")),
+    )
+  }
+  if event_kind == "workflow_run" {
+    return contains(
+      GITHUB_CI_FAILURE_CONCLUSIONS,
+      lowercase(to_string(raw?.workflow_run?.conclusion ?? "")),
+    )
+  }
+  return false
+}
+
+@complexity(allow)
+/**
+ * Extract `@handle command args...` mentions from a free-text body using
+ * pure string scanning (no network, no regex). Returns a list of
+ * `{handle, command, rest}` candidates. A mention is recognized when `@` is at
+ * the start of the body or follows whitespace, the handle is a run of
+ * `[A-Za-z0-9-_/]`, and (optionally) a command word follows on the same line.
+ */
+/**
+ * Build the `mention` triage sub-block for events whose body may contain
+ * `@handle command` directives. Surfaces ALL @mentions as `candidates`
+ * (downstream filters by bot identity) plus the first command for convenience.
+ * Returns nil when the event kind has no body or no mentions are found.
+ */
+fn __topic(event_kind, action) {
+  const prefix = "github." + to_string(event_kind)
+  if action == nil || trim(to_string(action)) == "" {
+    return prefix
+  }
+  return prefix + "." + to_string(action)
+}
+
+fn __pull_request_numbers(pulls) {
+  let numbers = []
+  for pr in pulls ?? [] {
+    if pr?.number != nil {
+      numbers = numbers + [pr.number]
+    }
+  }
+  return numbers
+}
+
+fn __ref_name(ref) {
+  if ref == nil {
+    return nil
+  }
+  const text = to_string(ref)
+  if starts_with(text, "refs/heads/") {
+    return text[11:len(text)]
+  }
+  if starts_with(text, "refs/tags/") {
+    return text[10:len(text)]
+  }
+  return text
+}
+
+fn __installation_state(action) {
+  const value = to_string(action ?? "")
+  if __is_suspension_action(value) {
+    return "suspended"
+  }
+  if value == "unsuspend" || value == "unsuspended" {
+    return "active"
+  }
+  if __is_revocation_action(value) {
+    return "revoked"
+  }
+  return nil
+}
+
+fn __is_suspension_action(action) {
+  const value = to_string(action ?? "")
+  return value == "suspend" || value == "suspended"
+}
+
+fn __is_revocation_action(action) {
+  const value = to_string(action ?? "")
+  return value == "deleted" || value == "removed" || value == "revoked"
+}
+
+fn __repo(payload) {
+  const repo = payload?.repository ?? {}
+  const owner = repo?.owner ?? {}
+  const owner_name = owner?.login ?? owner?.name ?? ""
+  const repo_name = repo?.name ?? ""
+  const fallback_full_name = if owner_name == "" || repo_name == "" {
+    ""
+  } else {
+    owner_name + "/" + repo_name
+  }
+  return {owner: owner_name, name: repo_name, full_name: repo?.full_name ?? fallback_full_name}
+}
+
+fn __occurred_at(event_kind, payload, raw) {
+  if raw?.occurred_at != nil {
+    return raw.occurred_at
+  }
+  if event_kind == "push" {
+    return payload?.head_commit?.timestamp ?? payload?.repository?.pushed_at
+  }
+  if event_kind == "pull_request" {
+    return payload?.pull_request?.updated_at ?? payload?.pull_request?.created_at
+  }
+  if event_kind == "issues" {
+    return payload?.issue?.updated_at ?? payload?.issue?.created_at
+  }
+  if event_kind == "issue_comment" {
+    return payload?.comment?.updated_at ?? payload?.comment?.created_at
+  }
+  if event_kind == "pull_request_review" {
+    return payload?.review?.submitted_at ?? payload?.review?.updated_at
+      ?? payload?.pull_request
+      ?.updated_at
+      ?? payload?.pull_request?.created_at
+  }
+  if event_kind == "workflow_run" {
+    return payload?.workflow_run?.updated_at ?? payload?.workflow_run?.created_at
+      ?? payload
+      ?.workflow_run?.run_started_at
+  }
+  if event_kind == "check_suite" {
+    return payload?.check_suite?.updated_at ?? payload?.check_suite?.created_at
+  }
+  if event_kind == "deployment_status" {
+    return payload?.deployment_status?.created_at ?? payload?.deployment_status?.updated_at
+      ?? payload
+      ?.deployment?.created_at
+  }
+  if event_kind == "status" {
+    return payload?.updated_at ?? payload?.created_at
+  }
+  if event_kind == "merge_group" {
+    return payload?.merge_group?.updated_at ?? payload?.merge_group?.created_at
+      ?? payload?.merge_group
+      ?.head_commit?.timestamp
+  }
+  if event_kind == "installation" || event_kind == "installation_repositories" {
+    return payload?.installation?.updated_at ?? payload?.installation?.created_at
+      ?? payload
+      ?.installation?.suspended_at
+  }
+  if event_kind == "release" {
+    return payload?.release?.published_at ?? payload?.release?.updated_at
+      ?? payload?.release
+      ?.created_at
+  }
+  return payload?.check_run?.completed_at ?? payload?.check_run?.started_at
+    ?? payload?.check_run
+    ?.created_at
+}
