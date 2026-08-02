@@ -5,7 +5,9 @@ import {
 } from "std/connectors/shared"
 import { process_run } from "std/runtime"
 pub import {
+  GithubAutoMergeDisableReceipt,
   GithubAutoMergeReceipt,
+  GithubBranchHead,
   GithubBranchProtection,
   GithubCheckRollup,
   GithubCheckRun,
@@ -67,6 +69,7 @@ const GITHUB_OUTBOUND_METHODS = [
   "github.pr.checks",
   "github.pr.merge",
   "github.pr.enable_auto_merge",
+  "github.pr.disable_auto_merge",
   "github.pr.comment",
   "github.actions.workflow_dispatch",
   "github.actions.runs",
@@ -85,6 +88,7 @@ const GITHUB_OUTBOUND_METHODS = [
   "github.issue.create",
   "github.issue.comment",
   "github.branch.protection",
+  "github.branch.view",
   "github.branch.create_signed_commit",
   "github.commit.signature",
   "github.file.view",
@@ -428,6 +432,9 @@ fn __call_raw(harness: Harness, method, args = {}) {
   if method == "github.pr.enable_auto_merge" {
     return __github_pr_enable_auto_merge(harness, args, cfg)
   }
+  if method == "github.pr.disable_auto_merge" {
+    return __github_pr_disable_auto_merge(harness, args, cfg)
+  }
   if method == "github.pr.comment" {
     return __github_pr_comment(harness, args, cfg)
   }
@@ -481,6 +488,9 @@ fn __call_raw(harness: Harness, method, args = {}) {
   }
   if method == "github.branch.protection" {
     return __github_branch_protection(harness, args, cfg)
+  }
+  if method == "github.branch.view" {
+    return __github_branch_view(harness, args, cfg)
   }
   if method == "github.branch.create_signed_commit" {
     return __github_create_signed_commit(harness, args, cfg)
@@ -834,6 +844,46 @@ pub fn pulls_enable_auto_merge(
   }
   const receipt: GithubAutoMergeReceipt = unwrap(result)
   return Ok(receipt)
+}
+
+/** Disable auto-merge under exact pull and base leases, retaining restoration intent. */
+pub fn pulls_disable_auto_merge(
+  harness: Harness,
+  owner: string,
+  repo: string,
+  number: int,
+  options: dict,
+) -> GithubConnectorResult<GithubAutoMergeDisableReceipt> {
+  const result = call(
+    harness,
+    "github.pr.disable_auto_merge",
+    options + {owner: owner, repo: repo, pull_number: number},
+  )
+  if is_err(result) {
+    return Err(unwrap_err(result))
+  }
+  const receipt: GithubAutoMergeDisableReceipt = unwrap(result)
+  return Ok(receipt)
+}
+
+/** Read one branch's exact current commit through a closed typed result. */
+pub fn github_branch_head(
+  harness: Harness,
+  owner: string,
+  repo: string,
+  branch: string,
+  options: dict = {},
+) -> GithubConnectorResult<GithubBranchHead> {
+  const result = call(
+    harness,
+    "github.branch.view",
+    options + {owner: owner, repo: repo, branch: branch},
+  )
+  if is_err(result) {
+    return Err(unwrap_err(result))
+  }
+  const head: GithubBranchHead = unwrap(result)
+  return Ok(head)
 }
 
 /**
@@ -2547,6 +2597,26 @@ fn __github_pr_enable_auto_merge(harness: Harness, args, cfg) {
   )
 }
 
+fn __github_pr_disable_auto_merge(harness: Harness, args, cfg) {
+  const repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  const r = unwrap(repo)
+  const number = args?.pr_number ?? args?.number ?? args?.pull_number
+  if number == nil {
+    return __err(
+      "schema_drift",
+      "github.pr.disable_auto_merge requires number, pr_number, or pull_number",
+    )
+  }
+  return __pulls_disable_auto_merge(
+    harness,
+    args + {owner: r.owner, repo: r.name, pull_number: number},
+    cfg,
+  )
+}
+
 fn __github_actions_workflow_dispatch(harness: Harness, args, cfg) {
   const repo = __repo_parts(args)
   if is_err(repo) {
@@ -3459,6 +3529,19 @@ fn __github_branch_protection(harness: Harness, args, cfg) {
   return __branch_protection_summary(unwrap(protection), branch)
 }
 
+fn __github_branch_view(harness: Harness, args, cfg) {
+  const repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  const r = unwrap(repo)
+  const branch = trim(to_string(args?.branch ?? args?.base_branch ?? ""))
+  if branch == "" {
+    return __err("schema_drift", "github.branch.view requires branch or base_branch")
+  }
+  return __github_branch_head_raw(harness, r, branch, cfg)
+}
+
 fn __issues_create_with_template(harness: Harness, args, cfg) {
   const template = args?.template ?? {}
   const title_template = if type_of(template) == "dict" {
@@ -3704,6 +3787,244 @@ fn __pulls_enable_auto_merge(harness: Harness, args, cfg) {
     ),
     url: to_string(enabled_pull?.url ?? pull?.html_url ?? ""),
   }
+}
+
+fn __reenable_after_lost_disable(harness: Harness, cfg, node_id, head_oid, method) {
+  if trim(to_string(head_oid ?? "")) == "" {
+    return {ok: false, detail: "post-mutation pull response omitted the head needed to compensate"}
+  }
+  const graph = __github_json(
+    harness,
+    "POST",
+    __github_api_url(cfg.api_base_url, "/graphql"),
+    {
+      query: __enable_auto_merge_mutation(),
+      variables: {
+        pullRequestId: node_id,
+        mergeMethod: method,
+        commitHeadline: nil,
+        commitBody: nil,
+        expectedHeadOid: head_oid,
+      },
+    },
+    cfg,
+  )
+  if is_err(graph) {
+    return {ok: false, detail: to_string(unwrap_err(graph)?.message ?? unwrap_err(graph))}
+  }
+  if graph?.errors != nil && len(graph.errors) > 0 {
+    return {ok: false, detail: json_stringify(graph.errors)}
+  }
+  if graph?.data?.enablePullRequestAutoMerge?.pullRequest?.autoMergeRequest == nil {
+    return {ok: false, detail: "compensating enable omitted auto-merge evidence"}
+  }
+  return {ok: true, detail: "restored auto-merge at the post-mutation head"}
+}
+
+fn __fail_uncertain_disable(harness: Harness, args, cfg, node_id, method, reason) {
+  const pull = __github_json(
+    harness,
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/pulls/" + to_string(args.pull_number),
+    ),
+    nil,
+    cfg,
+  )
+  if is_err(pull) {
+    return __err(
+      "disable_unverified",
+      reason + "; could not observe or compensate the uncertain mutation",
+      {compensation_state: "failed", compensation_message: to_string(unwrap_err(pull))},
+    )
+  }
+  if pull?.auto_merge != nil {
+    return __err(
+      "disable_unverified",
+      reason + "; auto-merge remained armed",
+      {compensation_state: "not_needed", compensation_message: "auto-merge remained armed"},
+    )
+  }
+  const observed_head_oid = trim(to_string(pull?.head?.sha ?? ""))
+  const compensated = __reenable_after_lost_disable(
+    harness,
+    cfg,
+    node_id,
+    observed_head_oid,
+    method,
+  )
+  return __err(
+    "disable_unverified",
+    reason + "; " + compensated.detail,
+    {
+      observed_head_oid: observed_head_oid,
+      compensation_state: if compensated.ok {
+        "restored"
+      } else {
+        "failed"
+      },
+      compensation_message: compensated.detail,
+    },
+  )
+}
+
+fn __pulls_disable_auto_merge(harness: Harness, args, cfg) {
+  const expected_head_oid = trim(to_string(args?.expected_head_oid ?? ""))
+  const base_branch = trim(to_string(args?.base_branch ?? args?.branch ?? ""))
+  const expected_base_oid = trim(to_string(args?.expected_base_oid ?? ""))
+  const method = __graphql_merge_method(
+    args?.restore_merge_method ?? args?.merge_method ?? args?.method ?? "",
+  )
+  if expected_head_oid == "" || base_branch == "" || expected_base_oid == "" {
+    return __err(
+      "schema_drift",
+      "github.pr.disable_auto_merge requires expected_head_oid, base_branch, and expected_base_oid",
+    )
+  }
+  if is_err(method) {
+    return method
+  }
+  const restore_merge_method = unwrap(method)
+  const repo = {owner: to_string(args.owner), name: to_string(args.repo)}
+  const base = __github_branch_head_raw(harness, repo, base_branch, cfg)
+  if is_err(base) {
+    return base
+  }
+  const observed_base_oid = unwrap(base).oid
+  if observed_base_oid != expected_base_oid {
+    return __err(
+      "stale_base",
+      "base branch no longer matches expected_base_oid",
+      {expected_base_oid: expected_base_oid, observed_base_oid: observed_base_oid},
+    )
+  }
+  const pull = __github_json(
+    harness,
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/pulls/" + to_string(args.pull_number),
+    ),
+    nil,
+    cfg,
+  )
+  if is_err(pull) {
+    return pull
+  }
+  const valid = __validate_pull_identity(pull, "github.pr.disable_auto_merge")
+  if is_err(valid) {
+    return valid
+  }
+  const observed_head_oid = trim(to_string(pull?.head?.sha ?? ""))
+  if observed_head_oid != expected_head_oid {
+    return __err(
+      "stale_head",
+      "pull request head no longer matches expected_head_oid",
+      {expected_head_oid: expected_head_oid, observed_head_oid: observed_head_oid},
+    )
+  }
+  if trim(to_string(pull?.base?.ref ?? "")) != base_branch {
+    return __err("stale_base", "pull request base branch no longer matches base_branch")
+  }
+  const receipt = {
+    repo: to_string(args.owner) + "/" + to_string(args.repo),
+    pull_number: args.pull_number,
+    expected_head_oid: expected_head_oid,
+    observed_head_oid: observed_head_oid,
+    base_branch: base_branch,
+    expected_base_oid: expected_base_oid,
+    observed_base_oid: observed_base_oid,
+    restore_merge_method: restore_merge_method,
+    url: to_string(pull?.html_url ?? pull?.url ?? ""),
+  }
+  if pull?.auto_merge == nil {
+    return receipt + {state: "already_disabled", already_disabled: true}
+  }
+  const node_id = trim(to_string(pull?.node_id ?? ""))
+  if node_id == "" {
+    return __err("schema_drift", "GitHub PR response omitted node_id for auto-merge disable")
+  }
+  const graph = __github_json(
+    harness,
+    "POST",
+    __github_api_url(cfg.api_base_url, "/graphql"),
+    {query: __disable_auto_merge_mutation(), variables: {pullRequestId: node_id}},
+    cfg,
+  )
+  if is_err(graph) {
+    return __fail_uncertain_disable(
+      harness,
+      args,
+      cfg,
+      node_id,
+      restore_merge_method,
+      "GitHub auto-merge disable request failed without terminal evidence",
+    )
+  }
+  if graph?.errors != nil && len(graph.errors) > 0 {
+    return __fail_uncertain_disable(
+      harness,
+      args,
+      cfg,
+      node_id,
+      restore_merge_method,
+      "GitHub auto-merge disable returned errors: " + json_stringify(graph.errors),
+    )
+  }
+  const disabled_pull = graph?.data?.disablePullRequestAutoMerge?.pullRequest
+  if disabled_pull?.number != args.pull_number || disabled_pull?.autoMergeRequest != nil {
+    return __fail_uncertain_disable(
+      harness,
+      args,
+      cfg,
+      node_id,
+      restore_merge_method,
+      "GitHub auto-merge disable omitted terminal pull evidence",
+    )
+  }
+  const post_head_oid = trim(to_string(disabled_pull?.headRefOid ?? ""))
+  const post_base_branch = trim(to_string(disabled_pull?.baseRefName ?? ""))
+  const post_base = __github_branch_head_raw(harness, repo, base_branch, cfg)
+  const post_base_oid = if !is_err(post_base) {
+    unwrap(post_base).oid
+  } else {
+    ""
+  }
+  if post_head_oid != expected_head_oid || post_base_branch != base_branch
+    || post_base_oid
+    != expected_base_oid {
+    const compensated = __reenable_after_lost_disable(
+      harness,
+      cfg,
+      node_id,
+      post_head_oid,
+      restore_merge_method,
+    )
+    return __err(
+      if post_head_oid != expected_head_oid {
+        "stale_head"
+      } else {
+        "stale_base"
+      },
+      "release queue lease changed during auto-merge disable; " + compensated.detail,
+      {
+        expected_head_oid: expected_head_oid,
+        observed_head_oid: post_head_oid,
+        expected_base_oid: expected_base_oid,
+        observed_base_oid: post_base_oid,
+        compensation_state: if compensated.ok {
+          "restored"
+        } else {
+          "failed"
+        },
+        compensation_message: compensated.detail,
+      },
+    )
+  }
+  const typed: GithubAutoMergeDisableReceipt = receipt
+    + {state: "disabled", already_disabled: false}
+  return typed
 }
 
 fn __repos_get_text(harness: Harness, args, cfg) {
@@ -4522,6 +4843,23 @@ mutation HarnGithubConnectorEnableAutoMerge($pullRequestId: ID!, $mergeMethod: P
 """
 }
 
+fn __disable_auto_merge_mutation() {
+  return """
+mutation HarnGithubConnectorDisableAutoMerge($pullRequestId: ID!) {
+  disablePullRequestAutoMerge(input: {pullRequestId: $pullRequestId}) {
+    actor { login }
+    pullRequest {
+      number
+      url
+      headRefOid
+      baseRefName
+      autoMergeRequest { enabledAt mergeMethod }
+    }
+  }
+}
+"""
+}
+
 fn __merge_queue_entries_query() {
   return """
 query HarnGithubConnectorMergeQueueEntries($owner: String!, $repo: String!, $branch: String!, $limit: Int!) {
@@ -4853,6 +5191,33 @@ fn __repo_parts(args) {
     }
   }
   return __err("schema_drift", "github typed API requires repo as `owner/name` or owner + repo")
+}
+
+fn __github_branch_head_raw(harness: Harness, repo, branch, cfg) {
+  const value = __github_json(
+    harness,
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + repo.owner + "/" + repo.name + "/branches/" + url_encode(branch),
+    ),
+    nil,
+    cfg,
+  )
+  if is_err(value) {
+    return value
+  }
+  const oid = trim(to_string(value?.commit?.sha ?? ""))
+  if oid == "" {
+    return __err("invalid_response", "GitHub branch response omitted commit.sha")
+  }
+  const result: GithubBranchHead = {
+    repo: repo.owner + "/" + repo.name,
+    branch: branch,
+    oid: oid,
+    url: to_string(value?.html_url ?? value?.commit?.html_url ?? ""),
+  }
+  return result
 }
 
 fn __github_branch_protection_raw(harness: Harness, repo, branch, cfg) {
@@ -5714,7 +6079,7 @@ fn __error_category(code) {
   if code == "schema_drift" || code == "invalid_response" || code == "invalid_json" {
     return "schema_drift"
   }
-  if code == "stale_head" {
+  if code == "stale_head" || code == "stale_base" || code == "disable_unverified" {
     return "conflict"
   }
   return code

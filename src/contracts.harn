@@ -6,6 +6,10 @@ pub type GithubConnectorError = {
   http_status?: int,
   expected_head_oid?: string,
   observed_head_oid?: string,
+  expected_base_oid?: string,
+  observed_base_oid?: string,
+  compensation_state?: string,
+  compensation_message?: string,
   expected_commit_count?: int,
   observed_commit_count?: int,
   expected_release_id?: int,
@@ -81,6 +85,9 @@ pub type GithubBranchProtection = {
   allow_deletions: bool?,
   error: GithubConnectorError?,
 }
+
+/** One repository branch bound to its exact current commit. */
+pub type GithubBranchHead = {repo: string, branch: string, oid: string, url: string}
 
 /** One pull request's normalized merge-queue entry. */
 pub type GithubMergeQueueEntry = {
@@ -387,6 +394,21 @@ pub type GithubAutoMergeReceipt = {
   expected_head_oid: string,
   observed_head_oid: string,
   merge_method: string,
+  url: string,
+}
+
+/** Receipt proving auto-merge was disabled under exact pull and base leases. */
+pub type GithubAutoMergeDisableReceipt = {
+  repo: string,
+  pull_number: int,
+  state: string,
+  already_disabled: bool,
+  expected_head_oid: string,
+  observed_head_oid: string,
+  base_branch: string,
+  expected_base_oid: string,
+  observed_base_oid: string,
+  restore_merge_method: string,
   url: string,
 }
 

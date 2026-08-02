@@ -114,6 +114,22 @@ Enable GitHub auto-merge for a PR through the GraphQL auto-merge mutation.
 pub fn pulls_enable_auto_merge(
 ```
 
+### fn `pulls_disable_auto_merge`
+
+Disable auto-merge under exact pull and base leases, retaining restoration intent.
+
+```harn
+pub fn pulls_disable_auto_merge(
+```
+
+### fn `github_branch_head`
+
+Read one branch's exact current commit through a closed typed result.
+
+```harn
+pub fn github_branch_head(
+```
+
 ### fn `github_pr_commits`
 
 Read every commit on one stable pull-request head, including normalized
@@ -473,12 +489,28 @@ Resolve gh-auth fallback with explicit caller policy ahead of ambient configurat
 pub fn github_auth_fallback_enabled(
 ```
 
+### type `GithubAutoMergeDisableReceipt`
+
+Receipt proving auto-merge was disabled under exact pull and base leases.
+
+```harn
+pub type GithubAutoMergeDisableReceipt =
+```
+
 ### type `GithubAutoMergeReceipt`
 
 Receipt binding auto-merge state to an expected and observed head revision.
 
 ```harn
 pub type GithubAutoMergeReceipt =
+```
+
+### type `GithubBranchHead`
+
+One repository branch bound to its exact current commit.
+
+```harn
+pub type GithubBranchHead =
 ```
 
 ### type `GithubBranchProtection`
