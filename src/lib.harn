@@ -3,6 +3,7 @@ import {
   connector_http_rate_limit,
   connector_http_request,
 } from "std/connectors/shared"
+import { process_run } from "std/runtime"
 pub import {
   GithubAutoMergeReceipt,
   GithubBranchProtection,
@@ -7643,7 +7644,7 @@ fn __gh_auth_token(env: HarnessEnv, process: HarnessProcess, args) {
     return Ok(to_string(env_token))
   }
   const output = try {
-    process.run({program: "gh", args: ["auth", "token"], stdin: "", timeout_ms: 10000})
+    process_run(process, ["gh", "auth", "token"], {stdin: "", timeout_ms: 10000})
   }
   if is_err(output) {
     return __err(

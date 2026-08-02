@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.6.3 - 2026-08-02
+
+- Route the explicit `gh auth token` compatibility fallback through
+  `process_run(process, argv)`. Current Harn intentionally exposes process
+  effects as typed stdlib functions rather than methods on `HarnessProcess`.
+  The connector now compiles and executes this path under Harn v0.10.50.
+
 ## 0.6.2 - 2026-08-02
 
 - Fix the GitHub CLI authentication fallback to execute through the typed
