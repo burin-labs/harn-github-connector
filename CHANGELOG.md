@@ -8,6 +8,9 @@
   and base-branch leases. Ambiguous mutation outcomes are compensated before
   returning, and receipts preserve the prior merge method for deterministic
   restoration by release queue coordinators.
+- Preserve the armed auto-merge method in typed pull-request and merge-queue
+  observations so coordinators can restore the exact prior intent without
+  probing provider-shaped response fields.
 
 ## 0.6.4 - 2026-08-02
 

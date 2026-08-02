@@ -117,6 +117,7 @@ pipeline test_exported_contract_imports_and_result_narrowing(harness: Harness, t
     head: {ref: "typed", sha: "head", repo: "octo-org/octo-repo", owner: "octo-org"},
     labels: ["contracts"],
     auto_merge_armed: false,
+    auto_merge_method: nil,
     in_merge_queue: false,
   }
   assert_eq(pull_number(pull), 42, "re-exported records work in downstream annotations")

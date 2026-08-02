@@ -47,7 +47,7 @@ pipeline test_typed_outbound(harness: Harness, task) {
             state: "open",
             mergeable: true,
             mergeable_state: "clean",
-            auto_merge: {enabled_by: {login: "octocat"}},
+            auto_merge: {enabled_by: {login: "octocat"}, merge_method: "squash"},
             base: {ref: "main", repo: {full_name: "octo-org/octo-repo"}},
             head: {
               ref: "feature/queued",
@@ -85,6 +85,7 @@ pipeline test_typed_outbound(harness: Harness, task) {
   assert_eq(prs[1].state, "dirty", "dirty PR classified dirty")
   assert_eq(prs[2].state, "green", "auto-merge arming is not queue evidence")
   assert_eq(prs[2].auto_merge_armed, true, "auto-merge arming is retained separately")
+  assert_eq(prs[2].auto_merge_method, "SQUASH", "auto-merge restoration intent is retained")
   assert_eq(prs[2].in_merge_queue, nil, "list does not invent queue membership")
   assert_eq(prs[3].state, "merged", "merged PR classified merged")
   assert_eq(prs[0].head.sha, "green-sha", "typed head sha")

@@ -52,6 +52,7 @@ pub type GithubPullRequestSummary = {
   head: GithubPullRequestRef,
   labels: list<string>,
   auto_merge_armed: bool,
+  auto_merge_method: string?,
   in_merge_queue: bool?,
 }
 
@@ -111,6 +112,7 @@ pub type GithubMergeQueueMembership = {
   available: bool,
   queued: bool,
   auto_merge_armed: bool,
+  auto_merge_method: string?,
   entry: GithubMergeQueueEntry?,
   error: GithubConnectorError?,
 }
