@@ -8,38 +8,6 @@ Version: `0.5.0`
 
 `src/lib.harn`
 
-### fn `outbound_methods`
-
-Return every method accepted by `call`, from the executable route registry.
-
-```harn
-pub fn outbound_methods() -> list<string> {
-}
-```
-
-### fn `call`
-
-Dispatch a supported GitHub method through one explicit Result boundary.
-
-```harn
-pub fn call(harness: Harness, method: string, args: dict = {}) -> GithubConnectorResult<unknown> {
-}
-```
-
-### fn `call_typed`
-
-Dispatch and validate one method against an exported success contract.
-
-```harn
-pub fn call_typed<T>(
-  harness: Harness,
-  method: string,
-  args: dict,
-  schema: Schema<T>,
-) -> GithubConnectorResult<T> {
-}
-```
-
 ### fn `pulls_list_with_checks`
 
 List PRs in the same shape consumed by managed merge_captain.
@@ -355,145 +323,6 @@ pub fn issues_create_with_template(
   vars = nil,
   options = nil,
 ) {
-}
-```
-
-### fn `github_dispatch_workflow_and_resolve_run`
-
-Dispatch a workflow_dispatch workflow and resolve its exact run identity.
-Returns immediately after pinning a run ID, before terminal monitoring, in a
-stable `{ok, status, conclusion, run_id, candidate_run_ids, run_url,
-workflow_id, workflow_path, run_attempt, head_sha, head_branch, event,
-created_at, started_at, updated_at, attempts, timed_out, error}`
-envelope. Success has `status: "dispatch_accepted"`; failures preserve
-`poll_failed`, `dispatch_failed`, or `dispatch_identity_missing`.
-
-```harn
-pub fn github_dispatch_workflow_and_resolve_run(
-  harness: Harness,
-  owner,
-  repo,
-  workflow_id,
-  ref = "main",
-  inputs = nil,
-  options = nil,
-) {
-}
-```
-
-### fn `github_dispatch_workflow_and_wait`
-
-Dispatch a workflow_dispatch workflow and wait for it to finish. Returns a
-stable `{ok, status, conclusion, run_id, candidate_run_ids, run_url,
-workflow_id, workflow_path, run_attempt, head_sha, head_branch, event,
-created_at, started_at, updated_at, attempts, timed_out, error}`
-envelope. `status` is one of `completed`, `timed_out`, `dispatch_failed`,
-`dispatch_identity_missing`, `run_not_found`, or `poll_failed`.
-
-```harn
-pub fn github_dispatch_workflow_and_wait(
-  harness: Harness,
-  owner,
-  repo,
-  workflow_id,
-  ref = "main",
-  inputs = nil,
-  options = nil,
-) {
-}
-```
-
-### fn `github_wait_for_workflow_run`
-
-Poll an existing workflow run, or locate one matching a filter dict, until
-it reaches `completed` or the loop times out. The third argument may be a
-run id or a filter `{workflow_id, event, branch, head_sha, created_after,
-per_page}`. Returns the same envelope as `github_dispatch_workflow_and_wait`.
-
-```harn
-pub fn github_wait_for_workflow_run(
-  harness: Harness,
-  owner,
-  repo,
-  run_id_or_filter,
-  options = nil,
-) {
-}
-```
-
-### fn `github_ensure_auto_merge`
-
-Enable auto-merge under an explicit `expected_head_oid` lease.
-
-```harn
-pub fn github_ensure_auto_merge(harness: Harness, owner, repo, pull_number, options = nil) {
-}
-```
-
-### fn `github_wait_for_pr_checks`
-
-Wait for visible CI checks on a PR or commit to leave the queued/pending
-state, returning a stable `{ok, state, head_sha, checks, failing_checks,
-pending_checks, attempts, timed_out, logs?}` rollup. `state` is one of
-`green`, `failing`, `pending`, `timed_out`, or `unknown`. Pass
-`include_logs: true` to attach a tail of failing-check Actions logs.
-
-```harn
-pub fn github_wait_for_pr_checks(harness: Harness, owner, repo, pull_number_or_ref, options = nil) {
-}
-```
-
-### fn `github_find_open_pr`
-
-Find the first open PR matching simple `head_ref`/`base_ref`/`title`/`labels`
-filters. Returns `{ok, found, pull_number, pull_request, total_matches,
-matches, error}`. `pull_request` is the typed PR summary (the same shape as
-`github.pr.list` entries) when found, otherwise `nil`.
-
-```harn
-pub fn github_find_open_pr(harness: Harness, owner, repo, options) {
-}
-```
-
-### fn `github_close_pr`
-
-Close a PR, optionally posting a final comment first. Returns
-`{ok, pull_number, state, comment_posted, pull_request, error}`. PRs are
-closed via the issues update endpoint because GitHub models PR lifecycle
-through the issues resource.
-
-```harn
-pub fn github_close_pr(harness: Harness, owner, repo, pull_number, comment = nil, options = nil) {
-}
-```
-
-### fn `github_resolve_pr_for_sha`
-
-Resolve the first PR number for a commit SHA. Prefers the webhook payload's
-`pull_requests[]` array (present on PR-scoped events), falling back to the
-`repos.commit_pulls` REST lookup for forks and `status` events that carry no
-PR. Returns `{ok, found, pull_number, pull_request, source, error}` where
-`source` is `payload` or `commit_pulls`.
-
-```harn
-pub fn github_resolve_pr_for_sha(harness: Harness, owner, repo, sha, options = nil) {
-}
-```
-
-### fn `github_resolve_mergeable`
-
-Resolve a PR's async mergeable state via the connector `call` surface.
-Returns the `{mergeable, mergeable_state, is_conflict, ...}` envelope from
-`pull_requests.resolve_mergeable`.
-
-```harn
-pub fn github_resolve_mergeable(
-  harness: Harness,
-  owner,
-  repo,
-  pull_number,
-  options = nil,
-) -> GithubConnectorResult<GithubMergeability> {
 }
 ```
 
@@ -1126,6 +955,29 @@ pub fn activate(_harness: Harness, bindings = []) {
 }
 ```
 
+### fn `call`
+
+Dispatch a supported GitHub method through one explicit Result boundary.
+
+```harn
+pub fn call(harness: Harness, method: string, args: dict = {}) -> GithubConnectorResult<unknown> {
+}
+```
+
+### fn `call_typed`
+
+Dispatch and validate one method against an exported success contract.
+
+```harn
+pub fn call_typed<T>(
+  harness: Harness,
+  method: string,
+  args: dict,
+  schema: Schema<T>,
+) -> GithubConnectorResult<T> {
+}
+```
+
 ### fn `github_auth_fallback_enabled`
 
 Resolve gh-auth fallback from caller policy, then the environment default.
@@ -1138,6 +990,65 @@ pub fn github_auth_fallback_enabled(
 }
 ```
 
+### fn `github_close_pr`
+
+Close a pull request after optionally posting a final comment. GitHub models
+pull-request lifecycle through the issues resource, so closure uses the
+issues update endpoint.
+
+```harn
+pub fn github_close_pr(harness: Harness, owner, repo, pull_number, comment = nil, options = nil) {
+}
+```
+
+### fn `github_dispatch_workflow_and_resolve_run`
+
+Dispatch a workflow and resolve its exact run ID before returning. Success
+has `status: "dispatch_accepted"`. Failure has `status: "dispatch_failed"`,
+`dispatch_identity_missing`, or `poll_failed` and preserves the connector
+error in `error`.
+
+```harn
+pub fn github_dispatch_workflow_and_resolve_run(
+  harness: Harness,
+  owner,
+  repo,
+  workflow_id,
+  ref = "main",
+  inputs = nil,
+  options = nil,
+) {
+}
+```
+
+### fn `github_dispatch_workflow_and_wait`
+
+Dispatch a workflow, resolve its run ID, and wait for terminal state. The
+result records the run identity, status, conclusion, polling attempts, and
+timeout state.
+
+```harn
+pub fn github_dispatch_workflow_and_wait(
+  harness: Harness,
+  owner,
+  repo,
+  workflow_id,
+  ref = "main",
+  inputs = nil,
+  options = nil,
+) {
+}
+```
+
+### fn `github_ensure_auto_merge`
+
+Enable auto-merge under an explicit `expected_head_oid` lease.
+
+```harn
+pub fn github_ensure_auto_merge(harness: Harness, owner, repo, pull_number, options = nil) {
+}
+```
+
 ### fn `github_extract_mentions`
 
 Extract `@handle command args...` mentions with deterministic string
@@ -1145,6 +1056,71 @@ scanning. Returns every `{handle, command, rest}` candidate without I/O.
 
 ```harn
 pub fn github_extract_mentions(body) {
+}
+```
+
+### fn `github_find_open_pr`
+
+Find the first open pull request matching `head_ref`, `base_ref`, `title`,
+and `labels`. The result includes the first match and every matching pull
+request.
+
+```harn
+pub fn github_find_open_pr(harness: Harness, owner, repo, options) {
+}
+```
+
+### fn `github_resolve_mergeable`
+
+Resolve GitHub's asynchronous mergeability state for one pull request.
+
+```harn
+pub fn github_resolve_mergeable(
+  harness: Harness,
+  owner,
+  repo,
+  pull_number,
+  options = nil,
+) -> GithubConnectorResult<GithubMergeability> {
+}
+```
+
+### fn `github_resolve_pr_for_sha`
+
+Resolve the first pull request associated with a commit SHA. Payload pull
+requests take precedence; the connector uses the commit-to-pull-request REST
+lookup when the payload contains none.
+
+```harn
+pub fn github_resolve_pr_for_sha(harness: Harness, owner, repo, sha, options = nil) {
+}
+```
+
+### fn `github_wait_for_pr_checks`
+
+Wait for visible checks on a pull request or commit. The returned `state` is
+`green`, `failing`, `pending`, `timed_out`, or `unknown`. Set
+`include_logs: true` to include a tail of each failing GitHub Actions log.
+
+```harn
+pub fn github_wait_for_pr_checks(harness: Harness, owner, repo, pull_number_or_ref, options = nil) {
+}
+```
+
+### fn `github_wait_for_workflow_run`
+
+Wait for one workflow run ID or a matching workflow-run filter. A filter may
+select `workflow_id`, `event`, `branch`, `head_sha`, `created_after`, and
+`per_page`.
+
+```harn
+pub fn github_wait_for_workflow_run(
+  harness: Harness,
+  owner,
+  repo,
+  run_id_or_filter,
+  options = nil,
+) {
 }
 ```
 
@@ -1199,6 +1175,15 @@ Verify and normalize a raw GitHub webhook request into NormalizeResult v1.
 
 ```harn
 pub fn normalize_inbound(harness: Harness, raw) {
+}
+```
+
+### fn `outbound_methods`
+
+Return every method accepted by `call`, from the executable route registry.
+
+```harn
+pub fn outbound_methods() -> list<string> {
 }
 ```
 

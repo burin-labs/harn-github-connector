@@ -1,8 +1,10 @@
+import { __api_call_author_mode_body } from "./authoring"
 import {
   __body_without,
   __config_keys,
   __github_api_url,
   __github_json,
+  __github_request,
   __github_text,
   __pagination_query,
   __pulls_list_query,
@@ -240,4 +242,29 @@ pub fn __graphql(harness: Harness, args, cfg) {
     )
   }
   return graph
+}
+
+/** Dispatch one raw GitHub REST request after applying author-mode policy. */
+pub fn __api_call(harness: Harness, args, cfg) {
+  const path = args?.path
+  if path == nil || trim(to_string(path)) == "" {
+    return connector_error("schema_drift", "api_call requires path")
+  }
+  const method = uppercase(to_string(args?.method ?? "GET"))
+  const body_result = __api_call_author_mode_body(args, method, path, cfg)
+  if is_err(body_result) {
+    return body_result
+  }
+  const body = unwrap(body_result)
+  const accept = args?.accept ?? "application/vnd.github+json"
+  const parse_json = args?.parse_json ?? true
+  return __github_request(
+    harness,
+    method,
+    __github_api_url(cfg.api_base_url, path),
+    body,
+    cfg,
+    accept,
+    parse_json,
+  )
 }

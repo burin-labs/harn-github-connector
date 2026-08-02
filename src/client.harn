@@ -194,6 +194,15 @@ pub fn __outbound_config(harness: Harness, args) {
   )
 }
 
+/** Resolve outbound policy once, then invoke one operation with that config. */
+pub fn __with_outbound_config(harness: Harness, args, operation) {
+  const config = __outbound_config(harness, args ?? {})
+  if is_err(config) {
+    return config
+  }
+  return operation(harness, args ?? {}, unwrap(config))
+}
+
 fn __http_policy_config(args) {
   return {
     retry: args?.retry,

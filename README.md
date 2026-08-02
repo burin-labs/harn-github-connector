@@ -61,6 +61,7 @@ cache installation tokens or accept a caller-provided installation token.
 - [Outbound API reference](docs/reference/outbound-api.md)
 - [Generated API index](docs/api.md)
 - [Runtime policy reference](docs/reference/runtime-policy.md)
+- [Module ownership reference](docs/reference/module-ownership.md)
 - [Develop and release the connector](docs/development.md)
 
 ## License

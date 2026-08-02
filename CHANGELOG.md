@@ -6,8 +6,8 @@
   later.
 - Split webhook lifecycle, pull-request transport and projections, merge-queue
   leases, commit evidence, issues, releases, repository reads, authentication,
-  errors, and shared utilities into focused modules. `src/lib.harn` now owns
-  only the public API, route registry, and cross-operation orchestration.
+  errors, dispatch, orchestration, and shared utilities into focused modules.
+  `src/lib.harn` is now the public package facade.
 - Replace the duplicated outbound allow-list and conditional dispatcher with
   one executable route registry. `outbound_methods()` now exposes that registry
   for discovery, and small REST adapters live in their own module.
