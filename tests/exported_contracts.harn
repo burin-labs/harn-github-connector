@@ -36,6 +36,7 @@ import {
   GithubWorkflowDispatchReceipt,
   GithubWorkflowJob,
   GithubWorkflowJobs,
+  GithubWorkflowRerunReceipt,
   GithubWorkflowRun,
   GithubWorkflowRuns,
   GithubWorkflowStep,
@@ -81,6 +82,7 @@ type ExportedContractCatalog = {
   workflow_job: GithubWorkflowJob,
   workflow_jobs: GithubWorkflowJobs,
   workflow_run: GithubWorkflowRun,
+  workflow_rerun: GithubWorkflowRerunReceipt,
   workflow_runs: GithubWorkflowRuns,
   workflow_step: GithubWorkflowStep,
 }
