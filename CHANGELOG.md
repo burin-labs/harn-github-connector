@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.6.6 - 2026-08-02
+
 - Add exact, typed branch-tree comparison and pull-request upsert operations
   for package-backed automation. Upserts lease the expected head, reject
   ambiguous matches, and project a closed created/updated receipt. Pull-request
