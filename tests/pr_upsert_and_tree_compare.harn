@@ -1,0 +1,169 @@
+import {
+  GithubBranchTreeCompareRequest,
+  GithubPullRequestUpsertRequest,
+  github_compare_branch_trees,
+  github_upsert_pull_request,
+} from "../src/lib"
+
+const API = "https://github-api.test"
+
+const HEAD_OID = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+fn auth() {
+  return {api_base_url: API, installation_token: "github-app-installation-token"}
+}
+
+fn pull(number: int, title: string, head_oid: string) {
+  return {
+    number: number,
+    title: title,
+    body: "body",
+    state: "open",
+    html_url: "https://github.com/octo-org/octo-repo/pull/" + to_string(number),
+    base: {
+      ref: "main",
+      sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      repo: {full_name: "octo-org/octo-repo", owner: {login: "octo-org"}},
+    },
+    head: {
+      ref: "automation/bump-harn-runtime",
+      sha: head_oid,
+      repo: {full_name: "octo-org/octo-repo", owner: {login: "octo-org"}},
+    },
+  }
+}
+
+fn upsert_request() -> GithubPullRequestUpsertRequest {
+  return {
+    owner: "octo-org",
+    repo: "octo-repo",
+    head: "automation/bump-harn-runtime",
+    base: "main",
+    title: "Bump Harn runtime",
+    body: "body",
+    expected_head_oid: HEAD_OID,
+  }
+}
+
+fn list_url() -> string {
+  return API
+    + "/repos/octo-org/octo-repo/pulls?state=open&head=octo-org%3Aautomation%2Fbump-harn-runtime&base=main&per_page=2"
+}
+
+fn tree_request() -> GithubBranchTreeCompareRequest {
+  return {
+    owner: "octo-org",
+    repo: "octo-repo",
+    left_ref: "automation/bump-harn-runtime",
+    right_ref: "main",
+  }
+}
+
+pipeline test_upsert_creates_the_exact_head_base_pull(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock("GET", list_url(), {status: 200, body: "[]"})
+  harness.testing.http_mock(
+    "POST",
+    API + "/repos/octo-org/octo-repo/pulls",
+    {status: 201, body: json_stringify(pull(41, "Bump Harn runtime", HEAD_OID))},
+  )
+  const receipt = unwrap(github_upsert_pull_request(harness, upsert_request(), auth()))
+  assert_eq(receipt.action, "created")
+  assert_eq(receipt.created, true)
+  assert_eq(receipt.updated, false)
+  assert_eq(receipt.number, 41)
+  assert_eq(receipt.head.sha, HEAD_OID)
+  const calls = harness.testing.http_mock_calls()
+  assert_eq(len(calls), 2)
+  assert_eq(
+    json_parse(calls[1].body),
+    {title: "Bump Harn runtime", head: "automation/bump-harn-runtime", base: "main", body: "body"},
+  )
+  harness.testing.http_mock_clear()
+}
+
+pipeline test_upsert_updates_one_exact_existing_pull(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
+    "GET",
+    list_url(),
+    {status: 200, body: json_stringify([pull(42, "Old title", HEAD_OID)])},
+  )
+  harness.testing.http_mock(
+    "PATCH",
+    API + "/repos/octo-org/octo-repo/pulls/42",
+    {status: 200, body: json_stringify(pull(42, "Bump Harn runtime", HEAD_OID))},
+  )
+  const receipt = unwrap(github_upsert_pull_request(harness, upsert_request(), auth()))
+  assert_eq(receipt.action, "updated")
+  assert_eq(receipt.created, false)
+  assert_eq(receipt.updated, true)
+  assert_eq(receipt.number, 42)
+  const calls = harness.testing.http_mock_calls()
+  assert_eq(len(calls), 2)
+  assert_eq(json_parse(calls[1].body), {title: "Bump Harn runtime", body: "body"})
+  harness.testing.http_mock_clear()
+}
+
+pipeline test_upsert_rejects_a_stale_existing_head_without_mutation(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
+    "GET",
+    list_url(),
+    {status: 200, body: json_stringify([pull(43, "Old title", "cccccccc")])},
+  )
+  const result = github_upsert_pull_request(harness, upsert_request(), auth())
+  assert(is_err(result))
+  assert_eq(unwrap_err(result).code, "stale_head")
+  assert_eq(unwrap_err(result).expected_head_oid, HEAD_OID)
+  assert_eq(unwrap_err(result).observed_head_oid, "cccccccc")
+  assert_eq(len(harness.testing.http_mock_calls()), 1)
+  harness.testing.http_mock_clear()
+}
+
+pipeline test_branch_tree_comparison_retains_both_exact_identities(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
+    "GET",
+    API + "/repos/octo-org/octo-repo/commits/automation%2Fbump-harn-runtime",
+    {status: 200, body: json_stringify({sha: HEAD_OID, commit: {tree: {sha: "tree-shared"}}})},
+  )
+  harness.testing.http_mock(
+    "GET",
+    API + "/repos/octo-org/octo-repo/commits/main",
+    {
+      responses: [
+        {
+          status: 200,
+          body: json_stringify(
+            {sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", commit: {tree: {sha: "tree-shared"}}},
+          ),
+        },
+        {
+          status: 200,
+          body: json_stringify(
+            {
+              sha: "dddddddddddddddddddddddddddddddddddddddd",
+              commit: {tree: {sha: "tree-different"}},
+            },
+          ),
+        },
+      ],
+    },
+  )
+  const equal = unwrap(github_compare_branch_trees(harness, tree_request(), auth()))
+  assert_eq(equal.equal, true)
+  assert_eq(equal.left_oid, HEAD_OID)
+  assert_eq(equal.left_tree_oid, "tree-shared")
+  assert_eq(equal.right_tree_oid, "tree-shared")
+  harness.testing.http_mock(
+    "GET",
+    API + "/repos/octo-org/octo-repo/commits/automation%2Fbump-harn-runtime",
+    {status: 200, body: json_stringify({sha: HEAD_OID, commit: {tree: {sha: "tree-shared"}}})},
+  )
+  const different = unwrap(github_compare_branch_trees(harness, tree_request(), auth()))
+  assert_eq(different.equal, false)
+  assert_eq(different.right_oid, "dddddddddddddddddddddddddddddddddddddddd")
+  assert_eq(different.right_tree_oid, "tree-different")
+  harness.testing.http_mock_clear()
+}

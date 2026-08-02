@@ -13,7 +13,8 @@ Version: `0.6.5`
 Return this connector's Harn provider id.
 
 ```harn
-pub fn provider_id()
+pub fn provider_id() {
+}
 ```
 
 ### fn `kinds`
@@ -21,7 +22,8 @@ pub fn provider_id()
 Return the trigger kinds supported by this connector.
 
 ```harn
-pub fn kinds()
+pub fn kinds() {
+}
 ```
 
 ### fn `payload_schema`
@@ -29,7 +31,8 @@ pub fn kinds()
 Return the canonical normalized GitHub webhook payload schema.
 
 ```harn
-pub fn payload_schema()
+pub fn payload_schema() {
+}
 ```
 
 ### fn `init`
@@ -37,7 +40,8 @@ pub fn payload_schema()
 Initialize connector state with orchestrator context.
 
 ```harn
-pub fn init(_harness: Harness, ctx = nil)
+pub fn init(_harness: Harness, ctx = nil) {
+}
 ```
 
 ### fn `activate`
@@ -45,7 +49,8 @@ pub fn init(_harness: Harness, ctx = nil)
 Activate webhook bindings and reject duplicate configured paths.
 
 ```harn
-pub fn activate(_harness: Harness, bindings = [])
+pub fn activate(_harness: Harness, bindings = []) {
+}
 ```
 
 ### fn `shutdown`
@@ -55,23 +60,22 @@ across restarts so subsequent runs can refresh them lazily. Call
 `reset_token_cache(harness.runtime)` explicitly to invalidate the persistent cache.
 
 ```harn
-pub fn shutdown(_harness: Harness)
+pub fn shutdown(_harness: Harness) {
+}
 ```
 
 ### fn `normalize_inbound`
 
-Verify and normalize a raw GitHub webhook request into NormalizeResult v1.
-
 ```harn
-pub fn normalize_inbound(harness: Harness, raw)
+pub fn normalize_inbound(harness: Harness, raw) {
+}
 ```
 
 ### fn `call`
 
-Dispatch a supported GitHub method through one explicit Result boundary.
-
 ```harn
-pub fn call(harness: Harness, method: string, args: dict =
+pub fn call(harness: Harness, method: string, args: dict = {}) -> GithubConnectorResult<unknown> {
+}
 ```
 
 ### fn `call_typed`
@@ -80,6 +84,12 @@ Dispatch and validate one method against an exported success contract.
 
 ```harn
 pub fn call_typed<T>(
+  harness: Harness,
+  method: string,
+  args: dict,
+  schema: Schema<T>,
+) -> GithubConnectorResult<T> {
+}
 ```
 
 ### fn `pulls_list_with_checks`
@@ -88,6 +98,14 @@ List PRs in the same shape consumed by managed merge_captain.
 
 ```harn
 pub fn pulls_list_with_checks(
+  harness: Harness,
+  owner,
+  repo,
+  state = "open",
+  limit = 100,
+  options = nil,
+) {
+}
 ```
 
 ### fn `pulls_update`
@@ -95,7 +113,21 @@ pub fn pulls_list_with_checks(
 Update the editable fields of one pull request.
 
 ```harn
-pub fn pulls_update(harness: Harness, owner, repo, number, edits, options = nil)
+pub fn pulls_update(harness: Harness, owner, repo, number, edits, options = nil) {
+}
+```
+
+### fn `github_upsert_pull_request`
+
+Create or refresh the sole open pull request for one exact head/base pair.
+
+```harn
+pub fn github_upsert_pull_request(
+  harness: Harness,
+  request: GithubPullRequestUpsertRequest,
+  options: dict = {},
+) -> GithubConnectorResult<GithubPullRequestUpsertReceipt> {
+}
 ```
 
 ### fn `pulls_merge_safe`
@@ -103,7 +135,8 @@ pub fn pulls_update(harness: Harness, owner, repo, number, edits, options = nil)
 Merge a PR after checking the base branch protection settings.
 
 ```harn
-pub fn pulls_merge_safe(harness: Harness, owner, repo, number, options = nil)
+pub fn pulls_merge_safe(harness: Harness, owner, repo, number, options = nil) {
+}
 ```
 
 ### fn `pulls_enable_auto_merge`
@@ -112,6 +145,13 @@ Enable GitHub auto-merge for a PR through the GraphQL auto-merge mutation.
 
 ```harn
 pub fn pulls_enable_auto_merge(
+  harness: Harness,
+  owner,
+  repo,
+  number,
+  options = nil,
+) -> GithubConnectorResult<GithubAutoMergeReceipt> {
+}
 ```
 
 ### fn `pulls_disable_auto_merge`
@@ -120,6 +160,13 @@ Disable auto-merge under exact pull and base leases, retaining restoration inten
 
 ```harn
 pub fn pulls_disable_auto_merge(
+  harness: Harness,
+  owner: string,
+  repo: string,
+  number: int,
+  options: dict,
+) -> GithubConnectorResult<GithubAutoMergeDisableReceipt> {
+}
 ```
 
 ### fn `github_branch_head`
@@ -128,6 +175,26 @@ Read one branch's exact current commit through a closed typed result.
 
 ```harn
 pub fn github_branch_head(
+  harness: Harness,
+  owner: string,
+  repo: string,
+  branch: string,
+  options: dict = {},
+) -> GithubConnectorResult<GithubBranchHead> {
+}
+```
+
+### fn `github_compare_branch_trees`
+
+Compare two refs by exact commit and tree identity.
+
+```harn
+pub fn github_compare_branch_trees(
+  harness: Harness,
+  request: GithubBranchTreeCompareRequest,
+  options: dict = {},
+) -> GithubConnectorResult<GithubBranchTreeComparison> {
+}
 ```
 
 ### fn `github_pr_commits`
@@ -137,6 +204,13 @@ GitHub signature verification evidence for each commit.
 
 ```harn
 pub fn github_pr_commits(
+  harness: Harness,
+  owner,
+  repo,
+  number,
+  options = nil,
+) -> GithubConnectorResult<GithubPullRequestCommits> {
+}
 ```
 
 ### fn `github_create_signed_commit`
@@ -148,6 +222,11 @@ publication lease and makes stale-head races fail closed.
 
 ```harn
 pub fn github_create_signed_commit(
+  harness: Harness,
+  request: GithubSignedCommitRequest,
+  options = nil,
+) -> GithubConnectorResult<GithubSignedCommitReceipt> {
+}
 ```
 
 ### fn `actions_workflow_dispatch`
@@ -156,6 +235,15 @@ Dispatch a workflow_dispatch workflow and request run details when GitHub suppor
 
 ```harn
 pub fn actions_workflow_dispatch(
+  harness: Harness,
+  owner,
+  repo,
+  workflow_id,
+  ref = "main",
+  inputs = nil,
+  options = nil,
+) {
+}
 ```
 
 ### fn `actions_workflow_runs`
@@ -163,7 +251,8 @@ pub fn actions_workflow_dispatch(
 List workflow runs for a repository or one workflow file/id.
 
 ```harn
-pub fn actions_workflow_runs(harness: Harness, owner, repo, options = nil)
+pub fn actions_workflow_runs(harness: Harness, owner, repo, options = nil) {
+}
 ```
 
 ### fn `actions_workflow_run`
@@ -171,7 +260,8 @@ pub fn actions_workflow_runs(harness: Harness, owner, repo, options = nil)
 Fetch one workflow run by its exact id.
 
 ```harn
-pub fn actions_workflow_run(harness: Harness, owner, repo, run_id, options = nil)
+pub fn actions_workflow_run(harness: Harness, owner, repo, run_id, options = nil) {
+}
 ```
 
 ### fn `actions_workflow_run_jobs`
@@ -179,7 +269,8 @@ pub fn actions_workflow_run(harness: Harness, owner, repo, run_id, options = nil
 List the jobs and steps for one workflow run.
 
 ```harn
-pub fn actions_workflow_run_jobs(harness: Harness, owner, repo, run_id, options = nil)
+pub fn actions_workflow_run_jobs(harness: Harness, owner, repo, run_id, options = nil) {
+}
 ```
 
 ### fn `actions_workflow_run_cancel`
@@ -187,7 +278,8 @@ pub fn actions_workflow_run_jobs(harness: Harness, owner, repo, run_id, options 
 Request cancellation of one exact workflow run.
 
 ```harn
-pub fn actions_workflow_run_cancel(harness: Harness, owner, repo, run_id, options = nil)
+pub fn actions_workflow_run_cancel(harness: Harness, owner, repo, run_id, options = nil) {
+}
 ```
 
 ### fn `actions_workflow_run_rerun`
@@ -195,7 +287,8 @@ pub fn actions_workflow_run_cancel(harness: Harness, owner, repo, run_id, option
 Request a new attempt for one exact workflow run.
 
 ```harn
-pub fn actions_workflow_run_rerun(harness: Harness, owner, repo, run_id, options = nil)
+pub fn actions_workflow_run_rerun(harness: Harness, owner, repo, run_id, options = nil) {
+}
 ```
 
 ### fn `actions_runner_registration_token`
@@ -205,7 +298,8 @@ Create a self-hosted runner registration token. Pass `org` for org scope, or
 (repo) or `organization_self_hosted_runners:write` (org).
 
 ```harn
-pub fn actions_runner_registration_token(harness: Harness, scope, options = nil)
+pub fn actions_runner_registration_token(harness: Harness, scope, options = nil) {
+}
 ```
 
 ### fn `actions_runner_generate_jitconfig`
@@ -217,6 +311,14 @@ body carries `{name, runner_group_id, labels[], work_folder?}`. Requires
 
 ```harn
 pub fn actions_runner_generate_jitconfig(
+  harness: Harness,
+  scope,
+  name,
+  runner_group_id = 1,
+  labels = [],
+  options = nil,
+) {
+}
 ```
 
 ### fn `actions_runners_list`
@@ -224,7 +326,8 @@ pub fn actions_runner_generate_jitconfig(
 List self-hosted runners for a repo (`{owner, repo}`) or org (`{org}`) scope.
 
 ```harn
-pub fn actions_runners_list(harness: Harness, scope, options = nil)
+pub fn actions_runners_list(harness: Harness, scope, options = nil) {
+}
 ```
 
 ### fn `api_call`
@@ -232,7 +335,8 @@ pub fn actions_runners_list(harness: Harness, scope, options = nil)
 Dispatch one raw GitHub REST call. Prefer typed helpers when one exists.
 
 ```harn
-pub fn api_call(harness: Harness, path, method = "GET", body = nil, options = nil)
+pub fn api_call(harness: Harness, path, method = "GET", body = nil, options = nil) {
+}
 ```
 
 ### fn `oauth_user_device_code`
@@ -242,7 +346,8 @@ Begin the user-to-server OAuth device flow. Returns GitHub's
 `ghu_` user tokens expire after 8h and `ghr_` refresh tokens after 6 months.
 
 ```harn
-pub fn oauth_user_device_code(harness: Harness, client_id, scope = nil, options = nil)
+pub fn oauth_user_device_code(harness: Harness, client_id, scope = nil, options = nil) {
+}
 ```
 
 ### fn `oauth_user_device_poll`
@@ -252,7 +357,8 @@ payload with `error` (e.g. `authorization_pending`, `slow_down`) while the
 user has not yet authorized.
 
 ```harn
-pub fn oauth_user_device_poll(harness: Harness, client_id, device_code, options = nil)
+pub fn oauth_user_device_poll(harness: Harness, client_id, device_code, options = nil) {
+}
 ```
 
 ### fn `oauth_user_exchange_code`
@@ -260,7 +366,8 @@ pub fn oauth_user_device_poll(harness: Harness, client_id, device_code, options 
 Exchange a web-flow authorization `code` for a user access token.
 
 ```harn
-pub fn oauth_user_exchange_code(harness: Harness, client_id, code, options = nil)
+pub fn oauth_user_exchange_code(harness: Harness, client_id, code, options = nil) {
+}
 ```
 
 ### fn `oauth_user_refresh`
@@ -269,7 +376,8 @@ Refresh an expiring `ghu_` user token. The `ghr_` refresh token ROTATES on
 every refresh, so callers must persist the returned `refresh_token`.
 
 ```harn
-pub fn oauth_user_refresh(harness: Harness, client_id, refresh_token, options = nil)
+pub fn oauth_user_refresh(harness: Harness, client_id, refresh_token, options = nil) {
+}
 ```
 
 ### fn `github_extract_mentions`
@@ -280,7 +388,8 @@ string scanning (CPU-only, no network). Returns a list of
 surfaced on normalized issue/PR/comment payloads.
 
 ```harn
-pub fn github_extract_mentions(body)
+pub fn github_extract_mentions(body) {
+}
 ```
 
 ### fn `repos_get_text`
@@ -288,7 +397,8 @@ pub fn github_extract_mentions(body)
 Read a repository file as decoded UTF-8 text at an optional ref.
 
 ```harn
-pub fn repos_get_text(harness: Harness, owner, repo, path, ref = nil, options = nil)
+pub fn repos_get_text(harness: Harness, owner, repo, path, ref = nil, options = nil) {
+}
 ```
 
 ### fn `repos_get_latest_release`
@@ -296,7 +406,8 @@ pub fn repos_get_text(harness: Harness, owner, repo, path, ref = nil, options = 
 Fetch the latest published release for a repository.
 
 ```harn
-pub fn repos_get_latest_release(harness: Harness, owner, repo, options = nil)
+pub fn repos_get_latest_release(harness: Harness, owner, repo, options = nil) {
+}
 ```
 
 ### fn `repos_list_release_assets`
@@ -304,7 +415,8 @@ pub fn repos_get_latest_release(harness: Harness, owner, repo, options = nil)
 List assets for a release id.
 
 ```harn
-pub fn repos_list_release_assets(harness: Harness, owner, repo, release_id, options = nil)
+pub fn repos_list_release_assets(harness: Harness, owner, repo, release_id, options = nil) {
+}
 ```
 
 ### fn `github_latest_release`
@@ -312,7 +424,8 @@ pub fn repos_list_release_assets(harness: Harness, owner, repo, release_id, opti
 Fetch latest release metadata as a stable automation envelope.
 
 ```harn
-pub fn github_latest_release(harness: Harness, owner, repo, options = nil)
+pub fn github_latest_release(harness: Harness, owner, repo, options = nil) {
+}
 ```
 
 ### fn `github_release`
@@ -321,6 +434,13 @@ Look up release metadata by one exact tag.
 
 ```harn
 pub fn github_release(
+  harness: Harness,
+  owner,
+  repo,
+  tag,
+  options = nil,
+) -> GithubConnectorResult<GithubReleaseLookup> {
+}
 ```
 
 ### fn `github_release_edit_body`
@@ -329,6 +449,15 @@ Replace an exact release body under its observed release and tag leases.
 
 ```harn
 pub fn github_release_edit_body(
+  harness: Harness,
+  owner,
+  repo,
+  tag,
+  body,
+  lease,
+  options = nil,
+) -> GithubConnectorResult<GithubReleaseEditReceipt> {
+}
 ```
 
 ### fn `github_release_assets`
@@ -336,7 +465,8 @@ pub fn github_release_edit_body(
 List release assets as a stable automation envelope. Defaults to latest release when no id is supplied.
 
 ```harn
-pub fn github_release_assets(harness: Harness, owner, repo, release_id = nil, options = nil)
+pub fn github_release_assets(harness: Harness, owner, repo, release_id = nil, options = nil) {
+}
 ```
 
 ### fn `issues_create_with_template`
@@ -345,6 +475,14 @@ Create an issue from a small title/body template and variables.
 
 ```harn
 pub fn issues_create_with_template(
+  harness: Harness,
+  owner,
+  repo,
+  template,
+  vars = nil,
+  options = nil,
+) {
+}
 ```
 
 ### fn `github_dispatch_workflow_and_resolve_run`
@@ -359,6 +497,15 @@ envelope. Success has `status: "dispatch_accepted"`; failures preserve
 
 ```harn
 pub fn github_dispatch_workflow_and_resolve_run(
+  harness: Harness,
+  owner,
+  repo,
+  workflow_id,
+  ref = "main",
+  inputs = nil,
+  options = nil,
+) {
+}
 ```
 
 ### fn `github_dispatch_workflow_and_wait`
@@ -372,6 +519,15 @@ envelope. `status` is one of `completed`, `timed_out`, `dispatch_failed`,
 
 ```harn
 pub fn github_dispatch_workflow_and_wait(
+  harness: Harness,
+  owner,
+  repo,
+  workflow_id,
+  ref = "main",
+  inputs = nil,
+  options = nil,
+) {
+}
 ```
 
 ### fn `github_wait_for_workflow_run`
@@ -383,6 +539,13 @@ per_page}`. Returns the same envelope as `github_dispatch_workflow_and_wait`.
 
 ```harn
 pub fn github_wait_for_workflow_run(
+  harness: Harness,
+  owner,
+  repo,
+  run_id_or_filter,
+  options = nil,
+) {
+}
 ```
 
 ### fn `github_ensure_auto_merge`
@@ -390,7 +553,8 @@ pub fn github_wait_for_workflow_run(
 Enable auto-merge under an explicit `expected_head_oid` lease.
 
 ```harn
-pub fn github_ensure_auto_merge(harness: Harness, owner, repo, pull_number, options = nil)
+pub fn github_ensure_auto_merge(harness: Harness, owner, repo, pull_number, options = nil) {
+}
 ```
 
 ### fn `github_wait_for_pr_checks`
@@ -402,7 +566,8 @@ pending_checks, attempts, timed_out, logs?}` rollup. `state` is one of
 `include_logs: true` to attach a tail of failing-check Actions logs.
 
 ```harn
-pub fn github_wait_for_pr_checks(harness: Harness, owner, repo, pull_number_or_ref, options = nil)
+pub fn github_wait_for_pr_checks(harness: Harness, owner, repo, pull_number_or_ref, options = nil) {
+}
 ```
 
 ### fn `github_find_open_pr`
@@ -413,7 +578,8 @@ matches, error}`. `pull_request` is the typed PR summary (the same shape as
 `github.pr.list` entries) when found, otherwise `nil`.
 
 ```harn
-pub fn github_find_open_pr(harness: Harness, owner, repo, options)
+pub fn github_find_open_pr(harness: Harness, owner, repo, options) {
+}
 ```
 
 ### fn `github_close_pr`
@@ -424,7 +590,8 @@ closed via the issues update endpoint because GitHub models PR lifecycle
 through the issues resource.
 
 ```harn
-pub fn github_close_pr(harness: Harness, owner, repo, pull_number, comment = nil, options = nil)
+pub fn github_close_pr(harness: Harness, owner, repo, pull_number, comment = nil, options = nil) {
+}
 ```
 
 ### fn `github_resolve_pr_for_sha`
@@ -436,7 +603,8 @@ PR. Returns `{ok, found, pull_number, pull_request, source, error}` where
 `source` is `payload` or `commit_pulls`.
 
 ```harn
-pub fn github_resolve_pr_for_sha(harness: Harness, owner, repo, sha, options = nil)
+pub fn github_resolve_pr_for_sha(harness: Harness, owner, repo, sha, options = nil) {
+}
 ```
 
 ### fn `github_resolve_mergeable`
@@ -447,6 +615,13 @@ Returns the `{mergeable, mergeable_state, is_conflict, ...}` envelope from
 
 ```harn
 pub fn github_resolve_mergeable(
+  harness: Harness,
+  owner,
+  repo,
+  pull_number,
+  options = nil,
+) -> GithubConnectorResult<GithubMergeability> {
+}
 ```
 
 ### fn `mint_app_jwt`
@@ -454,7 +629,8 @@ pub fn github_resolve_mergeable(
 Mint a GitHub App JWT using Harn jwt_sign and the configured app private key.
 
 ```harn
-pub fn mint_app_jwt(clock: HarnessClock, secrets: HarnessSecrets, config)
+pub fn mint_app_jwt(clock: HarnessClock, secrets: HarnessSecrets, config) {
+}
 ```
 
 ### fn `installation_token`
@@ -462,7 +638,8 @@ pub fn mint_app_jwt(clock: HarnessClock, secrets: HarnessSecrets, config)
 Return a cached installation token or refresh it when stale.
 
 ```harn
-pub fn installation_token(harness: Harness, config)
+pub fn installation_token(harness: Harness, config) {
+}
 ```
 
 ### fn `reset_token_cache`
@@ -470,7 +647,8 @@ pub fn installation_token(harness: Harness, config)
 Clear all cached installation tokens.
 
 ```harn
-pub fn reset_token_cache(runtime: HarnessRuntime)
+pub fn reset_token_cache(runtime: HarnessRuntime) {
+}
 ```
 
 ### fn `invalidate_installation_token`
@@ -478,7 +656,8 @@ pub fn reset_token_cache(runtime: HarnessRuntime)
 Invalidate one cached installation token by installation id.
 
 ```harn
-pub fn invalidate_installation_token(runtime: HarnessRuntime, installation_id)
+pub fn invalidate_installation_token(runtime: HarnessRuntime, installation_id) {
+}
 ```
 
 ### fn `github_auth_fallback_enabled`
@@ -487,6 +666,10 @@ Resolve gh-auth fallback with explicit caller policy ahead of ambient configurat
 
 ```harn
 pub fn github_auth_fallback_enabled(
+  args: GithubAuthFallbackPolicy = {},
+  environment_enabled: bool = false,
+) -> bool {
+}
 ```
 
 ### type `GithubAutoMergeDisableReceipt`
@@ -494,7 +677,19 @@ pub fn github_auth_fallback_enabled(
 Receipt proving auto-merge was disabled under exact pull and base leases.
 
 ```harn
-pub type GithubAutoMergeDisableReceipt =
+pub type GithubAutoMergeDisableReceipt = {
+  repo: string,
+  pull_number: int,
+  state: string,
+  already_disabled: bool,
+  expected_head_oid: string,
+  observed_head_oid: string,
+  base_branch: string,
+  expected_base_oid: string,
+  observed_base_oid: string,
+  restore_merge_method: string,
+  url: string,
+}
 ```
 
 ### type `GithubAutoMergeReceipt`
@@ -502,7 +697,16 @@ pub type GithubAutoMergeDisableReceipt =
 Receipt binding auto-merge state to an expected and observed head revision.
 
 ```harn
-pub type GithubAutoMergeReceipt =
+pub type GithubAutoMergeReceipt = {
+  repo: string,
+  pull_number: int,
+  state: string,
+  already_enabled: bool,
+  expected_head_oid: string,
+  observed_head_oid: string,
+  merge_method: string,
+  url: string,
+}
 ```
 
 ### type `GithubBranchHead`
@@ -510,7 +714,7 @@ pub type GithubAutoMergeReceipt =
 One repository branch bound to its exact current commit.
 
 ```harn
-pub type GithubBranchHead =
+pub type GithubBranchHead = {repo: string, branch: string, oid: string, url: string}
 ```
 
 ### type `GithubBranchProtection`
@@ -518,7 +722,49 @@ pub type GithubBranchHead =
 Normalized branch-protection policy, including an explicit unavailable outcome.
 
 ```harn
-pub type GithubBranchProtection =
+pub type GithubBranchProtection = {
+  available: bool,
+  branch: string,
+  protected: bool?,
+  required_checks: list<string>,
+  strict: bool?,
+  required_review_count: int?,
+  require_code_owner_reviews: bool?,
+  require_conversation_resolution: bool?,
+  allow_force_pushes: bool?,
+  allow_deletions: bool?,
+  error: GithubConnectorError?,
+}
+```
+
+### type `GithubBranchTreeCompareRequest`
+
+Closed ref pair for one repository tree comparison.
+
+```harn
+pub type GithubBranchTreeCompareRequest = {
+  owner: string,
+  repo: string,
+  left_ref: string,
+  right_ref: string,
+}
+```
+
+### type `GithubBranchTreeComparison`
+
+Exact commit and tree identities used to compare two repository refs.
+
+```harn
+pub type GithubBranchTreeComparison = {
+  repo: string,
+  left_ref: string,
+  left_oid: string,
+  left_tree_oid: string,
+  right_ref: string,
+  right_oid: string,
+  right_tree_oid: string,
+  equal: bool,
+}
 ```
 
 ### type `GithubCheckRollup`
@@ -526,7 +772,15 @@ pub type GithubBranchProtection =
 Aggregate state derived from an exact set of check runs.
 
 ```harn
-pub type GithubCheckRollup =
+pub type GithubCheckRollup = {
+  state: string,
+  total: int,
+  pending: int,
+  failed: int,
+  successful: int,
+  skipped: int,
+  conclusion: string?,
+}
 ```
 
 ### type `GithubCheckRun`
@@ -534,7 +788,19 @@ pub type GithubCheckRollup =
 One normalized GitHub check run.
 
 ```harn
-pub type GithubCheckRun =
+pub type GithubCheckRun = {
+  id: int?,
+  name: string,
+  status: string,
+  conclusion: string,
+  head_sha: string,
+  started_at: string?,
+  completed_at: string?,
+  duration_seconds: int?,
+  details_url: string?,
+  html_url: string?,
+  external_id: string?,
+}
 ```
 
 ### type `GithubCommitFileAddition`
@@ -542,7 +808,7 @@ pub type GithubCheckRun =
 Base64-encoded contents to add or replace in a signed commit.
 
 ```harn
-pub type GithubCommitFileAddition =
+pub type GithubCommitFileAddition = {path: string, contents_base64: string}
 ```
 
 ### type `GithubCommitFileDeletion`
@@ -550,7 +816,7 @@ pub type GithubCommitFileAddition =
 Repository path to delete in a signed commit.
 
 ```harn
-pub type GithubCommitFileDeletion =
+pub type GithubCommitFileDeletion = {path: string}
 ```
 
 ### type `GithubCommitSignature`
@@ -558,7 +824,15 @@ pub type GithubCommitFileDeletion =
 GitHub's signature verification evidence for one commit.
 
 ```harn
-pub type GithubCommitSignature =
+pub type GithubCommitSignature = {
+  repo: string,
+  sha: string,
+  verified: bool,
+  reason: string,
+  signature_present: bool,
+  payload_present: bool,
+  verified_at: string?,
+}
 ```
 
 ### type `GithubConnectorError`
@@ -566,7 +840,31 @@ pub type GithubCommitSignature =
 One normalized connector failure. Provider-specific evidence stays typed.
 
 ```harn
-pub type GithubConnectorError =
+pub type GithubConnectorError = {
+  code: string,
+  category: string,
+  message: string,
+  http_status?: int,
+  expected_head_oid?: string,
+  observed_head_oid?: string,
+  expected_base_oid?: string,
+  observed_base_oid?: string,
+  compensation_state?: string,
+  compensation_message?: string,
+  expected_commit_count?: int,
+  observed_commit_count?: int,
+  expected_release_id?: int,
+  observed_release_id?: int,
+  expected_tag_ref_oid?: string,
+  observed_tag_ref_oid?: string,
+  expected_tag_target_oid?: string,
+  observed_tag_target_oid?: string,
+  tag?: string,
+  candidate_run_ids?: list<int>,
+  path?: string,
+  file_mode?: string,
+  base_file_mode?: string,
+}
 ```
 
 ### type `GithubConnectorResult`
@@ -582,7 +880,12 @@ pub type GithubConnectorResult<T> = Result<T, GithubConnectorError>
 Receipt binding an enqueue request to the expected pull-request head.
 
 ```harn
-pub type GithubMergeQueueEnqueueReceipt =
+pub type GithubMergeQueueEnqueueReceipt = {
+  repo: string,
+  pull_number: int,
+  expected_head_oid: string,
+  entry: GithubMergeQueueEntry,
+}
 ```
 
 ### type `GithubMergeQueueEntries`
@@ -590,7 +893,13 @@ pub type GithubMergeQueueEnqueueReceipt =
 Ordered merge-queue entries for one repository branch.
 
 ```harn
-pub type GithubMergeQueueEntries =
+pub type GithubMergeQueueEntries = {
+  repo: string,
+  branch: string,
+  configured: bool,
+  url: string?,
+  entries: list<GithubMergeQueueEntry>,
+}
 ```
 
 ### type `GithubMergeQueueEntry`
@@ -598,7 +907,19 @@ pub type GithubMergeQueueEntries =
 One pull request's normalized merge-queue entry.
 
 ```harn
-pub type GithubMergeQueueEntry =
+pub type GithubMergeQueueEntry = {
+  id: string,
+  pull_number: int,
+  url: string,
+  state: string,
+  position: int,
+  enqueued_at: string?,
+  head_sha: string,
+  base_branch: string,
+  jump: bool,
+  solo: bool,
+  estimated_time_to_merge_seconds: int?,
+}
 ```
 
 ### type `GithubMergeQueueMembership`
@@ -606,7 +927,16 @@ pub type GithubMergeQueueEntry =
 Exact queue membership and auto-merge state for one pull request.
 
 ```harn
-pub type GithubMergeQueueMembership =
+pub type GithubMergeQueueMembership = {
+  repo: string,
+  pull_number: int,
+  available: bool,
+  queued: bool,
+  auto_merge_armed: bool,
+  auto_merge_method: string?,
+  entry: GithubMergeQueueEntry?,
+  error: GithubConnectorError?,
+}
 ```
 
 ### type `GithubMergeability`
@@ -614,7 +944,14 @@ pub type GithubMergeQueueMembership =
 Bounded mergeability observation after GitHub's asynchronous resolution.
 
 ```harn
-pub type GithubMergeability =
+pub type GithubMergeability = {
+  mergeable: bool?,
+  mergeable_state: string,
+  is_conflict: bool,
+  attempts: int,
+  resolved: bool,
+  raw: unknown,
+}
 ```
 
 ### type `GithubPullRequestChecks`
@@ -622,7 +959,14 @@ pub type GithubMergeability =
 Check runs and rollup bound to one immutable head revision.
 
 ```harn
-pub type GithubPullRequestChecks =
+pub type GithubPullRequestChecks = {
+  repo: string,
+  pull_number: int?,
+  head_sha: string,
+  state: string,
+  rollup: GithubCheckRollup,
+  checks: list<GithubCheckRun>,
+}
 ```
 
 ### type `GithubPullRequestCommit`
@@ -630,7 +974,7 @@ pub type GithubPullRequestChecks =
 One pull-request commit with its normalized signature evidence.
 
 ```harn
-pub type GithubPullRequestCommit =
+pub type GithubPullRequestCommit = {sha: string, message: string, signature: GithubCommitSignature}
 ```
 
 ### type `GithubPullRequestCommits`
@@ -638,7 +982,16 @@ pub type GithubPullRequestCommit =
 Ordered pull-request commits and exact pagination evidence.
 
 ```harn
-pub type GithubPullRequestCommits =
+pub type GithubPullRequestCommits = {
+  repo: string,
+  pull_number: int,
+  head_ref: string,
+  head_sha: string,
+  total_count: int,
+  commits: list<GithubPullRequestCommit>,
+  pages_fetched: int,
+  per_page: int,
+}
 ```
 
 ### type `GithubPullRequestCreateReceipt`
@@ -646,7 +999,7 @@ pub type GithubPullRequestCommits =
 Receipt proving whether pull-request creation created or reused the pull request.
 
 ```harn
-pub type GithubPullRequestCreateReceipt = GithubPullRequestDetails &
+pub type GithubPullRequestCreateReceipt = GithubPullRequestDetails & {created: bool}
 ```
 
 ### type `GithubPullRequestDetails`
@@ -655,6 +1008,13 @@ Pull-request summary plus body, actor, and lifecycle timestamps.
 
 ```harn
 pub type GithubPullRequestDetails = GithubPullRequestSummary \
+  & {
+  body: string,
+  user: GithubPullRequestUser?,
+  created_at: string?,
+  updated_at: string?,
+  closed_at: string?,
+}
 ```
 
 ### type `GithubPullRequestEditReceipt`
@@ -662,7 +1022,7 @@ pub type GithubPullRequestDetails = GithubPullRequestSummary \
 Receipt proving whether a pull-request edit changed remote state.
 
 ```harn
-pub type GithubPullRequestEditReceipt = GithubPullRequestDetails &
+pub type GithubPullRequestEditReceipt = GithubPullRequestDetails & {ok: bool, updated: bool}
 ```
 
 ### type `GithubPullRequestFile`
@@ -670,7 +1030,18 @@ pub type GithubPullRequestEditReceipt = GithubPullRequestDetails &
 One normalized file changed by a pull request.
 
 ```harn
-pub type GithubPullRequestFile =
+pub type GithubPullRequestFile = {
+  sha: string,
+  filename: string,
+  status: string,
+  additions: int,
+  deletions: int,
+  changes: int,
+  previous_filename: string?,
+  blob_url: string?,
+  raw_url: string?,
+  contents_url: string?,
+}
 ```
 
 ### type `GithubPullRequestFiles`
@@ -678,7 +1049,13 @@ pub type GithubPullRequestFile =
 One page of normalized pull-request files.
 
 ```harn
-pub type GithubPullRequestFiles =
+pub type GithubPullRequestFiles = {
+  repo: string,
+  pull_number: int,
+  files: list<GithubPullRequestFile>,
+  page: int,
+  per_page: int,
+}
 ```
 
 ### type `GithubPullRequestRef`
@@ -686,7 +1063,7 @@ pub type GithubPullRequestFiles =
 Repository and immutable revision identity for one pull-request side.
 
 ```harn
-pub type GithubPullRequestRef =
+pub type GithubPullRequestRef = {ref: string, sha: string, repo: string, owner: string}
 ```
 
 ### type `GithubPullRequestSummary`
@@ -694,7 +1071,51 @@ pub type GithubPullRequestRef =
 Stable pull-request state shared by summary and detail operations.
 
 ```harn
-pub type GithubPullRequestSummary =
+pub type GithubPullRequestSummary = {
+  repo: string,
+  number: int,
+  title: string,
+  url: string,
+  state: string,
+  github_state: string,
+  draft: bool,
+  merged: bool,
+  merged_at: string?,
+  merge_commit_oid: string?,
+  mergeable: bool?,
+  mergeable_state: string,
+  base: GithubPullRequestRef,
+  head: GithubPullRequestRef,
+  labels: list<string>,
+  auto_merge_armed: bool,
+  auto_merge_method: string?,
+  in_merge_queue: bool?,
+}
+```
+
+### type `GithubPullRequestUpsertReceipt`
+
+Receipt proving whether an exact automation pull request was created or updated.
+
+```harn
+pub type GithubPullRequestUpsertReceipt = GithubPullRequestDetails \
+  & {action: "created" | "updated", created: bool, updated: bool}
+```
+
+### type `GithubPullRequestUpsertRequest`
+
+Closed input for creating or refreshing one exact automation pull request.
+
+```harn
+pub type GithubPullRequestUpsertRequest = {
+  owner: string,
+  repo: string,
+  head: string,
+  base: string,
+  title: string,
+  body: string,
+  expected_head_oid: string,
+}
 ```
 
 ### type `GithubPullRequestUser`
@@ -702,7 +1123,7 @@ pub type GithubPullRequestSummary =
 Public GitHub actor fields returned with a pull request.
 
 ```harn
-pub type GithubPullRequestUser =
+pub type GithubPullRequestUser = {id: int?, login: string, type: string}
 ```
 
 ### type `GithubPullRequestView`
@@ -711,6 +1132,7 @@ Pull-request details joined with branch and queue policy state.
 
 ```harn
 pub type GithubPullRequestView = GithubPullRequestDetails \
+  & {branch_protection: GithubBranchProtection, queue_membership: GithubMergeQueueMembership}
 ```
 
 ### type `GithubRelease`
@@ -718,7 +1140,18 @@ pub type GithubPullRequestView = GithubPullRequestDetails \
 One normalized GitHub release and its assets.
 
 ```harn
-pub type GithubRelease =
+pub type GithubRelease = {
+  id: int,
+  tag_name: string,
+  name: string,
+  draft: bool,
+  prerelease: bool,
+  url: string,
+  target_commitish: string,
+  body: string,
+  published_at: string?,
+  assets: list<GithubReleaseAsset>,
+}
 ```
 
 ### type `GithubReleaseAsset`
@@ -726,7 +1159,17 @@ pub type GithubRelease =
 One normalized asset attached to a GitHub release.
 
 ```harn
-pub type GithubReleaseAsset =
+pub type GithubReleaseAsset = {
+  id: int,
+  name: string,
+  size: int,
+  state: string,
+  content_type: string,
+  download_count: int,
+  url: string,
+  created_at: string?,
+  updated_at: string?,
+}
 ```
 
 ### type `GithubReleaseEditReceipt`
@@ -734,7 +1177,16 @@ pub type GithubReleaseAsset =
 Receipt binding an edited release to its leased tag and release identity.
 
 ```harn
-pub type GithubReleaseEditReceipt =
+pub type GithubReleaseEditReceipt = {
+  repo: string,
+  tag: string,
+  state: string,
+  release_id: int,
+  tag_ref_oid: string,
+  tag_target_oid: string,
+  body: string,
+  url: string,
+}
 ```
 
 ### type `GithubReleaseLease`
@@ -742,7 +1194,12 @@ pub type GithubReleaseEditReceipt =
 Immutable tag and release identity used to lease a release mutation.
 
 ```harn
-pub type GithubReleaseLease =
+pub type GithubReleaseLease = {
+  tag_ref_oid: string,
+  tag_target_oid: string,
+  tag_target_type: string,
+  release_id: int,
+}
 ```
 
 ### type `GithubReleaseLookup`
@@ -750,7 +1207,14 @@ pub type GithubReleaseLease =
 Explicit found-or-absent result for a release tag lookup.
 
 ```harn
-pub type GithubReleaseLookup =
+pub type GithubReleaseLookup = {
+  repo: string,
+  tag: string,
+  state: string,
+  found: bool,
+  release: GithubRelease?,
+  lease?: GithubReleaseLease,
+}
 ```
 
 ### type `GithubSignedCommitReceipt`
@@ -758,7 +1222,14 @@ pub type GithubReleaseLookup =
 GitHub signature and branch evidence returned for a signed commit.
 
 ```harn
-pub type GithubSignedCommitReceipt =
+pub type GithubSignedCommitReceipt = {
+  oid: string,
+  url: string,
+  branch: string,
+  signature_valid: bool,
+  signed_by_github: bool,
+  signature_state: string,
+}
 ```
 
 ### type `GithubSignedCommitRequest`
@@ -766,7 +1237,16 @@ pub type GithubSignedCommitReceipt =
 Leased request for one GitHub-signed commit on a branch.
 
 ```harn
-pub type GithubSignedCommitRequest =
+pub type GithubSignedCommitRequest = {
+  owner: string,
+  repo: string,
+  branch: string,
+  expected_head_oid: string,
+  headline: string,
+  body?: string?,
+  additions: list<GithubCommitFileAddition>,
+  deletions: list<GithubCommitFileDeletion>,
+}
 ```
 
 ### type `GithubWorkflowCancelReceipt`
@@ -774,7 +1254,12 @@ pub type GithubSignedCommitRequest =
 Receipt proving GitHub accepted cancellation of an exact workflow run.
 
 ```harn
-pub type GithubWorkflowCancelReceipt =
+pub type GithubWorkflowCancelReceipt = {
+  repo: string,
+  run_id: int,
+  accepted: bool,
+  state: "cancel_requested",
+}
 ```
 
 ### type `GithubWorkflowDispatchReceipt`
@@ -782,7 +1267,20 @@ pub type GithubWorkflowCancelReceipt =
 Receipt identifying the workflow run accepted for a dispatch.
 
 ```harn
-pub type GithubWorkflowDispatchReceipt =
+pub type GithubWorkflowDispatchReceipt = {
+  repo: string,
+  accepted: bool,
+  run_id: int,
+  workflow_id: string?,
+  workflow_path: string,
+  run_attempt: int?,
+  ref: string,
+  head_sha: string,
+  head_branch: string,
+  event: string,
+  url: string,
+  created_at: string?,
+}
 ```
 
 ### type `GithubWorkflowJob`
@@ -790,7 +1288,19 @@ pub type GithubWorkflowDispatchReceipt =
 One normalized GitHub Actions workflow job.
 
 ```harn
-pub type GithubWorkflowJob =
+pub type GithubWorkflowJob = {
+  id: int,
+  run_id: int,
+  name: string,
+  status: string,
+  conclusion: string?,
+  head_sha: string,
+  url: string,
+  runner_name: string,
+  started_at: string?,
+  completed_at: string?,
+  steps: list<GithubWorkflowStep>,
+}
 ```
 
 ### type `GithubWorkflowJobs`
@@ -798,7 +1308,14 @@ pub type GithubWorkflowJob =
 One page of normalized workflow jobs for an exact run.
 
 ```harn
-pub type GithubWorkflowJobs =
+pub type GithubWorkflowJobs = {
+  repo: string,
+  run_id: int,
+  total_count: int,
+  jobs: list<GithubWorkflowJob>,
+  page: int,
+  per_page: int,
+}
 ```
 
 ### type `GithubWorkflowRerunReceipt`
@@ -806,7 +1323,12 @@ pub type GithubWorkflowJobs =
 Receipt proving GitHub accepted a rerun of an exact workflow run.
 
 ```harn
-pub type GithubWorkflowRerunReceipt =
+pub type GithubWorkflowRerunReceipt = {
+  repo: string,
+  run_id: int,
+  accepted: bool,
+  state: "rerun_requested",
+}
 ```
 
 ### type `GithubWorkflowRun`
@@ -814,7 +1336,24 @@ pub type GithubWorkflowRerunReceipt =
 One normalized GitHub Actions workflow run.
 
 ```harn
-pub type GithubWorkflowRun =
+pub type GithubWorkflowRun = {
+  repo: string,
+  id: int,
+  workflow_id: int?,
+  workflow_path: string,
+  run_number: int?,
+  run_attempt: int?,
+  name: string,
+  event: string,
+  status: string,
+  conclusion: string?,
+  head_branch: string,
+  head_sha: string,
+  url: string,
+  created_at: string?,
+  run_started_at: string?,
+  updated_at: string?,
+}
 ```
 
 ### type `GithubWorkflowRuns`
@@ -822,7 +1361,14 @@ pub type GithubWorkflowRun =
 One page of normalized workflow runs.
 
 ```harn
-pub type GithubWorkflowRuns =
+pub type GithubWorkflowRuns = {
+  repo: string,
+  workflow_id: string?,
+  total_count: int,
+  runs: list<GithubWorkflowRun>,
+  page: int,
+  per_page: int,
+}
 ```
 
 ### type `GithubWorkflowStep`
@@ -830,7 +1376,14 @@ pub type GithubWorkflowRuns =
 One normalized step within a workflow job.
 
 ```harn
-pub type GithubWorkflowStep =
+pub type GithubWorkflowStep = {
+  number: int,
+  name: string,
+  status: string,
+  conclusion: string?,
+  started_at: string?,
+  completed_at: string?,
+}
 ```
 
 ## Export `publish`
@@ -843,6 +1396,17 @@ Stable command synopsis for the worktree publication CLI.
 
 ```harn
 pub const PUBLISH_USAGE =
+  """Publish a local Git state to a GitHub branch as one GitHub-signed commit.
+
+  --repo      Target repository as `owner/repo`. Required.
+  --branch    Automation branch to create or reset onto the base commit. Required.
+  --headline  Commit headline. Required.
+  --body      Optional commit body.
+  --repo-dir  Checkout to read the change from. Defaults to the current directory.
+  --source    `worktree` (default) commits tracked edits plus untracked files;
+              `index` commits exactly what is staged.
+  --no-reset  Fail instead of force-moving a branch that is not already at the
+              base commit."""
 ```
 
 ### fn `parse_publish_args`
@@ -852,7 +1416,8 @@ Rejections come back as values rather than exits so the whole parse stays a
 pure function; `publish_main` owns usage output and exit codes.
 
 ```harn
-pub fn parse_publish_args(args: list<string>) -> Result<dict, string>
+pub fn parse_publish_args(args: list<string>) -> Result<dict, string> {
+}
 ```
 
 ### fn `publish_request`
@@ -864,7 +1429,8 @@ previous run is stale by construction, not a conflict worth preserving.
 `--no-reset` is for callers that treat a moved branch as someone else's work.
 
 ```harn
-pub fn publish_request(values: dict) -> GithubWorktreeCommitRequest
+pub fn publish_request(values: dict) -> GithubWorktreeCommitRequest {
+}
 ```
 
 ### fn `describe_receipt`
@@ -872,7 +1438,8 @@ pub fn publish_request(values: dict) -> GithubWorktreeCommitRequest
 Markdown summary of a receipt, one line per changed path.
 
 ```harn
-pub fn describe_receipt(receipt: GithubWorktreeCommitReceipt) -> list<string>
+pub fn describe_receipt(receipt: GithubWorktreeCommitReceipt) -> list<string> {
+}
 ```
 
 ### fn `publish_main`
@@ -883,7 +1450,8 @@ invocation was wrong. Separating 2 from 1 is what lets a CI step tell a
 broken workflow edit apart from a GitHub-side failure.
 
 ```harn
-pub fn publish_main(harness: Harness, args: list<string>) -> int
+pub fn publish_main(harness: Harness, args: list<string>) -> int {
+}
 ```
 
 ## Export `worktree`
@@ -901,14 +1469,30 @@ entries fail here, before any caller can reach the network.
 
 ```harn
 pub fn github_worktree_delta(
+  process: HarnessProcess,
+  selector: GithubWorktreeSelector,
+) -> GithubConnectorResult<GithubWorktreeDelta> {
+}
 ```
 
 ### fn `github_commit_worktree`
 
-Derive and publish one leased worktree delta as a GitHub-signed commit.
+Publish one exact local Git state to `branch` as a GitHub-signed commit.
+The payload is derived first and entirely locally, so an unsupported file
+mode fails before any network request. The branch is then created or reset
+only to `base_oid` (which must equal the local `HEAD`), and the commit is
+published through `github_create_signed_commit`, which rejects any response
+without a valid GitHub-generated signature.
+An empty delta returns `committed: false` with `branch_action: "skipped"` and
+performs no network call at all.
 
 ```harn
 pub fn github_commit_worktree(
+  harness: Harness,
+  request: GithubWorktreeCommitRequest,
+  options = nil,
+) -> GithubConnectorResult<GithubWorktreeCommitReceipt> {
+}
 ```
 
 ### type `GithubCommitFileAddition`
@@ -916,7 +1500,7 @@ pub fn github_commit_worktree(
 Base64-encoded contents to add or replace in a signed commit.
 
 ```harn
-pub type GithubCommitFileAddition =
+pub type GithubCommitFileAddition = {path: string, contents_base64: string}
 ```
 
 ### type `GithubCommitFileDeletion`
@@ -924,7 +1508,7 @@ pub type GithubCommitFileAddition =
 Repository path to delete in a signed commit.
 
 ```harn
-pub type GithubCommitFileDeletion =
+pub type GithubCommitFileDeletion = {path: string}
 ```
 
 ### type `GithubConnectorError`
@@ -932,7 +1516,31 @@ pub type GithubCommitFileDeletion =
 One normalized connector failure. Provider-specific evidence stays typed.
 
 ```harn
-pub type GithubConnectorError =
+pub type GithubConnectorError = {
+  code: string,
+  category: string,
+  message: string,
+  http_status?: int,
+  expected_head_oid?: string,
+  observed_head_oid?: string,
+  expected_base_oid?: string,
+  observed_base_oid?: string,
+  compensation_state?: string,
+  compensation_message?: string,
+  expected_commit_count?: int,
+  observed_commit_count?: int,
+  expected_release_id?: int,
+  observed_release_id?: int,
+  expected_tag_ref_oid?: string,
+  observed_tag_ref_oid?: string,
+  expected_tag_target_oid?: string,
+  observed_tag_target_oid?: string,
+  tag?: string,
+  candidate_run_ids?: list<int>,
+  path?: string,
+  file_mode?: string,
+  base_file_mode?: string,
+}
 ```
 
 ### type `GithubConnectorResult`
@@ -954,7 +1562,14 @@ A rename appears as two changes: the `deleted` half carries `rename_to` and
 the `added` half carries `rename_from`.
 
 ```harn
-pub type GithubWorktreeChange =
+pub type GithubWorktreeChange = {
+  path: string,
+  status: string,
+  blob_oid: string,
+  size_bytes: int,
+  rename_from: string?,
+  rename_to: string?,
+}
 ```
 
 ### type `GithubWorktreeCommitReceipt`
@@ -966,7 +1581,20 @@ outcome, where `commit_oid` and `commit_url` are `""` and `signature` carries
 no evidence.
 
 ```harn
-pub type GithubWorktreeCommitReceipt =
+pub type GithubWorktreeCommitReceipt = {
+  repository: string,
+  owner: string,
+  repo: string,
+  branch: string,
+  source: string,
+  base_oid: string,
+  committed: bool,
+  commit_oid: string,
+  commit_url: string,
+  branch_action: string,
+  changes: list<GithubWorktreeChange>,
+  signature: GithubWorktreeSignature,
+}
 ```
 
 ### type `GithubWorktreeCommitRequest`
@@ -978,7 +1606,18 @@ force-resetting an existing branch back to `base_oid`; without it a branch
 head that differs from the lease fails closed with `stale_head`.
 
 ```harn
-pub type GithubWorktreeCommitRequest =
+pub type GithubWorktreeCommitRequest = {
+  owner: string,
+  repo: string,
+  branch: string,
+  headline: string,
+  body?: string?,
+  repo_dir: string,
+  source?: string?,
+  base_oid?: string?,
+  create_branch?: bool?,
+  reset_branch?: bool?,
+}
 ```
 
 ### type `GithubWorktreeDelta`
@@ -986,7 +1625,15 @@ pub type GithubWorktreeCommitRequest =
 The typed additions/deletions request derived from one local Git state.
 
 ```harn
-pub type GithubWorktreeDelta =
+pub type GithubWorktreeDelta = {
+  repo_dir: string,
+  source: string,
+  base_oid: string,
+  empty: bool,
+  changes: list<GithubWorktreeChange>,
+  additions: list<GithubCommitFileAddition>,
+  deletions: list<GithubCommitFileDeletion>,
+}
 ```
 
 ### type `GithubWorktreeSelector`
@@ -1006,7 +1653,7 @@ the type name itself (and any nested record type you construct) so record
 literals coerce to it.
 
 ```harn
-pub type GithubWorktreeSelector =
+pub type GithubWorktreeSelector = {repo_dir: string, source?: string?, base_oid?: string?}
 ```
 
 ### type `GithubWorktreeSignature`
@@ -1014,5 +1661,5 @@ pub type GithubWorktreeSelector =
 GitHub's own signature evidence for the published commit.
 
 ```harn
-pub type GithubWorktreeSignature =
+pub type GithubWorktreeSignature = {verified: bool, signed_by_github: bool, state: string}
 ```
