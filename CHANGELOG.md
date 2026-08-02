@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.6.5 - 2026-08-02
+
+- Add typed branch-head reads and auto-merge suspension under exact pull-request
+  and base-branch leases. Ambiguous mutation outcomes are compensated before
+  returning, and receipts preserve the prior merge method for deterministic
+  restoration by release queue coordinators.
+
 ## 0.6.4 - 2026-08-02
 
 - Declare Harn 0.10.50 as the package minimum, matching the typed runtime
