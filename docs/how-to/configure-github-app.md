@@ -88,6 +88,26 @@ For local development, pass `allow_gh_auth_fallback: true`.
 When enabled and no installation credentials are present, the connector uses an
 explicit `gh_token`, `GH_TOKEN`, `GITHUB_TOKEN`, or `gh auth token`.
 
+## Connect to GitHub Enterprise Server
+
+Set the REST and GraphQL endpoints for your GitHub Enterprise Server:
+
+```harn
+const auth = {
+  api_base_url: "https://github.example.com/api/v3",
+  graphql_url: "https://github.example.com/api/graphql",
+  installation_token: harness.env.get("GITHUB_INSTALLATION_TOKEN"),
+}
+```
+
+You can set `GITHUB_API_BASE_URL` and `GITHUB_GRAPHQL_URL` instead of passing
+the fields with each call. When `api_base_url` ends in `/api/v3`, the connector
+derives the standard `/api/graphql` endpoint. Set `graphql_url` explicitly when
+your installation uses another path. GitHub documents the
+[REST base](https://docs.github.com/en/enterprise-server@latest/rest/quickstart)
+and [GraphQL endpoint](https://docs.github.com/en/enterprise-server@latest/graphql/guides/forming-calls-with-graphql)
+separately.
+
 ## Rotate credentials
 
 Add and validate a replacement App key before deleting the old key in GitHub.

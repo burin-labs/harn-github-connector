@@ -58,7 +58,12 @@ import {
   __repos_get_latest_release,
   __repos_list_release_assets,
 } from "./releases"
-import { __github_file_view, __repo_parts, __repos_get_text } from "./repository"
+import {
+  __github_branch_view,
+  __github_file_view,
+  __repo_parts,
+  __repos_get_text,
+} from "./repository"
 import {
   __api_call,
   __check_runs_create,
@@ -115,6 +120,7 @@ fn __outbound_routes() {
     "github.merge_queue.enqueue": {handler: __github_merge_queue_enqueue},
     "github.issue.create": {handler: __github_issue_create},
     "github.issue.comment": {handler: __github_issue_comment},
+    "github.branch.view": {handler: __github_branch_view},
     "github.branch.protection": {handler: __github_branch_protection},
     "github.branch.create_signed_commit": {handler: __github_create_signed_commit},
     "github.commit.signature": {handler: __github_commit_signature},

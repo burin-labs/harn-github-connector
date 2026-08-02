@@ -1,10 +1,11 @@
-import { __github_api_url, __github_json, __pagination_query } from "./client"
+import { __github_json, __pagination_query } from "./client"
 import {
   GithubCommitSignature,
   GithubPullRequestCommit,
   GithubPullRequestCommits,
   GithubSignedCommitReceipt,
 } from "./contracts"
+import { __github_api_url } from "./endpoints"
 import { connector_error } from "./errors"
 import { __validate_pull_response } from "./pull_request_models"
 import { __repo_parts } from "./repository"
@@ -300,7 +301,7 @@ pub fn __github_create_signed_commit(harness: Harness, args, cfg) {
   const payload = __github_json(
     harness,
     "POST",
-    __github_api_url(cfg.api_base_url, "/graphql"),
+    cfg.graphql_url,
     {
       query: __create_commit_on_branch_mutation(),
       variables: {

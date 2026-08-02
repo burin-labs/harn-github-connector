@@ -1,12 +1,12 @@
 import {
   __body_without,
   __config_keys,
-  __github_api_url,
   __github_json,
   __pagination_query,
   __pulls_list_query,
 } from "./client"
 import { GithubPullRequestCreateReceipt } from "./contracts"
+import { __github_api_url } from "./endpoints"
 import { connector_error } from "./errors"
 import { __github_issue_comment } from "./issues"
 import {
@@ -30,7 +30,7 @@ import {
   __validate_pull_identity,
   __validate_pull_response,
 } from "./pull_request_models"
-import { __is_status_error, __repo_parts } from "./repository"
+import { __github_branch_view, __is_status_error, __repo_parts } from "./repository"
 import { __pulls_create, __pulls_update } from "./writes"
 
 pub fn __github_pr_list(harness: Harness, args, cfg) {
@@ -430,6 +430,34 @@ pub fn __github_pr_disable_auto_merge(harness: Harness, args, cfg) {
       "github.pr.disable_auto_merge requires expected_head_oid as an explicit publication lease",
     )
   }
+  const base_branch = trim(to_string(args?.base_branch ?? ""))
+  const expected_base_oid = trim(to_string(args?.expected_base_oid ?? ""))
+  if base_branch == "" || expected_base_oid == "" {
+    return connector_error(
+      "schema_drift",
+      "github.pr.disable_auto_merge requires base_branch and expected_base_oid",
+    )
+  }
+  const base_head = __github_branch_view(
+    harness,
+    {owner: r.owner, repo: r.name, branch: base_branch},
+    cfg,
+  )
+  if is_err(base_head) {
+    return base_head
+  }
+  const observed_base_oid = unwrap(base_head).oid
+  if observed_base_oid != expected_base_oid {
+    return connector_error(
+      "stale_base",
+      "base branch no longer matches expected_base_oid",
+      {
+        base_branch: base_branch,
+        expected_base_oid: expected_base_oid,
+        observed_base_oid: observed_base_oid,
+      },
+    )
+  }
   const pull = __github_json(
     harness,
     "GET",
@@ -484,6 +512,9 @@ pub fn __github_pr_disable_auto_merge(harness: Harness, args, cfg) {
       already_disabled: true,
       expected_head_oid: expected_head_oid,
       observed_head_oid: observed_head_oid,
+      base_branch: base_branch,
+      expected_base_oid: expected_base_oid,
+      observed_base_oid: observed_base_oid,
       merge_method: observed_method,
       url: to_string(pull?.html_url ?? pull?.url ?? ""),
       before_entry: before.entry,
@@ -500,7 +531,7 @@ pub fn __github_pr_disable_auto_merge(harness: Harness, args, cfg) {
   const graph = __github_json(
     harness,
     "POST",
-    __github_api_url(cfg.api_base_url, "/graphql"),
+    cfg.graphql_url,
     {query: __disable_auto_merge_mutation(), variables: {pullRequestId: node_id}},
     cfg,
   )
@@ -541,6 +572,9 @@ pub fn __github_pr_disable_auto_merge(harness: Harness, args, cfg) {
     already_disabled: false,
     expected_head_oid: expected_head_oid,
     observed_head_oid: after_head_oid,
+    base_branch: base_branch,
+    expected_base_oid: expected_base_oid,
+    observed_base_oid: observed_base_oid,
     merge_method: observed_method,
     url: to_string(disabled_pull?.url ?? pull?.html_url ?? ""),
     before_entry: before.entry,
@@ -552,7 +586,7 @@ pub fn __pulls_list_with_checks(harness: Harness, args, cfg) {
   const graph = __github_json(
     harness,
     "POST",
-    __github_api_url(cfg.api_base_url, "/graphql"),
+    cfg.graphql_url,
     {
       query: __pulls_with_checks_query(),
       variables: {
@@ -725,7 +759,7 @@ pub fn __pulls_enable_auto_merge(harness: Harness, args, cfg) {
   const graph = __github_json(
     harness,
     "POST",
-    __github_api_url(cfg.api_base_url, "/graphql"),
+    cfg.graphql_url,
     {
       query: __enable_auto_merge_mutation(),
       variables: {

@@ -3,7 +3,7 @@ import {
   GithubWorktreeSelector,
   github_commit_worktree,
   github_worktree_delta,
-} from "../src/worktree_commit"
+} from "../../src/worktree_commit"
 
 const GITHUB_BASE = "https://api.github.test"
 

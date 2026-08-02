@@ -34,9 +34,13 @@ const release = unwrap(result)
 ```
 
 The default module exports closed records for pull requests, checks, workflow
-runs and dispatches, releases, merge queues, mergeability, auto-merge receipts,
-commit signatures, and connector errors. These records are importable in
+runs and dispatches, releases, branch heads, merge queues, mergeability,
+auto-merge receipts, commit signatures, and connector errors. These records are importable in
 downstream annotations and compose through `GithubConnectorResult<T>`.
+Typed helpers take a closed request record after `Harness` and a closed
+`GithubConnectorAuth` record when they need provider credentials. Callers name
+every repository, branch, and lease field. The raw `call` method remains the
+dynamic escape hatch.
 
 ## Methods
 
@@ -51,7 +55,7 @@ drift. The table below groups the same methods for browsing.
 | Self-hosted runners | `actions.runners.registration_token`, `actions.runners.remove_token`, `actions.runners.generate_jitconfig`, `actions.runners.list`, `actions.runners.get`, `actions.runners.delete`, `actions.runners.downloads`, `actions.runners.labels.list`, `actions.runners.labels.add`, `actions.runners.labels.replace`, `actions.runners.labels.remove`, `actions.runner_groups.list`, `actions.runner_groups.create`, `actions.runner_groups.get`, `actions.runner_groups.update`, `actions.runner_groups.delete` |
 | User OAuth | `oauth.user.device_code`, `oauth.user.device_poll`, `oauth.user.exchange_code`, `oauth.user.refresh` |
 | Issues | `github.issue.create`, `github.issue.comment`, `issues.create_comment`, `issues.create`, `issues.create_with_template`, `issues.update`, `issues.add_labels` |
-| Repository and release data | `github.file.view`, `github.release.view`, `github.release.edit_body`, `github.release.latest`, `github.release.assets`, `github.commit.signature`, `github.branch.protection`, `github.branch.create_signed_commit`, `repos.get_content`, `repos.get_text`, `repos.create_or_update_file`, `repos.put_content`, `repos.delete_file`, `repos.get_latest_release`, `repos.list_release_assets`, `repos.get_branch_protection`, `git.create_commit`, `git.delete_ref` |
+| Repository and release data | `github.file.view`, `github.release.view`, `github.release.edit_body`, `github.release.latest`, `github.release.assets`, `github.commit.signature`, `github.branch.view`, `github.branch.protection`, `github.branch.create_signed_commit`, `repos.get_content`, `repos.get_text`, `repos.create_or_update_file`, `repos.put_content`, `repos.delete_file`, `repos.get_latest_release`, `repos.list_release_assets`, `repos.get_branch_protection`, `git.create_commit`, `git.delete_ref` |
 | Merge queue | `github.merge_queue.entries`, `github.merge_queue.membership`, `github.merge_queue.enqueue` |
 | Raw access | `api_call`, `graphql` |
 
@@ -62,9 +66,13 @@ request or parse the raw REST response for the same operation.
 
 ## Method behavior
 
+- `github.branch.view` returns the requested full ref and its exact commit OID.
+  It rejects a response for another ref or a non-commit object.
 - `github.pr.enable_auto_merge`, `github.pr.disable_auto_merge`, and
-  `github.merge_queue.enqueue` require
-  `expected_head_oid`. A mismatched lease returns `stale_head` without mutating.
+  `github.merge_queue.enqueue` require `expected_head_oid`. A mismatched lease
+  returns `stale_head` without mutating. Auto-merge disable also requires
+  `base_branch` and `expected_base_oid`; it returns `stale_base` before reading
+  or mutating the pull request when the release base moved.
 - `github.pr.disable_auto_merge` returns the queued entry before and after the
   hold plus the merge method needed to restore auto-merge. It fails if the head
   changes during the mutation or GitHub retains a queue entry afterward.
@@ -114,6 +122,7 @@ method covers the operation. They do not replace a namespaced method.
 
 | Helper | Purpose |
 | --- | --- |
+| `github_branch_view(harness, request, auth)` | Read one exact branch head. `request` is a `GithubBranchViewRequest`; `auth` is a `GithubConnectorAuth`. |
 | `pulls_list_with_checks(harness, owner, repo, state, limit, options)` | List pull requests with merge state and CI rollup. |
 | `pulls_update(harness, owner, repo, number, edits, options)` | Update the supported pull request fields. |
 | `pulls_merge_safe(harness, owner, repo, number, options)` | Merge after checking branch protection. |
@@ -163,7 +172,13 @@ method covers the operation. They do not replace a namespaced method.
 | `invalidate_installation_token(runtime, installation_id)` | Remove one cached installation token. |
 
 Common auth options include `installation_token`,
-`app_id`/`installation_id`/`private_key_secret`, `api_base_url`, and
+`app_id`/`installation_id`/`private_key_secret`, `api_base_url`, `graphql_url`, and
 `allow_gh_auth_fallback`. Wait helpers accept `poll_interval_ms`, `timeout_ms`,
 and `max_attempts`; `max_attempts` wins over wall-clock timeout to keep tests
 deterministic.
+
+`api_base_url` defaults to `GITHUB_API_BASE_URL` or
+`https://api.github.com`. `graphql_url` defaults to `GITHUB_GRAPHQL_URL` or is
+derived from the REST base. A REST base ending in `/api/v3` maps to
+`/api/graphql`; other bases append `/graphql`. Both endpoints must use HTTPS
+and a public host.

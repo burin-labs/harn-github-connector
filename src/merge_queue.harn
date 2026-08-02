@@ -1,10 +1,11 @@
-import { __github_api_url, __github_json } from "./client"
+import { __github_json } from "./client"
 import {
   GithubMergeQueueEnqueueReceipt,
   GithubMergeQueueEntries,
   GithubMergeQueueEntry,
   GithubMergeQueueMembership,
 } from "./contracts"
+import { __github_api_url } from "./endpoints"
 import { connector_error } from "./errors"
 import { __typed_merge_queue_entry, __validate_pull_identity } from "./pull_request_models"
 import { __repo_parts } from "./repository"
@@ -29,7 +30,7 @@ pub fn __github_merge_queue_entries(harness: Harness, args, cfg) {
   const response = __github_json(
     harness,
     "POST",
-    __github_api_url(cfg.api_base_url, "/graphql"),
+    cfg.graphql_url,
     {
       query: __merge_queue_entries_query(),
       variables: {owner: r.owner, repo: r.name, branch: to_string(branch), limit: limit},
@@ -121,7 +122,7 @@ pub fn __github_merge_queue_membership(harness: Harness, args, cfg) {
   const response = __github_json(
     harness,
     "POST",
-    __github_api_url(cfg.api_base_url, "/graphql"),
+    cfg.graphql_url,
     {
       query: __merge_queue_membership_query(),
       variables: {owner: r.owner, repo: r.name, number: to_int(number)},
@@ -214,7 +215,7 @@ pub fn __github_merge_queue_enqueue(harness: Harness, args, cfg) {
   const response = __github_json(
     harness,
     "POST",
-    __github_api_url(cfg.api_base_url, "/graphql"),
+    cfg.graphql_url,
     {
       query: __enqueue_pull_request_mutation(),
       variables: {

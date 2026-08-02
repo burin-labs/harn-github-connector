@@ -1,4 +1,5 @@
-import { __body_without, __config_keys, __github_api_url, __github_json } from "./client"
+import { __body_without, __config_keys, __github_json } from "./client"
+import { __github_api_url } from "./endpoints"
 import { connector_error } from "./errors"
 import { __typed_user } from "./pull_request_models"
 import { __repo_parts } from "./repository"

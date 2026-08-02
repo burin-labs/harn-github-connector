@@ -1,5 +1,6 @@
 import { __commit_write_body, __pull_create_body } from "./authoring"
-import { __config_keys, __github_api_url, __github_json, __trim_leading_slash } from "./client"
+import { __config_keys, __github_json, __trim_leading_slash } from "./client"
+import { __github_api_url } from "./endpoints"
 import { connector_error } from "./errors"
 import { pr_edit_body } from "./pr_edit"
 

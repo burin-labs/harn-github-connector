@@ -2,13 +2,13 @@
 //
 // Argument parsing, request construction and summary rendering are pure, so
 // they are exercised directly. Deriving a delta and publishing it belong to
-// `github_commit_worktree` and are covered by tests/worktree_commit.harn.
-import { describe_receipt, parse_publish_args, publish_request } from "../src/publish_cli"
+// `github_commit_worktree` and are covered by tests/integration/worktree_commit.harn.
+import { describe_receipt, parse_publish_args, publish_request } from "../../src/publish_cli"
 import {
   GithubWorktreeChange,
   GithubWorktreeCommitReceipt,
   GithubWorktreeSignature,
-} from "../src/worktree_commit"
+} from "../../src/worktree_commit"
 
 const MINIMAL = ["--repo", "octo-org/octo-repo", "--branch", "automation/x", "--headline", "Update"]
 

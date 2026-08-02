@@ -1,5 +1,6 @@
-import { __github_api_url, __github_json } from "./client"
+import { __github_json } from "./client"
 import { GithubMergeability } from "./contracts"
+import { __github_api_url } from "./endpoints"
 import { __repo_parts } from "./repository"
 import { __positive_int } from "./validation"
 

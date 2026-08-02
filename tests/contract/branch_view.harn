@@ -1,0 +1,68 @@
+import {
+  GithubBranchViewRequest,
+  GithubConnectorAuth,
+  call,
+  github_branch_view,
+} from "../../src/lib"
+
+pipeline test_branch_view_returns_exact_commit(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  const base = "https://github-api.test"
+  harness.testing.http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/git/ref/heads/release%2Fnext",
+    {
+      status: 200,
+      body: json_stringify(
+        {
+          ref: "refs/heads/release/next",
+          object: {type: "commit", sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+        },
+      ),
+      headers: {"x-ratelimit-remaining": "10"},
+    },
+  )
+  const request: GithubBranchViewRequest = {
+    owner: "octo-org",
+    repo: "octo-repo",
+    branch: "release/next",
+  }
+  const auth: GithubConnectorAuth = {api_base_url: base, installation_token: "token"}
+  const head = unwrap(github_branch_view(harness, request, auth))
+  assert_eq(head.repo, "octo-org/octo-repo", "repository is normalized")
+  assert_eq(head.branch, "release/next", "branch is preserved")
+  assert_eq(head.ref, "refs/heads/release/next", "full ref is explicit")
+  assert_eq(head.oid, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "commit is leased")
+}
+
+pipeline test_branch_view_rejects_missing_or_mismatched_identity(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  const base = "https://github-api.test"
+  const auth: GithubConnectorAuth = {api_base_url: base, installation_token: "token"}
+  const missing = call(
+    harness,
+    "github.branch.view",
+    auth + {repo: "octo-org/octo-repo", branch: "  "},
+  )
+  assert(is_err(missing), "blank branch fails before I/O")
+  assert_eq(unwrap_err(missing).code, "schema_drift", "blank branch is schema drift")
+  harness.testing.http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/git/ref/heads/main",
+    {
+      status: 200,
+      body: json_stringify(
+        {
+          ref: "refs/heads/other",
+          object: {type: "commit", sha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+        },
+      ),
+      headers: {"x-ratelimit-remaining": "9"},
+    },
+  )
+  const request: GithubBranchViewRequest = {owner: "octo-org", repo: "octo-repo", branch: "main"}
+  const mismatched = github_branch_view(harness, request, auth)
+  assert(is_err(mismatched), "provider cannot substitute another ref")
+  assert_eq(unwrap_err(mismatched).code, "invalid_response", "mismatch fails closed")
+  assert_eq(len(harness.testing.http_mock_calls()), 1, "blank input issued no request")
+}

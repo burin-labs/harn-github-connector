@@ -8,6 +8,19 @@ Version: `0.5.0`
 
 `src/lib.harn`
 
+### fn `github_branch_view`
+
+Read the exact commit currently named by one repository branch.
+
+```harn
+pub fn github_branch_view(
+  harness: Harness,
+  request: GithubBranchViewRequest,
+  auth: GithubConnectorAuth = {},
+) -> GithubConnectorResult<GithubBranchHead> {
+}
+```
+
 ### fn `pulls_list_with_checks`
 
 List PRs in the same shape consumed by managed merge_captain.
@@ -361,6 +374,9 @@ pub type GithubAutoMergeDisableReceipt = {
   already_disabled: bool,
   expected_head_oid: string,
   observed_head_oid: string,
+  base_branch: string,
+  expected_base_oid: string,
+  observed_base_oid: string,
   merge_method: string,
   url: string,
   before_entry: GithubMergeQueueEntry?,
@@ -385,6 +401,14 @@ pub type GithubAutoMergeReceipt = {
 }
 ```
 
+### type `GithubBranchHead`
+
+The exact commit currently named by one repository branch.
+
+```harn
+pub type GithubBranchHead = {repo: string, branch: string, ref: string, oid: string}
+```
+
 ### type `GithubBranchProtection`
 
 Branch protection settings, or a typed error when GitHub cannot return them.
@@ -403,6 +427,14 @@ pub type GithubBranchProtection = {
   allow_deletions: bool?,
   error: GithubConnectorError?,
 }
+```
+
+### type `GithubBranchViewRequest`
+
+Repository and branch identity for an exact branch-head read.
+
+```harn
+pub type GithubBranchViewRequest = {owner: string, repo: string, branch: string}
 ```
 
 ### type `GithubCheckRollup`
@@ -473,6 +505,25 @@ pub type GithubCommitSignature = {
 }
 ```
 
+### type `GithubConnectorAuth`
+
+Canonical authentication and endpoint options for typed connector helpers.
+
+```harn
+pub type GithubConnectorAuth = {
+  api_base_url?: string,
+  graphql_url?: string,
+  installation_token?: string,
+  app_id?: string,
+  installation_id?: string,
+  private_key_secret?: string,
+  allow_gh_auth_fallback?: bool,
+  gh_token?: string,
+  timeout_ms?: int,
+  rate_limit_max_sleep_seconds?: int,
+}
+```
+
 ### type `GithubConnectorError`
 
 One normalized connector failure. Provider-specific evidence stays typed.
@@ -485,6 +536,9 @@ pub type GithubConnectorError = {
   http_status?: int,
   expected_head_oid?: string,
   observed_head_oid?: string,
+  expected_base_oid?: string,
+  observed_base_oid?: string,
+  base_branch?: string,
   expected_commit_count?: int,
   observed_commit_count?: int,
   expected_release_id?: int,
@@ -1397,6 +1451,9 @@ pub type GithubConnectorError = {
   http_status?: int,
   expected_head_oid?: string,
   observed_head_oid?: string,
+  expected_base_oid?: string,
+  observed_base_oid?: string,
+  base_branch?: string,
   expected_commit_count?: int,
   observed_commit_count?: int,
   expected_release_id?: int,

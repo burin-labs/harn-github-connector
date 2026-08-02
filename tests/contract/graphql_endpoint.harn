@@ -1,0 +1,66 @@
+import { __default_graphql_url } from "../../src/endpoints"
+import { call } from "../../src/lib"
+
+pipeline test_graphql_endpoint_resolution(harness: Harness, task) {
+  assert_eq(
+    __default_graphql_url("https://api.github.com"),
+    "https://api.github.com/graphql",
+    "GitHub.com GraphQL endpoint",
+  )
+  assert_eq(
+    __default_graphql_url("https://github.example.com/api/v3"),
+    "https://github.example.com/api/graphql",
+    "GHES GraphQL endpoint",
+  )
+  assert_eq(
+    __default_graphql_url("https://github.example.com/api/v3/"),
+    "https://github.example.com/api/graphql",
+    "GHES GraphQL endpoint with trailing slash",
+  )
+  assert_eq(
+    __default_graphql_url("https://github-api.example.com"),
+    "https://github-api.example.com/graphql",
+    "custom API GraphQL endpoint",
+  )
+}
+
+pipeline test_explicit_graphql_endpoint(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  const graphql_url = "https://github.example.com/custom/graphql"
+  harness.testing.http_mock(
+    "POST",
+    graphql_url,
+    {status: 200, body: "{\"data\":{\"viewer\":{\"login\":\"octocat\"}}}"},
+  )
+  const result = unwrap(
+    call(
+      harness,
+      "graphql",
+      {
+        api_base_url: "https://github.example.com/api/v3",
+        graphql_url: graphql_url,
+        installation_token: "test-token",
+        query: "query { viewer { login } }",
+        variables: {},
+      },
+    ),
+  )
+  assert_eq(result.data.viewer.login, "octocat", "explicit GraphQL endpoint response")
+  assert_eq(harness.testing.http_mock_calls()[0].url, graphql_url, "explicit GraphQL endpoint used")
+}
+
+pipeline test_invalid_graphql_endpoint(harness: Harness, task) {
+  const result = call(
+    harness,
+    "graphql",
+    {
+      api_base_url: "https://github.example.com/api/v3",
+      graphql_url: "http://github.example.com/api/graphql",
+      installation_token: "test-token",
+      query: "query { viewer { login } }",
+      variables: {},
+    },
+  )
+  assert(is_err(result), "insecure GraphQL endpoint rejected")
+  assert_eq(unwrap_err(result).category, "invalid_graphql_url", "validation category")
+}

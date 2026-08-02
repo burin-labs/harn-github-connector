@@ -17,8 +17,6 @@ harn check src
 harn lint src
 harn fmt --check src tests
 harn package verify . --provider github
-printf '%s\0' tests/*.harn \
-  | xargs -0 -n1 -P 4 env HARN_EGRESS_BLOCK_PRIVATE=off harn run
 harn test tests --parallel
 ```
 
@@ -27,6 +25,30 @@ deterministic connector-contract gates, including supported event variants and
 a signature rejection case.
 The `tests/fixtures/webhooks/` payloads are synthetic compatibility fixtures;
 keep them free of live GitHub secrets and private repository data.
+
+## Put tests in the owning lane
+
+Use the narrowest test that can disprove the claim:
+
+| Lane | Use it for | I/O |
+| --- | --- | --- |
+| `tests/unit/` | Pure parsing, validation, and normalization. | None. |
+| `tests/contract/` | Public types, GitHub request/response rules, leases, receipts, and provider errors. | `Harness` HTTP mocks only. |
+| `tests/integration/` | Behavior that crosses connector modules or uses a temporary local Git repository. | Local process and filesystem capabilities; no live GitHub calls. |
+| Package smoke | Installing the built package and importing every export. | A temporary consumer package created by `harn package verify`. |
+
+`harn test tests --parallel` discovers every nested test lane. Keep one test
+file beside the behavior it proves and name the falsifier in the pipeline name.
+Do not use live GitHub calls in the deterministic suite.
+
+Harn language and runtime conformance belongs in Harn's
+[`conformance/tests`](https://github.com/burin-labs/harn/tree/main/conformance/tests).
+Connector protocol fixtures remain in `harn.toml` and run through
+`harn connector check`; do not copy them into a second conformance catalog.
+
+Use a live installation only for a release smoke that cannot be proven with
+the package consumer or connector fixtures. Record the repository, exact
+commit, operation, and cleanup receipt when such a smoke is required.
 
 ## Find the owning module
 

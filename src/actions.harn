@@ -1,7 +1,6 @@
 import {
   __body_without,
   __config_keys,
-  __github_api_url,
   __github_json,
   __github_text,
   __pagination_query,
@@ -15,6 +14,7 @@ import {
   GithubWorkflowRun,
   GithubWorkflowStep,
 } from "./contracts"
+import { __github_api_url } from "./endpoints"
 import { connector_error } from "./errors"
 import { __repo_parts } from "./repository"
 import { __actions_run_id, __nonnegative_decimal, __positive_decimal } from "./validation"

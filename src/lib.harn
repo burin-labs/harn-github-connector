@@ -9,12 +9,15 @@ pub import {
 pub import {
   GithubAutoMergeDisableReceipt,
   GithubAutoMergeReceipt,
+  GithubBranchHead,
   GithubBranchProtection,
+  GithubBranchViewRequest,
   GithubCheckRollup,
   GithubCheckRun,
   GithubCommitFileAddition,
   GithubCommitFileDeletion,
   GithubCommitSignature,
+  GithubConnectorAuth,
   GithubConnectorError,
   GithubConnectorResult,
   GithubMergeQueueEnqueueReceipt,
@@ -72,6 +75,24 @@ pub import {
   provider_id,
   shutdown,
 } from "./webhooks"
+
+/** Read the exact commit currently named by one repository branch. */
+pub fn github_branch_view(
+  harness: Harness,
+  request: GithubBranchViewRequest,
+  auth: GithubConnectorAuth = {},
+) -> GithubConnectorResult<GithubBranchHead> {
+  const result = call(
+    harness,
+    "github.branch.view",
+    {auth: auth, owner: request.owner, repo: request.repo, branch: request.branch},
+  )
+  if is_err(result) {
+    return Err(unwrap_err(result))
+  }
+  const head: GithubBranchHead = unwrap(result)
+  return Ok(head)
+}
 
 /** List PRs in the same shape consumed by managed merge_captain. */
 pub fn pulls_list_with_checks(

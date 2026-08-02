@@ -1,8 +1,12 @@
-import { pulls_disable_auto_merge } from "../src/lib"
+import { pulls_disable_auto_merge } from "../../src/lib"
 
 const BASE = "https://github-api.test"
 
 const HEAD = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+const BASE_HEAD = "cccccccccccccccccccccccccccccccccccccccc"
+
+type DisableMutationBody = {query: string, variables: {pullRequestId: string}}
 
 fn options() {
   return {api_base_url: BASE, installation_token: "test-token"}
@@ -38,6 +42,14 @@ fn entry() {
 
 pipeline test_disable_auto_merge_retains_exact_restoration_evidence(harness: Harness, task) {
   harness.testing.http_mock_clear()
+  harness.testing.http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/git/ref/heads/main",
+    {
+      status: 200,
+      body: json_stringify({ref: "refs/heads/main", object: {type: "commit", sha: BASE_HEAD}}),
+    },
+  )
   harness.testing.http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/pulls/7",
@@ -91,23 +103,40 @@ pipeline test_disable_auto_merge_retains_exact_restoration_evidence(harness: Har
       "octo-org",
       "octo-repo",
       7,
-      options() + {expected_head_oid: HEAD, restore_merge_method: "squash"},
+      options()
+        + {
+        expected_head_oid: HEAD,
+        base_branch: "main",
+        expected_base_oid: BASE_HEAD,
+        restore_merge_method: "squash",
+      },
     ),
   )
   assert_eq(receipt.state, "disabled")
   assert_eq(receipt.expected_head_oid, HEAD)
   assert_eq(receipt.observed_head_oid, HEAD)
+  assert_eq(receipt.base_branch, "main")
+  assert_eq(receipt.expected_base_oid, BASE_HEAD)
+  assert_eq(receipt.observed_base_oid, BASE_HEAD)
   assert_eq(receipt.merge_method, "SQUASH")
   assert_eq(receipt.before_entry.position, 3)
   assert_eq(receipt.after_entry, nil)
   const calls = harness.testing.http_mock_calls()
-  const mutation = json_parse(calls[2].body)
+  const mutation: DisableMutationBody = json_parse(calls[3].body)
   assert_eq(mutation.variables.pullRequestId, "PR_node_7")
   assert(contains(mutation.query, "disablePullRequestAutoMerge"))
 }
 
 pipeline test_disable_auto_merge_rejects_a_changed_head_before_mutation(harness: Harness, task) {
   harness.testing.http_mock_clear()
+  harness.testing.http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/git/ref/heads/main",
+    {
+      status: 200,
+      body: json_stringify({ref: "refs/heads/main", object: {type: "commit", sha: BASE_HEAD}}),
+    },
+  )
   harness.testing.http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/pulls/7",
@@ -118,9 +147,48 @@ pipeline test_disable_auto_merge_rejects_a_changed_head_before_mutation(harness:
     "octo-org",
     "octo-repo",
     7,
-    options() + {expected_head_oid: HEAD, restore_merge_method: "squash"},
+    options()
+      + {
+      expected_head_oid: HEAD,
+      base_branch: "main",
+      expected_base_oid: BASE_HEAD,
+      restore_merge_method: "squash",
+    },
   )
   assert(is_err(result))
   assert_eq(unwrap_err(result).code, "stale_head")
+  assert_eq(len(harness.testing.http_mock_calls()), 2)
+}
+
+pipeline test_disable_auto_merge_rejects_a_changed_base_before_pull_read(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/git/ref/heads/main",
+    {
+      status: 200,
+      body: json_stringify(
+        {
+          ref: "refs/heads/main",
+          object: {type: "commit", sha: "dddddddddddddddddddddddddddddddddddddddd"},
+        },
+      ),
+    },
+  )
+  const result = pulls_disable_auto_merge(
+    harness,
+    "octo-org",
+    "octo-repo",
+    7,
+    options()
+      + {
+      expected_head_oid: HEAD,
+      base_branch: "main",
+      expected_base_oid: BASE_HEAD,
+      restore_merge_method: "squash",
+    },
+  )
+  assert(is_err(result))
+  assert_eq(unwrap_err(result).code, "stale_base")
   assert_eq(len(harness.testing.http_mock_calls()), 1)
 }

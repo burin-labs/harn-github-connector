@@ -6,7 +6,7 @@ import {
   github_find_open_pr,
   github_wait_for_pr_checks,
   github_wait_for_workflow_run,
-} from "../src/lib"
+} from "../../src/lib"
 
 const BASE = "https://github-api.test"
 

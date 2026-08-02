@@ -9,6 +9,7 @@ semantic decision in one module and expose it through [`src/lib.harn`](../../src
 | [`dispatch.harn`](../../src/dispatch.harn) | Executable method catalog, generic `call`, typed `call_typed`, and method dispatch. |
 | [`orchestration.harn`](../../src/orchestration.harn) | Cross-endpoint workflow dispatch, CI monitoring, pull-request lookup, closure, and mergeability flows. |
 | [`client.harn`](../../src/client.harn) | Authentication, outbound policy, HTTP transport, pagination, installation-token caching, and rate-limit handling. |
+| [`endpoints.harn`](../../src/endpoints.harn) | REST and GraphQL endpoint derivation plus public-HTTPS validation. |
 | [`contracts.harn`](../../src/contracts.harn) | Closed records returned by the public API. |
 | [`actions.harn`](../../src/actions.harn) | Workflow runs, jobs, logs, cancellation, and self-hosted runners. |
 | [`pull_requests.harn`](../../src/pull_requests.harn) | Pull-request reads, edits, checks, merges, comments, and branch-protection evidence. |
@@ -16,7 +17,7 @@ semantic decision in one module and expose it through [`src/lib.harn`](../../src
 | [`merge_queue.harn`](../../src/merge_queue.harn) | Merge-queue entries, membership, and enqueue leases. Auto-merge holds stay with pull-request mutations. |
 | [`mergeability.harn`](../../src/mergeability.harn) | Bounded polling for GitHub's asynchronous mergeability state. |
 | [`commits.harn`](../../src/commits.harn) | Pull-request commit evidence, signature validation, commit-to-PR lookup, and atomic signed commits. |
-| [`repository.harn`](../../src/repository.harn) | Repository identity, access checks, and exact file reads. |
+| [`repository.harn`](../../src/repository.harn) | Repository identity, access checks, exact branch heads, and exact file reads. |
 | [`releases.harn`](../../src/releases.harn) | Release lookup, leased metadata edits, and asset listing. |
 | [`issues.harn`](../../src/issues.harn) | Issue creation, comments, and template rendering. |
 | [`writes.harn`](../../src/writes.harn) | Small write transports after author identity has been resolved. |

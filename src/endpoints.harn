@@ -1,0 +1,130 @@
+import { connector_error } from "./errors"
+import { GITHUB_API_BASE_URL, GITHUB_GRAPHQL_URL } from "./provider"
+import { text_index_of } from "./text"
+
+/** Join one REST path to a configured GitHub API base. */
+pub fn __github_api_url(api_base_url, path) {
+  const base = trim(to_string(api_base_url))
+  const prefix = if ends_with(base, "/") {
+    base[0:len(base) - 1]
+  } else {
+    base
+  }
+  if starts_with(path, "/") {
+    return prefix + path
+  }
+  return prefix + "/" + path
+}
+
+/** Derive the GraphQL endpoint for GitHub.com or a standard GHES REST base. */
+pub fn __default_graphql_url(api_base_url) {
+  const raw = trim(to_string(api_base_url))
+  const base = if ends_with(raw, "/") {
+    raw[0:len(raw) - 1]
+  } else {
+    raw
+  }
+  if base == GITHUB_API_BASE_URL {
+    return GITHUB_GRAPHQL_URL
+  }
+  if ends_with(base, "/api/v3") {
+    return base[0:len(base) - len("/v3")] + "/graphql"
+  }
+  return base + "/graphql"
+}
+
+@complexity(allow)
+pub fn __validate_api_base_url(api_base_url) {
+  if api_base_url == nil || trim(to_string(api_base_url)) == "" {
+    return connector_error("invalid_api_base_url", "api_base_url is required")
+  }
+  const url = trim(to_string(api_base_url))
+  if !starts_with(lowercase(url), "https://") {
+    return connector_error("invalid_api_base_url", "api_base_url must use https:// scheme")
+  }
+  const after_scheme = url[8:len(url)]
+  const slash_idx = text_index_of(after_scheme, "/")
+  const host_port = if slash_idx >= 0 {
+    after_scheme[0:slash_idx]
+  } else {
+    after_scheme
+  }
+  const host = __strip_port(host_port)
+  if host == "" {
+    return connector_error("invalid_api_base_url", "api_base_url is missing a host")
+  }
+  const host_lc = lowercase(host)
+  if __is_disallowed_host(host_lc) {
+    return connector_error(
+      "invalid_api_base_url",
+      "api_base_url host `" + host
+        + "` is not allowed (loopback/private/link-local/.internal/.local are blocked)",
+    )
+  }
+  return Ok(true)
+}
+
+pub fn __validate_graphql_url(graphql_url) {
+  if graphql_url == nil || trim(to_string(graphql_url)) == "" {
+    return connector_error("invalid_graphql_url", "graphql_url is required")
+  }
+  const checked = __validate_api_base_url(graphql_url)
+  if is_err(checked) {
+    return connector_error("invalid_graphql_url", "graphql_url must be a public https:// endpoint")
+  }
+  return Ok(true)
+}
+
+fn __strip_port(host_port) {
+  if starts_with(host_port, "[") {
+    const close = text_index_of(host_port, "]")
+    if close >= 0 {
+      return host_port[1:close]
+    }
+    return host_port
+  }
+  const colon = text_index_of(host_port, ":")
+  if colon >= 0 {
+    return host_port[0:colon]
+  }
+  return host_port
+}
+
+@complexity(allow)
+fn __is_disallowed_host(host_lc) {
+  if host_lc == "localhost" {
+    return true
+  }
+  if ends_with(host_lc, ".localhost") || ends_with(host_lc, ".local")
+    || ends_with(
+    host_lc,
+    ".internal",
+  ) {
+    return true
+  }
+  if host_lc == "::1" || host_lc == "0:0:0:0:0:0:0:1" {
+    return true
+  }
+  if starts_with(host_lc, "127.") || starts_with(host_lc, "10.")
+    || starts_with(host_lc, "169.254.")
+    || starts_with(host_lc, "192.168.") {
+    return true
+  }
+  if starts_with(host_lc, "172.") {
+    const rest = host_lc[4:len(host_lc)]
+    const dot = text_index_of(rest, ".")
+    if dot > 0 {
+      const octet_str = rest[0:dot]
+      const parsed = try {
+        to_int(octet_str)
+      }
+      if !is_err(parsed) {
+        const octet = unwrap(parsed)
+        if octet >= 16 && octet <= 31 {
+          return true
+        }
+      }
+    }
+  }
+  return false
+}

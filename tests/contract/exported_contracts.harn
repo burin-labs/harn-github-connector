@@ -1,11 +1,14 @@
 import {
   GithubAutoMergeReceipt,
+  GithubBranchHead,
   GithubBranchProtection,
+  GithubBranchViewRequest,
   GithubCheckRollup,
   GithubCheckRun,
   GithubCommitFileAddition,
   GithubCommitFileDeletion,
   GithubCommitSignature,
+  GithubConnectorAuth,
   GithubConnectorError,
   GithubConnectorResult,
   GithubMergeQueueEnqueueReceipt,
@@ -42,16 +45,19 @@ import {
   call,
   call_typed,
   outbound_methods,
-} from "../src/lib"
+} from "../../src/lib"
 
 type ExportedContractCatalog = {
   auto_merge: GithubAutoMergeReceipt,
+  branch_head: GithubBranchHead,
   branch_protection: GithubBranchProtection,
+  branch_view_request: GithubBranchViewRequest,
   check_rollup: GithubCheckRollup,
   check_run: GithubCheckRun,
   commit_addition: GithubCommitFileAddition,
   commit_deletion: GithubCommitFileDeletion,
   commit_signature: GithubCommitSignature,
+  connector_auth: GithubConnectorAuth,
   error: GithubConnectorError,
   merge_queue_entry: GithubMergeQueueEntry,
   merge_queue_enqueue: GithubMergeQueueEnqueueReceipt,
@@ -124,7 +130,8 @@ pipeline test_exported_contract_imports_and_result_narrowing(harness: Harness, t
 
 pipeline test_outbound_method_catalog_is_the_executable_registry(harness: Harness, task) {
   const methods = outbound_methods()
-  assert_eq(len(methods), 88, "every executable route is discoverable")
+  assert_eq(len(methods), 89, "every executable route is discoverable")
+  assert(methods.contains("github.branch.view"), "typed branch-head route is discoverable")
   assert(methods.contains("github.pr.view"), "typed PR route is discoverable")
   assert(
     methods.contains("github.pr.disable_auto_merge"),

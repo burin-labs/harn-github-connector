@@ -3,9 +3,14 @@ import {
   connector_http_rate_limit,
   connector_http_request,
 } from "std/connectors/http"
+import {
+  __default_graphql_url,
+  __github_api_url,
+  __validate_api_base_url,
+  __validate_graphql_url,
+} from "./endpoints"
 import { connector_error } from "./errors"
 import { GITHUB_API_BASE_URL, GITHUB_API_VERSION, GITHUB_USER_AGENT } from "./provider"
-import { text_index_of } from "./text"
 
 /** Policy for allowing the GitHub CLI when direct connector credentials are absent. */
 pub type GithubAuthFallbackPolicy = {allow_gh_auth_fallback?: bool}
@@ -92,7 +97,8 @@ pub fn invalidate_installation_token(runtime: HarnessRuntime, installation_id) {
 }
 
 pub fn __outbound_config(harness: Harness, args) {
-  const api_base_url = args?.api_base_url
+  const auth = args?.auth ?? args
+  const api_base_url = auth?.api_base_url
     ?? harness.env.get_or(
     "GITHUB_API_BASE_URL",
     GITHUB_API_BASE_URL,
@@ -101,11 +107,18 @@ pub fn __outbound_config(harness: Harness, args) {
   if is_err(base_check) {
     return base_check
   }
-  const configured_installation_token = args?.installation_token
-    ?? args?.bindings?.installation_token
-    ?? args?.secrets?.installation_token
+  const graphql_url = auth?.graphql_url
+    ?? harness.env.get("GITHUB_GRAPHQL_URL")
+    ?? __default_graphql_url(api_base_url)
+  const graphql_check = __validate_graphql_url(graphql_url)
+  if is_err(graphql_check) {
+    return graphql_check
+  }
+  const configured_installation_token = auth?.installation_token
+    ?? auth?.bindings?.installation_token
+    ?? auth?.secrets?.installation_token
     ?? harness.env.get("GITHUB_INSTALLATION_TOKEN")
-  const direct_token = configured_installation_token ?? args?.token
+  const direct_token = configured_installation_token ?? auth?.token
   if direct_token != nil && trim(to_string(direct_token)) != "" {
     const auth_identity = if configured_installation_token != nil
       && trim(
@@ -119,43 +132,45 @@ pub fn __outbound_config(harness: Harness, args) {
     return Ok(
       {
         api_base_url: to_string(api_base_url),
+        graphql_url: to_string(graphql_url),
         installation_token: to_string(direct_token),
         token_mode: "direct",
         auth_identity: auth_identity,
-        installation_id: args?.installation_id,
-        now: args?.now,
-        timeout_ms: args?.timeout_ms,
-        rate_limit_max_sleep_seconds: args?.rate_limit_max_sleep_seconds
+        installation_id: auth?.installation_id,
+        now: auth?.now,
+        timeout_ms: auth?.timeout_ms,
+        rate_limit_max_sleep_seconds: auth?.rate_limit_max_sleep_seconds
           ?? DEFAULT_RATE_LIMIT_MAX_SLEEP_SECONDS,
       }
-        + __http_policy_config(args),
+        + __http_policy_config(auth),
     )
   }
-  const app_id = args?.app_id ?? harness.env.get("GITHUB_APP_ID")
-  const installation_id = args?.installation_id ?? harness.env.get("GITHUB_INSTALLATION_ID")
+  const app_id = auth?.app_id ?? harness.env.get("GITHUB_APP_ID")
+  const installation_id = auth?.installation_id ?? harness.env.get("GITHUB_INSTALLATION_ID")
   if app_id == nil || trim(to_string(app_id)) == "" || installation_id == nil
     || trim(
     to_string(installation_id),
   )
     == "" {
-    if __allow_gh_auth_fallback(harness.env, args) {
-      const gh_token = __gh_auth_token(harness.env, harness.process, args)
+    if __allow_gh_auth_fallback(harness.env, auth) {
+      const gh_token = __gh_auth_token(harness.env, harness.process, auth)
       if is_err(gh_token) {
         return gh_token
       }
       return Ok(
         {
           api_base_url: to_string(api_base_url),
+          graphql_url: to_string(graphql_url),
           installation_token: to_string(unwrap(gh_token)),
           token_mode: "gh_auth",
           auth_identity: "user",
           installation_id: nil,
-          now: args?.now,
-          timeout_ms: args?.timeout_ms,
-          rate_limit_max_sleep_seconds: args?.rate_limit_max_sleep_seconds
+          now: auth?.now,
+          timeout_ms: auth?.timeout_ms,
+          rate_limit_max_sleep_seconds: auth?.rate_limit_max_sleep_seconds
             ?? DEFAULT_RATE_LIMIT_MAX_SLEEP_SECONDS,
         }
-          + __http_policy_config(args),
+          + __http_policy_config(auth),
       )
     }
     return connector_error(
@@ -165,21 +180,22 @@ pub fn __outbound_config(harness: Harness, args) {
   }
   const resolved = {
     api_base_url: to_string(api_base_url),
+    graphql_url: to_string(graphql_url),
     app_id: app_id,
     installation_id: installation_id,
-    private_key_pem: args?.private_key_pem,
-    private_key_secret: args?.private_key_secret ?? args?.secrets?.private_key,
-    jwt_alg: args?.jwt_alg ?? "RS256",
-    jwt_backdate_seconds: args?.jwt_backdate_seconds ?? DEFAULT_JWT_BACKDATE_SECONDS,
-    jwt_ttl_seconds: args?.jwt_ttl_seconds ?? DEFAULT_JWT_TTL_SECONDS,
-    token_refresh_skew_seconds: args?.token_refresh_skew_seconds
+    private_key_pem: auth?.private_key_pem,
+    private_key_secret: auth?.private_key_secret ?? auth?.secrets?.private_key,
+    jwt_alg: auth?.jwt_alg ?? "RS256",
+    jwt_backdate_seconds: auth?.jwt_backdate_seconds ?? DEFAULT_JWT_BACKDATE_SECONDS,
+    jwt_ttl_seconds: auth?.jwt_ttl_seconds ?? DEFAULT_JWT_TTL_SECONDS,
+    token_refresh_skew_seconds: auth?.token_refresh_skew_seconds
       ?? DEFAULT_TOKEN_REFRESH_SKEW_SECONDS,
-    now: args?.now,
-    timeout_ms: args?.timeout_ms,
-    rate_limit_max_sleep_seconds: args?.rate_limit_max_sleep_seconds
+    now: auth?.now,
+    timeout_ms: auth?.timeout_ms,
+    rate_limit_max_sleep_seconds: auth?.rate_limit_max_sleep_seconds
       ?? DEFAULT_RATE_LIMIT_MAX_SLEEP_SECONDS,
   }
-    + __http_policy_config(args)
+    + __http_policy_config(auth)
   const token_result = installation_token(harness, resolved)
   if is_err(token_result) {
     return token_result
@@ -221,6 +237,8 @@ fn __http_policy_config(args) {
 pub fn __config_keys() {
   return [
     "api_base_url",
+    "auth",
+    "graphql_url",
     "installation_token",
     "token",
     "bindings",
@@ -311,104 +329,6 @@ pub fn __body_without(args, keys) {
     body.remove(key)
   }
   return body
-}
-
-pub fn __github_api_url(api_base_url, path) {
-  const base = trim(to_string(api_base_url))
-  const prefix = if ends_with(base, "/") {
-    base[0:len(base) - 1]
-  } else {
-    base
-  }
-  if starts_with(path, "/") {
-    return prefix + path
-  }
-  return prefix + "/" + path
-}
-
-@complexity(allow)
-fn __validate_api_base_url(api_base_url) {
-  if api_base_url == nil || trim(to_string(api_base_url)) == "" {
-    return connector_error("invalid_api_base_url", "api_base_url is required")
-  }
-  const url = trim(to_string(api_base_url))
-  if !starts_with(lowercase(url), "https://") {
-    return connector_error("invalid_api_base_url", "api_base_url must use https:// scheme")
-  }
-  const after_scheme = url[8:len(url)]
-  const slash_idx = text_index_of(after_scheme, "/")
-  const host_port = if slash_idx >= 0 {
-    after_scheme[0:slash_idx]
-  } else {
-    after_scheme
-  }
-  const host = __strip_port(host_port)
-  if host == "" {
-    return connector_error("invalid_api_base_url", "api_base_url is missing a host")
-  }
-  const host_lc = lowercase(host)
-  if __is_disallowed_host(host_lc) {
-    return connector_error(
-      "invalid_api_base_url",
-      "api_base_url host `" + host
-        + "` is not allowed (loopback/private/link-local/.internal/.local are blocked)",
-    )
-  }
-  return Ok(true)
-}
-
-fn __strip_port(host_port) {
-  if starts_with(host_port, "[") {
-    const close = text_index_of(host_port, "]")
-    if close >= 0 {
-      return host_port[1:close]
-    }
-    return host_port
-  }
-  const colon = text_index_of(host_port, ":")
-  if colon >= 0 {
-    return host_port[0:colon]
-  }
-  return host_port
-}
-
-@complexity(allow)
-fn __is_disallowed_host(host_lc) {
-  if host_lc == "localhost" {
-    return true
-  }
-  if ends_with(host_lc, ".localhost") || ends_with(host_lc, ".local")
-    || ends_with(
-    host_lc,
-    ".internal",
-  ) {
-    return true
-  }
-  if host_lc == "::1" || host_lc == "0:0:0:0:0:0:0:1" {
-    return true
-  }
-  if starts_with(host_lc, "127.") || starts_with(host_lc, "10.")
-    || starts_with(host_lc, "169.254.")
-    || starts_with(host_lc, "192.168.") {
-    return true
-  }
-  if starts_with(host_lc, "172.") {
-    const rest = host_lc[4:len(host_lc)]
-    const dot = text_index_of(rest, ".")
-    if dot > 0 {
-      const octet_str = rest[0:dot]
-      const parsed = try {
-        to_int(octet_str)
-      }
-      if !is_err(parsed) {
-        const octet = unwrap(parsed)
-        if octet >= 16 && octet <= 31 {
-          return true
-        }
-      }
-    }
-  }
-  return false
 }
 
 pub fn __trim_leading_slash(path) {
@@ -788,6 +708,7 @@ fn __resolve_token_config(config) {
   return Ok(
     {
       api_base_url: to_string(api_base_url),
+      graphql_url: to_string(config?.graphql_url ?? __default_graphql_url(api_base_url)),
       app_id: app_id,
       installation_id: installation_id,
       private_key_pem: config?.private_key_pem,

@@ -1,4 +1,5 @@
-import { __github_api_url, __github_json, __ref_query, __trim_leading_slash } from "./client"
+import { __github_json, __ref_query, __trim_leading_slash } from "./client"
+import { __github_api_url } from "./endpoints"
 import { connector_error } from "./errors"
 
 pub fn __repo_parts(args) {
@@ -65,6 +66,41 @@ pub fn __prove_repository_access(harness: Harness, repo, cfg) {
     return connector_error("invalid_response", "GitHub repository access proof omitted full_name")
   }
   return Ok(true)
+}
+
+/** Read one branch through GitHub's exact Git-ref contract. */
+pub fn __github_branch_view(harness: Harness, args, cfg) {
+  const repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  const r = unwrap(repo)
+  const branch = trim(to_string(args?.branch ?? ""))
+  if branch == "" {
+    return connector_error("schema_drift", "github.branch.view requires a branch")
+  }
+  const branch_ref = "refs/heads/" + branch
+  const response = __github_json(
+    harness,
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + r.owner + "/" + r.name + "/git/ref/heads/" + url_encode(branch),
+    ),
+    nil,
+    cfg,
+  )
+  if is_err(response) {
+    return response
+  }
+  const oid = trim(to_string(response?.object?.sha ?? ""))
+  if response?.ref != branch_ref || response?.object?.type != "commit" || oid == "" {
+    return connector_error(
+      "invalid_response",
+      "github.branch.view expected the requested branch and a commit object",
+    )
+  }
+  return {repo: r.full_name, branch: branch, ref: branch_ref, oid: oid}
 }
 
 pub fn __github_file_view(harness: Harness, args, cfg) {

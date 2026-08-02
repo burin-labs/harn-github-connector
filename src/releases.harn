@@ -1,5 +1,6 @@
-import { __github_api_url, __github_json, __pagination_query } from "./client"
+import { __github_json, __pagination_query } from "./client"
 import { GithubConnectorResult, GithubRelease, GithubReleaseAsset } from "./contracts"
+import { __github_api_url } from "./endpoints"
 import { connector_error } from "./errors"
 import { __is_status_error, __prove_repository_access, __repo_parts } from "./repository"
 

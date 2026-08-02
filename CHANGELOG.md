@@ -2,8 +2,16 @@
 
 ## Unreleased
 
-- Add an exact-head `github.pr.disable_auto_merge` operation whose typed receipt
-  retains queue position and auto-merge restoration evidence.
+- Add an exact branch-head read so release automation can lease the base commit
+  before and during queue mutations.
+- Add an exact-head, exact-base `github.pr.disable_auto_merge` operation whose
+  typed receipt retains queue position and auto-merge restoration evidence.
+- Resolve GitHub Enterprise Server GraphQL calls through `graphql_url` instead
+  of appending `/graphql` to the REST base. Standard `/api/v3` REST endpoints
+  now map to `/api/graphql`; nonstandard installations can set
+  `GITHUB_GRAPHQL_URL` or pass `graphql_url`.
+- Isolate endpoint derivation and outbound host validation in
+  `src/endpoints.harn`; domain modules now import that policy owner directly.
 - Import HTTP policy from `std/connectors/http`. This requires Harn 0.10.51 or
   later.
 - Split webhook lifecycle, pull-request transport and projections, merge-queue

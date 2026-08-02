@@ -2,7 +2,6 @@ import { __api_call_author_mode_body } from "./authoring"
 import {
   __body_without,
   __config_keys,
-  __github_api_url,
   __github_json,
   __github_request,
   __github_text,
@@ -11,6 +10,7 @@ import {
   __ref_query,
   __trim_leading_slash,
 } from "./client"
+import { __github_api_url } from "./endpoints"
 import { connector_error } from "./errors"
 
 /** Return the installation token already resolved by the shared client boundary. */
@@ -228,7 +228,7 @@ pub fn __graphql(harness: Harness, args, cfg) {
   const graph = __github_json(
     harness,
     "POST",
-    __github_api_url(cfg.api_base_url, "/graphql"),
+    cfg.graphql_url,
     {query: args.query, variables: args.variables ?? {}},
     cfg,
   )
