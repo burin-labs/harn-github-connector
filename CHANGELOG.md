@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.6.2 - 2026-08-02
+
+- Fix the GitHub CLI authentication fallback to execute through the typed
+  `HarnessProcess.run` contract. Missing local credentials remain a structured
+  authentication error instead of failing on the removed generic process API.
+
 ## 0.6.0 - 2026-08-02
 
 - Add typed `github.actions.run_rerun` and `actions.workflow_run.rerun`
