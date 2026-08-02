@@ -5,7 +5,10 @@ import { __source_refs } from "./webhook_sources"
 
 const MENTION_HANDLE_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_/"
 
-/** Extract `@user`, `@user/repo`, and `@user#number` references from webhook text. */
+/**
+ * Extract `@handle command args...` mentions with deterministic string
+ * scanning. Returns every `{handle, command, rest}` candidate without I/O.
+ */
 pub fn github_extract_mentions(body) {
   const text = to_string(body ?? "")
   const n = len(text)
@@ -65,6 +68,7 @@ fn __mention_from(handle, text, after_handle, n) {
   return {handle: handle, command: rest_line[0:space], rest: trim(rest_line[space:len(rest_line)])}
 }
 
+/** Build the normalized mention block for webhook bodies that contain mentions. */
 fn __mention_block(event_kind, payload) {
   const body = __mention_body(event_kind, payload)
   if body == nil || trim(to_string(body)) == "" {

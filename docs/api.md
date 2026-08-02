@@ -1140,7 +1140,8 @@ pub fn github_auth_fallback_enabled(
 
 ### fn `github_extract_mentions`
 
-Extract `@user`, `@user/repo`, and `@user#number` references from webhook text.
+Extract `@handle command args...` mentions with deterministic string
+scanning. Returns every `{handle, command, rest}` candidate without I/O.
 
 ```harn
 pub fn github_extract_mentions(body) {

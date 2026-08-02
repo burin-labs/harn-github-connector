@@ -696,20 +696,6 @@ fn __ci_concluded_failed(event_kind, raw) {
   return false
 }
 
-@complexity(allow)
-/**
- * Extract `@handle command args...` mentions from a free-text body using
- * pure string scanning (no network, no regex). Returns a list of
- * `{handle, command, rest}` candidates. A mention is recognized when `@` is at
- * the start of the body or follows whitespace, the handle is a run of
- * `[A-Za-z0-9-_/]`, and (optionally) a command word follows on the same line.
- */
-/**
- * Build the `mention` triage sub-block for events whose body may contain
- * `@handle command` directives. Surfaces ALL @mentions as `candidates`
- * (downstream filters by bot identity) plus the first command for convenience.
- * Returns nil when the event kind has no body or no mentions are found.
- */
 fn __topic(event_kind, action) {
   const prefix = "github." + to_string(event_kind)
   if action == nil || trim(to_string(action)) == "" {

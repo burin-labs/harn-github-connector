@@ -1,0 +1,335 @@
+import { __github_api_url, __github_json } from "./client"
+import {
+  GithubMergeQueueEnqueueReceipt,
+  GithubMergeQueueEntries,
+  GithubMergeQueueEntry,
+  GithubMergeQueueMembership,
+} from "./contracts"
+import { connector_error } from "./errors"
+import { __typed_merge_queue_entry, __validate_pull_identity } from "./pull_request_models"
+import { __repo_parts } from "./repository"
+
+pub fn __github_merge_queue_entries(harness: Harness, args, cfg) {
+  const repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  const r = unwrap(repo)
+  const branch = args?.branch ?? args?.base_branch ?? args?.base
+  if branch == nil || trim(to_string(branch)) == "" {
+    return connector_error(
+      "merge_queue",
+      "github.merge_queue.entries requires branch or base_branch",
+    )
+  }
+  const limit = to_int(args?.limit ?? args?.per_page ?? 100)
+  if limit == nil || limit < 1 || limit > 100 {
+    return connector_error("schema_drift", "github.merge_queue.entries limit must be from 1 to 100")
+  }
+  const response = __github_json(
+    harness,
+    "POST",
+    __github_api_url(cfg.api_base_url, "/graphql"),
+    {
+      query: __merge_queue_entries_query(),
+      variables: {owner: r.owner, repo: r.name, branch: to_string(branch), limit: limit},
+    },
+    cfg,
+  )
+  if is_err(response) {
+    return response
+  }
+  if response?.errors != nil && len(response.errors) > 0 {
+    return connector_error(
+      "graphql",
+      "github merge queue query returned errors: " + json_stringify(response.errors),
+    )
+  }
+  const repository = response?.data?.repository
+  if type_of(repository) != "dict" {
+    return connector_error(
+      "invalid_response",
+      "github merge queue response omitted repository evidence",
+    )
+  }
+  const queue = repository?.mergeQueue
+  if queue == nil {
+    const absent: GithubMergeQueueEntries = {
+      repo: r.full_name,
+      branch: to_string(branch),
+      configured: false,
+      url: nil,
+      entries: [],
+    }
+    return absent
+  }
+  const nodes = queue?.entries?.nodes
+  if type_of(nodes) != "list" {
+    return connector_error("invalid_response", "github merge queue response omitted entries.nodes")
+  }
+  let entries: list<GithubMergeQueueEntry> = []
+  for entry in nodes {
+    const typed = __typed_merge_queue_entry(entry)
+    if is_err(typed) {
+      return typed
+    }
+    entries = entries + [unwrap(typed)]
+  }
+  const result: GithubMergeQueueEntries = {
+    repo: r.full_name,
+    branch: to_string(branch),
+    configured: true,
+    url: to_string(queue?.url ?? ""),
+    entries: entries,
+  }
+  return result
+}
+
+pub fn __github_merge_queue_membership(harness: Harness, args, cfg) {
+  const repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  const r = unwrap(repo)
+  const number = args?.pr_number ?? args?.number ?? args?.pull_number
+  if number == nil {
+    return connector_error(
+      "schema_drift",
+      "github.merge_queue.membership requires pr_number, number, or pull_number",
+    )
+  }
+  let pull = args?.pull
+  if pull == nil {
+    pull = __github_json(
+      harness,
+      "GET",
+      __github_api_url(
+        cfg.api_base_url,
+        "/repos/" + r.owner + "/" + r.name + "/pulls/" + to_string(number),
+      ),
+      nil,
+      cfg,
+    )
+    if is_err(pull) {
+      return pull
+    }
+  }
+  const valid = __validate_pull_identity(pull, "github.merge_queue.membership")
+  if is_err(valid) {
+    return valid
+  }
+  const response = __github_json(
+    harness,
+    "POST",
+    __github_api_url(cfg.api_base_url, "/graphql"),
+    {
+      query: __merge_queue_membership_query(),
+      variables: {owner: r.owner, repo: r.name, number: to_int(number)},
+    },
+    cfg,
+  )
+  if is_err(response) {
+    return response
+  }
+  if response?.errors != nil && len(response.errors) > 0 {
+    return connector_error(
+      "graphql",
+      "github merge queue membership returned errors: " + json_stringify(response.errors),
+    )
+  }
+  const node = response?.data?.repository?.pullRequest
+  if node?.number == nil || to_int(node.number) != to_int(number) {
+    return connector_error(
+      "invalid_response",
+      "github merge queue membership omitted the requested pull request",
+    )
+  }
+  let entry = nil
+  if node?.mergeQueueEntry != nil {
+    const typed = __typed_merge_queue_entry(node.mergeQueueEntry)
+    if is_err(typed) {
+      return typed
+    }
+    entry = unwrap(typed)
+  }
+  const membership: GithubMergeQueueMembership = {
+    repo: r.full_name,
+    pull_number: to_int(number),
+    available: true,
+    queued: entry != nil,
+    auto_merge_armed: node?.autoMergeRequest != nil || pull?.auto_merge != nil,
+    entry: entry,
+    error: nil,
+  }
+  return membership
+}
+
+pub fn __github_merge_queue_enqueue(harness: Harness, args, cfg) {
+  const repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  const r = unwrap(repo)
+  const number = args?.pr_number ?? args?.number ?? args?.pull_number
+  if number == nil {
+    return connector_error(
+      "merge_queue",
+      "github.merge_queue.enqueue requires pr_number, number, or pull_number",
+    )
+  }
+  const expected_head_oid = trim(to_string(args?.expected_head_oid ?? args?.expectedHeadOid ?? ""))
+  if expected_head_oid == "" {
+    return connector_error("schema_drift", "github.merge_queue.enqueue requires expected_head_oid")
+  }
+  const pull = __github_json(
+    harness,
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + r.owner + "/" + r.name + "/pulls/" + to_string(number),
+    ),
+    nil,
+    cfg,
+  )
+  if is_err(pull) {
+    return pull
+  }
+  const valid = __validate_pull_identity(pull, "github.merge_queue.enqueue")
+  if is_err(valid) {
+    return valid
+  }
+  if to_string(pull?.head?.sha ?? "") != expected_head_oid {
+    return connector_error(
+      "stale_head",
+      "pull request head no longer matches expected_head_oid",
+      {expected_head_oid: expected_head_oid, observed_head_oid: pull?.head?.sha},
+    )
+  }
+  if trim(to_string(pull?.node_id ?? "")) == "" {
+    return connector_error(
+      "invalid_response",
+      "github.merge_queue.enqueue response omitted pull request node_id",
+    )
+  }
+  const response = __github_json(
+    harness,
+    "POST",
+    __github_api_url(cfg.api_base_url, "/graphql"),
+    {
+      query: __enqueue_pull_request_mutation(),
+      variables: {
+        input: {
+          pullRequestId: pull.node_id,
+          expectedHeadOid: expected_head_oid,
+          jump: args?.jump ?? false,
+        },
+      },
+    },
+    cfg,
+  )
+  if is_err(response) {
+    return response
+  }
+  if response?.errors != nil && len(response.errors) > 0 {
+    if __graphql_errors_indicate_stale_head(response.errors) {
+      return connector_error(
+        "stale_head",
+        "GitHub rejected merge queue enqueue because the pull request head changed",
+      )
+    }
+    return connector_error(
+      "graphql",
+      "github merge queue enqueue returned errors: " + json_stringify(response.errors),
+    )
+  }
+  const entry = __typed_merge_queue_entry(response?.data?.enqueuePullRequest?.mergeQueueEntry)
+  if is_err(entry) {
+    return entry
+  }
+  const receipt: GithubMergeQueueEnqueueReceipt = {
+    repo: r.full_name,
+    pull_number: to_int(number),
+    expected_head_oid: expected_head_oid,
+    entry: unwrap(entry),
+  }
+  return receipt
+}
+
+fn __merge_queue_entries_query() {
+  return """
+query HarnGithubConnectorMergeQueueEntries($owner: String!, $repo: String!, $branch: String!, $limit: Int!) {
+  repository(owner: $owner, name: $repo) {
+    mergeQueue(branch: $branch) {
+      url
+      entries(first: $limit) {
+        nodes {
+          id
+          position
+          state
+          enqueuedAt
+          jump
+          solo
+          estimatedTimeToMerge
+          headCommit { oid }
+          pullRequest { number url headRefOid baseRefName }
+        }
+      }
+    }
+  }
+}
+"""
+}
+
+fn __merge_queue_membership_query() {
+  return """
+query HarnGithubConnectorMergeQueueMembership($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      number
+      autoMergeRequest { enabledAt mergeMethod }
+      mergeQueueEntry {
+        id
+        position
+        state
+        enqueuedAt
+        jump
+        solo
+        estimatedTimeToMerge
+        headCommit { oid }
+        pullRequest { number url headRefOid baseRefName }
+      }
+    }
+  }
+}
+"""
+}
+
+fn __enqueue_pull_request_mutation() {
+  return """
+mutation HarnGithubConnectorEnqueuePullRequest($input: EnqueuePullRequestInput!) {
+  enqueuePullRequest(input: $input) {
+    mergeQueueEntry {
+      id
+      position
+      state
+      enqueuedAt
+      jump
+      solo
+      estimatedTimeToMerge
+      headCommit { oid }
+      pullRequest { number url headRefOid baseRefName }
+    }
+  }
+}
+"""
+}
+
+pub fn __graphql_errors_indicate_stale_head(errors) {
+  const message = lowercase(json_stringify(errors ?? []))
+  return contains(message, "expected head") || contains(message, "expectedheadoid")
+    || contains(
+    message,
+    "head oid",
+  )
+    || contains(message, "head sha")
+}

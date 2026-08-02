@@ -39,13 +39,28 @@ keep them free of live GitHub secrets and private repository data.
 - [`src/actions.harn`](../src/actions.harn) owns workflow-run and self-hosted
   runner operations; [`src/rest_methods.harn`](../src/rest_methods.harn) owns
   small direct GitHub API operations.
-- [`src/writes.harn`](../src/writes.harn) owns pull-request, file, and commit
-  mutations after author identity has been resolved.
+- [`src/pull_requests.harn`](../src/pull_requests.harn) owns pull-request reads,
+  edits, checks, merges, and branch-protection evidence. Match its requests to
+  GitHub's [pull-request REST contract](https://docs.github.com/en/rest/pulls/pulls).
+- [`src/pull_request_models.harn`](../src/pull_request_models.harn) turns raw
+  GitHub responses into the connector's closed pull-request and check records.
+- [`src/merge_queue.harn`](../src/merge_queue.harn) owns queue membership and
+  enqueue leases; [`src/mergeability.harn`](../src/mergeability.harn) owns the
+  bounded mergeability probe. GitHub's
+  [GraphQL pull-request reference](https://docs.github.com/en/graphql/reference/pulls)
+  defines the provider fields these modules validate.
+- [`src/commits.harn`](../src/commits.harn) owns paginated pull-request commit
+  evidence, signature validation, and atomic signed commits. Keep signature
+  handling aligned with GitHub's
+  [Git commit REST contract](https://docs.github.com/en/rest/git/commits).
+- [`src/writes.harn`](../src/writes.harn) owns small write transports after
+  author identity has been resolved; [`src/issues.harn`](../src/issues.harn)
+  owns issue creation, comments, and template rendering.
 - [`src/contracts.harn`](../src/contracts.harn) owns the closed records returned
   by the public API.
-- [`src/repository.harn`](../src/repository.harn) owns repository identity and
-  access checks; [`src/releases.harn`](../src/releases.harn) owns release
-  lookup, leased metadata edits, and asset listing.
+- [`src/repository.harn`](../src/repository.harn) owns repository identity,
+  access checks, and exact file reads; [`src/releases.harn`](../src/releases.harn)
+  owns release lookup, leased metadata edits, and asset listing.
 - [`src/webhooks.harn`](../src/webhooks.harn) owns inbound webhook validation
   and normalization.
 - [`src/worktree_commit.harn`](../src/worktree_commit.harn) owns atomic commits

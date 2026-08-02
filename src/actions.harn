@@ -142,6 +142,7 @@ pub fn __actions_workflow_run_cancel(harness: Harness, args, cfg) {
   )
 }
 
+/** Resolve the REST prefix for one repository or organization runner scope. */
 fn __runner_scope_prefix(args) {
   const org = args?.org
   if org != nil && trim(to_string(org)) != "" {
@@ -160,6 +161,7 @@ fn __runner_scope_prefix(args) {
   )
 }
 
+/** Dispatch self-hosted runner operations through one permission-aware route. */
 @complexity(allow)
 pub fn __actions_runners_dispatch(harness: Harness, method, args, cfg) {
   const runner_id = args?.runner_id ?? args?.id

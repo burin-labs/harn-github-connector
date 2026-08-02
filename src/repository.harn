@@ -1,4 +1,4 @@
-import { __github_api_url, __github_json } from "./client"
+import { __github_api_url, __github_json, __ref_query, __trim_leading_slash } from "./client"
 import { connector_error } from "./errors"
 
 pub fn __repo_parts(args) {
@@ -65,4 +65,133 @@ pub fn __prove_repository_access(harness: Harness, repo, cfg) {
     return connector_error("invalid_response", "GitHub repository access proof omitted full_name")
   }
   return Ok(true)
+}
+
+pub fn __github_file_view(harness: Harness, args, cfg) {
+  const repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  const r = unwrap(repo)
+  const path = __trim_leading_slash(args?.path ?? "")
+  const ref = trim(to_string(args?.ref ?? ""))
+  if path == "" || ref == "" {
+    return connector_error(
+      "schema_drift",
+      "github.file.view requires a non-empty path and exact ref",
+    )
+  }
+  const content = __github_json(
+    harness,
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + r.owner + "/" + r.name + "/contents/" + path + "?ref=" + url_encode(ref),
+    ),
+    nil,
+    cfg,
+  )
+  if is_err(content) {
+    const error = unwrap_err(content)
+    if __is_status_error(error, 404) {
+      const access = __prove_repository_access(harness, r, cfg)
+      if is_err(access) {
+        return access
+      }
+      return {repo: r.full_name, path: path, ref: ref, state: "absent", found: false, file: nil}
+    }
+    return content
+  }
+  const file = __typed_repository_file(content, ref)
+  if is_err(file) {
+    return file
+  }
+  return {repo: r.full_name, path: path, ref: ref, state: "found", found: true, file: unwrap(file)}
+}
+
+pub fn __repos_get_text(harness: Harness, args, cfg) {
+  const content = __github_json(
+    harness,
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/contents/"
+        + __trim_leading_slash(args.path ?? "")
+        + __ref_query(args),
+    ),
+    nil,
+    cfg,
+  )
+  if is_err(content) {
+    return content
+  }
+  if type_of(content) == "list" {
+    return connector_error(
+      "schema_drift",
+      "repos.get_text requires a file path, but GitHub returned a directory listing",
+    )
+  }
+  const encoding = lowercase(content?.encoding ?? "")
+  if encoding != "base64" {
+    return connector_error(
+      "invalid_response",
+      "repos.get_text only supports base64-encoded GitHub file content",
+    )
+  }
+  const encoded = (content?.content ?? "").replace("\n", "")
+  const decoded = try {
+    base64_decode(encoded)
+  }
+  if is_err(decoded) {
+    return connector_error(
+      "invalid_response",
+      "repos.get_text could not decode base64 file content",
+    )
+  }
+  return {
+    name: content?.name,
+    path: content?.path,
+    sha: content?.sha,
+    size: content?.size,
+    encoding: encoding,
+    ref: args?.ref,
+    text: unwrap(decoded),
+    raw: if args?.include_raw ?? false {
+      content
+    } else {
+      nil
+    },
+  }
+}
+
+fn __typed_repository_file(content, ref) {
+  if type_of(content) != "dict" || content?.type != "file" || content?.encoding != "base64"
+    || trim(
+    to_string(content?.path ?? ""),
+  )
+    == ""
+    || trim(to_string(content?.sha ?? "")) == ""
+    || content?.content == nil {
+    return connector_error("invalid_response", "github.file.view expected one base64-encoded file")
+  }
+  const decoded = try {
+    base64_decode(to_string(content.content).replace("\n", ""))
+  }
+  if is_err(decoded) {
+    return connector_error(
+      "invalid_response",
+      "github.file.view could not decode GitHub file content",
+    )
+  }
+  return Ok(
+    {
+      name: to_string(content?.name ?? ""),
+      path: to_string(content.path),
+      sha: to_string(content.sha),
+      size: to_int(content?.size ?? 0),
+      ref: ref,
+      text: unwrap(decoded),
+      url: to_string(content?.html_url ?? content?.url ?? ""),
+    },
+  )
 }

@@ -1,0 +1,82 @@
+import { __github_api_url, __github_json } from "./client"
+import { GithubMergeability } from "./contracts"
+import { __repo_parts } from "./repository"
+import { __positive_int } from "./validation"
+
+const DEFAULT_MERGEABLE_MAX_ATTEMPTS = 4
+
+const DEFAULT_MERGEABLE_POLL_INTERVAL_MS = 1500
+
+/** Resolve GitHub's asynchronous mergeability state with bounded polling. */
+@complexity(allow)
+pub fn __pull_requests_resolve_mergeable(harness: Harness, args, cfg) {
+  const repo = __repo_parts(args)
+  if is_err(repo) {
+    return __mergeable_envelope(false, nil, "unknown", 0, false, nil, unwrap_err(repo))
+  }
+  const r = unwrap(repo)
+  const number = args?.pull_number ?? args?.number ?? args?.pr_number
+  if number == nil {
+    return __mergeable_envelope(
+      false,
+      nil,
+      "unknown",
+      0,
+      false,
+      nil,
+      {
+        code: "schema_drift",
+        category: "schema_drift",
+        message: "resolve_mergeable requires pull_number",
+      },
+    )
+  }
+  const max_attempts = max(1, __positive_int(args?.max_attempts, DEFAULT_MERGEABLE_MAX_ATTEMPTS))
+  const poll_interval = __positive_int(args?.poll_interval_ms, DEFAULT_MERGEABLE_POLL_INTERVAL_MS)
+  const url = __github_api_url(
+    cfg.api_base_url,
+    "/repos/" + r.owner + "/" + r.name + "/pulls/" + to_string(number),
+  )
+  let attempt = 0
+  let last = nil
+  while attempt < max_attempts {
+    attempt = attempt + 1
+    const pull = __github_json(harness, "GET", url, nil, cfg)
+    if is_err(pull) {
+      return __mergeable_envelope(false, nil, "unknown", attempt, false, nil, unwrap_err(pull))
+    }
+    last = pull
+    const mergeable = pull?.mergeable
+    const state = pull?.mergeable_state ?? "unknown"
+    if mergeable != nil && state != "unknown" {
+      return __mergeable_envelope(true, mergeable, state, attempt, true, pull, nil)
+    }
+    if attempt < max_attempts && poll_interval > 0 {
+      harness.clock.sleep_ms(poll_interval)
+    }
+  }
+  return __mergeable_envelope(
+    true,
+    last?.mergeable,
+    last?.mergeable_state ?? "unknown",
+    attempt,
+    false,
+    last,
+    nil,
+  )
+}
+
+fn __mergeable_envelope(ok, mergeable, mergeable_state, attempts, resolved, raw, error) {
+  if !ok {
+    return Err(error)
+  }
+  const value: GithubMergeability = {
+    mergeable: mergeable,
+    mergeable_state: mergeable_state,
+    is_conflict: mergeable_state == "dirty",
+    attempts: attempts,
+    resolved: resolved,
+    raw: raw,
+  }
+  return value
+}

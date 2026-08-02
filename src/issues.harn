@@ -1,0 +1,128 @@
+import { __body_without, __config_keys, __github_api_url, __github_json } from "./client"
+import { connector_error } from "./errors"
+import { __typed_user } from "./pull_request_models"
+import { __repo_parts } from "./repository"
+
+pub fn __github_issue_create(harness: Harness, args, cfg) {
+  const repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  const r = unwrap(repo)
+  return __github_json(
+    harness,
+    "POST",
+    __github_api_url(cfg.api_base_url, "/repos/" + r.owner + "/" + r.name + "/issues"),
+    __body_without(
+      args,
+      __config_keys() + ["repo", "repository", "repo_ref", "repo_full_name", "owner"],
+    ),
+    cfg,
+  )
+}
+
+pub fn __github_issue_comment(harness: Harness, args, cfg) {
+  const repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  const r = unwrap(repo)
+  const number = args?.issue_number ?? args?.number ?? args?.pr_number ?? args?.pull_number
+  if number == nil {
+    return connector_error(
+      "schema_drift",
+      "github issue comment helpers require issue_number, number, pr_number, or pull_number",
+    )
+  }
+  if trim(to_string(args?.body ?? "")) == "" {
+    return connector_error("schema_drift", "github issue comment helpers require a non-empty body")
+  }
+  const comment = __github_json(
+    harness,
+    "POST",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + r.owner + "/" + r.name + "/issues/" + to_string(number) + "/comments",
+    ),
+    {body: args?.body},
+    cfg,
+  )
+  if is_err(comment) {
+    return comment
+  }
+  if comment?.id == nil || comment?.body == nil {
+    return connector_error("invalid_response", "github comment response omitted id or body")
+  }
+  return {
+    repo: r.full_name,
+    issue_number: to_int(number),
+    id: comment.id,
+    body: to_string(comment.body),
+    url: to_string(comment?.html_url ?? comment?.url ?? ""),
+    user: __typed_user(comment?.user),
+    created_at: comment?.created_at,
+    updated_at: comment?.updated_at,
+  }
+}
+
+pub fn __issues_create_with_template(harness: Harness, args, cfg) {
+  const template = args?.template ?? {}
+  const title_template = if type_of(template) == "dict" {
+    template?.title ?? args?.title_template ?? args?.title ?? "Merge Captain follow-up"
+  } else {
+    args?.title_template ?? args?.title ?? "Merge Captain follow-up"
+  }
+  const body_template = if type_of(template) == "dict" {
+    template?.body ?? args?.body_template ?? ""
+  } else {
+    to_string(template)
+  }
+  let body = {
+    title: __render_template(title_template, args?.vars ?? {}),
+    body: __render_template(body_template, args?.vars ?? {}),
+  }
+  const labels = args?.labels
+    ?? if type_of(template) == "dict" {
+    template?.labels
+  } else {
+    nil
+  }
+  if labels != nil {
+    body["labels"] = labels
+  }
+  const assignees = args?.assignees
+    ?? if type_of(template) == "dict" {
+    template?.assignees
+  } else {
+    nil
+  }
+  if assignees != nil {
+    body["assignees"] = assignees
+  }
+  const milestone = args?.milestone
+    ?? if type_of(template) == "dict" {
+    template?.milestone
+  } else {
+    nil
+  }
+  if milestone != nil {
+    body["milestone"] = milestone
+  }
+  return __github_json(
+    harness,
+    "POST",
+    __github_api_url(cfg.api_base_url, "/repos/" + args.owner + "/" + args.repo + "/issues"),
+    body,
+    cfg,
+  )
+}
+
+fn __render_template(template, vars) {
+  let rendered = to_string(template ?? "")
+  for entry in (vars ?? {}).entries() {
+    const value = to_string(entry.value ?? "")
+    rendered = rendered.replace("{{" + to_string(entry.key) + "}}", value)
+    rendered = rendered.replace("${" + to_string(entry.key) + "}", value)
+  }
+  return rendered
+}

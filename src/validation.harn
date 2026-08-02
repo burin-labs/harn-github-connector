@@ -21,3 +21,14 @@ pub fn __nonnegative_decimal(value) {
   }
   return to_int(raw)
 }
+
+pub fn __positive_int(value, fallback) {
+  if value == nil {
+    return fallback
+  }
+  const parsed = to_int(value) ?? fallback
+  if parsed < 0 {
+    return 0
+  }
+  return parsed
+}
