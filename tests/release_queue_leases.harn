@@ -1,0 +1,192 @@
+import { github_branch_head, pulls_disable_auto_merge } from "../src/lib"
+
+const BASE_OID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+const HEAD_OID = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+pipeline test_branch_and_auto_merge_disable_are_exactly_leased(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  const base = "https://github-api.test"
+  const auth = {api_base_url: base, installation_token: "github-installation-token"}
+  harness.testing.http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/branches/main",
+    {
+      responses: [
+        {status: 200, body: json_stringify({name: "main", commit: {sha: BASE_OID}})},
+        {status: 200, body: json_stringify({name: "main", commit: {sha: BASE_OID}})},
+        {status: 200, body: json_stringify({name: "main", commit: {sha: BASE_OID}})},
+        {status: 200, body: json_stringify({name: "main", commit: {sha: BASE_OID}})},
+      ],
+    },
+  )
+  harness.testing.http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/pulls/42",
+    {
+      responses: [
+        {
+          status: 200,
+          body: json_stringify(
+            {
+              number: 42,
+              node_id: "PR_42",
+              title: "Queued",
+              state: "open",
+              html_url: "https://github.com/octo-org/octo-repo/pull/42",
+              auto_merge: {merge_method: "squash"},
+              base: {ref: "main", sha: BASE_OID, repo: {full_name: "octo-org/octo-repo"}},
+              head: {ref: "queued", sha: HEAD_OID, repo: {full_name: "octo-org/octo-repo"}},
+            },
+          ),
+        },
+        {
+          status: 200,
+          body: json_stringify(
+            {
+              number: 42,
+              node_id: "PR_42",
+              title: "Changed",
+              state: "open",
+              auto_merge: {merge_method: "squash"},
+              base: {ref: "main", sha: BASE_OID, repo: {full_name: "octo-org/octo-repo"}},
+              head: {ref: "queued", sha: "changed-head", repo: {full_name: "octo-org/octo-repo"}},
+            },
+          ),
+        },
+      ],
+    },
+  )
+  harness.testing.http_mock(
+    "POST",
+    base + "/graphql",
+    {
+      status: 200,
+      body: json_stringify(
+        {
+          data: {
+            disablePullRequestAutoMerge: {
+              pullRequest: {
+                number: 42,
+                url: "https://github.com/octo-org/octo-repo/pull/42",
+                headRefOid: HEAD_OID,
+                baseRefName: "main",
+                autoMergeRequest: nil,
+              },
+            },
+          },
+        },
+      ),
+    },
+  )
+  const branch = unwrap(github_branch_head(harness, "octo-org", "octo-repo", "main", auth))
+  assert_eq(branch.oid, BASE_OID)
+  const disabled = unwrap(
+    pulls_disable_auto_merge(
+      harness,
+      "octo-org",
+      "octo-repo",
+      42,
+      auth
+        + {
+        expected_head_oid: HEAD_OID,
+        base_branch: "main",
+        expected_base_oid: BASE_OID,
+        restore_merge_method: "SQUASH",
+      },
+    ),
+  )
+  assert_eq(disabled.state, "disabled")
+  assert_eq(disabled.observed_base_oid, BASE_OID)
+  const stale = pulls_disable_auto_merge(
+    harness,
+    "octo-org",
+    "octo-repo",
+    42,
+    auth
+      + {
+      expected_head_oid: HEAD_OID,
+      base_branch: "main",
+      expected_base_oid: BASE_OID,
+      restore_merge_method: "SQUASH",
+    },
+  )
+  assert(is_err(stale))
+  assert_eq(unwrap_err(stale).code, "stale_head")
+  const graph_calls = harness.testing.http_mock_calls().filter(
+    { item -> item.method == "POST" && item.url == base + "/graphql" },
+  )
+    .to_list()
+  assert_eq(len(graph_calls), 1, "stale pull lease does not issue a second mutation")
+  harness.testing.http_mock_clear()
+}
+
+pipeline test_uncertain_disable_is_compensated_before_failure(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  const base = "https://github-api.test"
+  const auth = {api_base_url: base, installation_token: "github-installation-token"}
+  harness.testing.http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/branches/main",
+    {status: 200, body: json_stringify({name: "main", commit: {sha: BASE_OID}})},
+  )
+  const pull = {
+    number: 42,
+    node_id: "PR_42",
+    title: "Queued",
+    state: "open",
+    base: {ref: "main", sha: BASE_OID, repo: {full_name: "octo-org/octo-repo"}},
+    head: {ref: "queued", sha: HEAD_OID, repo: {full_name: "octo-org/octo-repo"}},
+  }
+  harness.testing.http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/pulls/42",
+    {
+      responses: [
+        {status: 200, body: json_stringify(pull + {auto_merge: {merge_method: "squash"}})},
+        {status: 200, body: json_stringify(pull + {auto_merge: nil})},
+      ],
+    },
+  )
+  harness.testing.http_mock(
+    "POST",
+    base + "/graphql",
+    {
+      responses: [
+        {status: 200, body: json_stringify({data: {disablePullRequestAutoMerge: nil}})},
+        {
+          status: 200,
+          body: json_stringify(
+            {
+              data: {
+                enablePullRequestAutoMerge: {
+                  pullRequest: {
+                    number: 42,
+                    autoMergeRequest: {enabledAt: "2026-08-02T00:00:00Z", mergeMethod: "SQUASH"},
+                  },
+                },
+              },
+            },
+          ),
+        },
+      ],
+    },
+  )
+  const result = pulls_disable_auto_merge(
+    harness,
+    "octo-org",
+    "octo-repo",
+    42,
+    auth
+      + {
+      expected_head_oid: HEAD_OID,
+      base_branch: "main",
+      expected_base_oid: BASE_OID,
+      restore_merge_method: "SQUASH",
+    },
+  )
+  assert(is_err(result))
+  assert_eq(unwrap_err(result).code, "disable_unverified")
+  assert_eq(unwrap_err(result).compensation_state, "restored")
+  harness.testing.http_mock_clear()
+}

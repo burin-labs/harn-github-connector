@@ -1,5 +1,7 @@
 import {
+  GithubAutoMergeDisableReceipt,
   GithubAutoMergeReceipt,
+  GithubBranchHead,
   GithubBranchProtection,
   GithubCheckRollup,
   GithubCheckRun,
@@ -45,7 +47,9 @@ import {
 } from "../src/lib"
 
 type ExportedContractCatalog = {
+  auto_merge_disable: GithubAutoMergeDisableReceipt,
   auto_merge: GithubAutoMergeReceipt,
+  branch_head: GithubBranchHead,
   branch_protection: GithubBranchProtection,
   check_rollup: GithubCheckRollup,
   check_run: GithubCheckRun,
