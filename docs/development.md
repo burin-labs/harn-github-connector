@@ -36,9 +36,9 @@ keep them free of live GitHub secrets and private repository data.
   pagination, and rate-limit handling.
 - [`src/authoring.harn`](../src/authoring.harn) applies the selected human or
   bot identity to GitHub write bodies.
-- [`src/actions.harn`](../src/actions.harn) and
-  [`src/rest_methods.harn`](../src/rest_methods.harn) own direct GitHub API
-  operations.
+- [`src/actions.harn`](../src/actions.harn) owns workflow-run and self-hosted
+  runner operations; [`src/rest_methods.harn`](../src/rest_methods.harn) owns
+  small direct GitHub API operations.
 - [`src/writes.harn`](../src/writes.harn) owns pull-request, file, and commit
   mutations after author identity has been resolved.
 - [`src/contracts.harn`](../src/contracts.harn) owns the closed records returned

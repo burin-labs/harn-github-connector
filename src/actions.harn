@@ -3,6 +3,7 @@ import {
   __config_keys,
   __github_api_url,
   __github_json,
+  __github_text,
   __pagination_query,
   __workflow_run_jobs_query,
   __workflow_runs_query,
@@ -15,7 +16,8 @@ import {
   GithubWorkflowStep,
 } from "./contracts"
 import { connector_error } from "./errors"
-import { __actions_run_id, __positive_decimal } from "./validation"
+import { __repo_parts } from "./repository"
+import { __actions_run_id, __nonnegative_decimal, __positive_decimal } from "./validation"
 
 pub fn __actions_workflow_dispatch(harness: Harness, args, cfg) {
   const workflow_id = args?.workflow_id ?? args?.workflow ?? args?.workflow_file
@@ -473,4 +475,255 @@ pub fn __typed_workflow_job(job) -> GithubConnectorResult<GithubWorkflowJob> {
       steps: steps,
     },
   )
+}
+
+pub fn __github_actions_runs(harness: Harness, args, cfg) {
+  const repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  const r = unwrap(repo)
+  const per_page = if args?.per_page == nil {
+    30
+  } else {
+    __positive_decimal(args.per_page, 100)
+  }
+  const page = if args?.page == nil {
+    1
+  } else {
+    __positive_decimal(args.page, nil)
+  }
+  if per_page == nil {
+    return connector_error(
+      "schema_drift",
+      "github.actions.runs per_page must be an integer from 1 to 100",
+    )
+  }
+  if page == nil {
+    return connector_error("schema_drift", "github.actions.runs page must be a positive integer")
+  }
+  const response = __actions_workflow_runs_list(harness, args + {owner: r.owner, repo: r.name}, cfg)
+  if is_err(response) {
+    return response
+  }
+  if type_of(response) != "dict" || response?.total_count == nil
+    || type_of(response?.workflow_runs)
+    != "list" {
+    return connector_error(
+      "invalid_response",
+      "github.actions.runs expected total_count and workflow_runs",
+    )
+  }
+  const total_count = __nonnegative_decimal(response.total_count)
+  if total_count == nil {
+    return connector_error(
+      "invalid_response",
+      "github.actions.runs expected a non-negative total_count",
+    )
+  }
+  let runs: list<GithubWorkflowRun> = []
+  for run in response.workflow_runs {
+    const typed = __typed_workflow_run(r.full_name, run)
+    if is_err(typed) {
+      return typed
+    }
+    runs = runs + [unwrap(typed)]
+  }
+  const workflow_id = args?.workflow_id ?? args?.workflow ?? args?.workflow_file
+  const result: GithubWorkflowRuns = {
+    repo: r.full_name,
+    workflow_id: if workflow_id == nil {
+      nil
+    } else {
+      to_string(workflow_id)
+    },
+    total_count: total_count,
+    runs: runs,
+    page: page,
+    per_page: per_page,
+  }
+  return result
+}
+
+pub fn __github_actions_run(harness: Harness, args, cfg) {
+  const repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  const r = unwrap(repo)
+  const run = __actions_workflow_run_get(harness, args + {owner: r.owner, repo: r.name}, cfg)
+  if is_err(run) {
+    return run
+  }
+  const typed = __typed_workflow_run(r.full_name, run)
+  if is_err(typed) {
+    return typed
+  }
+  return unwrap(typed)
+}
+
+pub fn __github_actions_run_jobs(harness: Harness, args, cfg) {
+  const repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  const r = unwrap(repo)
+  const response = __actions_workflow_run_jobs(harness, args + {owner: r.owner, repo: r.name}, cfg)
+  if is_err(response) {
+    return response
+  }
+  if type_of(response?.jobs) != "list" || response?.total_count == nil {
+    return connector_error(
+      "invalid_response",
+      "github.actions.run_jobs expected total_count and jobs",
+    )
+  }
+  let jobs = []
+  for job in response.jobs {
+    const typed = __typed_workflow_job(job)
+    if is_err(typed) {
+      return typed
+    }
+    jobs = jobs + [unwrap(typed)]
+  }
+  return {
+    repo: r.full_name,
+    run_id: __actions_run_id(args?.run_id),
+    total_count: to_int(response.total_count),
+    jobs: jobs,
+    page: if args?.page == nil {
+      1
+    } else {
+      to_int(args.page)
+    },
+    per_page: if args?.per_page == nil {
+      30
+    } else {
+      to_int(args.per_page)
+    },
+  }
+}
+
+pub fn __github_actions_run_cancel(harness: Harness, args, cfg) {
+  const repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  const r = unwrap(repo)
+  const run_id = __actions_run_id(args?.run_id)
+  if run_id == nil {
+    return connector_error("schema_drift", "github.actions.run_cancel requires a positive run_id")
+  }
+  const cancelled = __actions_workflow_run_cancel(
+    harness,
+    args + {owner: r.owner, repo: r.name, run_id: run_id},
+    cfg,
+  )
+  if is_err(cancelled) {
+    return cancelled
+  }
+  const receipt: GithubWorkflowCancelReceipt = {
+    repo: r.full_name,
+    run_id: run_id,
+    accepted: true,
+    state: "cancel_requested",
+  }
+  return receipt
+}
+
+pub fn __github_actions_logs(harness: Harness, args, cfg) {
+  const repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  const r = unwrap(repo)
+  let run_id = args?.run_id
+  const check_id = args?.check_id ?? args?.check_run_id
+  let check_run = nil
+  if (run_id == nil || trim(to_string(run_id)) == "") && check_id != nil {
+    check_run = __github_json(
+      harness,
+      "GET",
+      __github_api_url(
+        cfg.api_base_url,
+        "/repos/" + r.owner + "/" + r.name + "/check-runs/" + to_string(check_id),
+      ),
+      nil,
+      cfg,
+    )
+    if is_err(check_run) {
+      return check_run
+    }
+    run_id = __extract_actions_run_id(check_run?.details_url ?? check_run?.html_url)
+  }
+  if run_id == nil || trim(to_string(run_id)) == "" {
+    return connector_error(
+      "schema_drift",
+      "github.actions.logs requires run_id or a check_id with an actions run URL",
+    )
+  }
+  const logs = __github_text(
+    harness,
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + r.owner + "/" + r.name + "/actions/runs/" + to_string(run_id) + "/logs"
+        + __pagination_query(
+        args,
+      ),
+    ),
+    cfg,
+    args?.accept ?? "application/vnd.github+json",
+  )
+  if is_err(logs) {
+    return logs
+  }
+  return {
+    repo: r.full_name,
+    run_id: run_id,
+    check_id: check_id,
+    check_run: check_run,
+    content: logs,
+    truncated: false,
+    page: args?.page,
+    per_page: args?.per_page,
+  }
+}
+
+pub fn __extract_actions_run_id(url) {
+  if url == nil || !contains(to_string(url), "/actions/runs/") {
+    return nil
+  }
+  const parts = split(to_string(url), "/actions/runs/")
+  if len(parts) < 2 {
+    return nil
+  }
+  const rest = split(parts[1], "/")[0]
+  const parsed = try {
+    to_int(rest)
+  }
+  if is_err(parsed) {
+    return rest
+  }
+  return unwrap(parsed)
+}
+
+pub fn __duration_seconds(started_at, completed_at) {
+  if started_at == nil || completed_at == nil {
+    return nil
+  }
+  const start = try {
+    to_int(date_parse(to_string(started_at)))
+  }
+  const done = try {
+    to_int(date_parse(to_string(completed_at)))
+  }
+  if is_err(start) || is_err(done) {
+    return nil
+  }
+  const duration = unwrap(done) - unwrap(start)
+  if duration < 0 {
+    return nil
+  }
+  return duration
 }
