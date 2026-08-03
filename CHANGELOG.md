@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.6.7 - 2026-08-02
+
 - Export closed file and latest-release lookup contracts plus named typed
   helpers. Accessible absence remains distinct from masked repositories and
   transport failure. Found and absent variants are discriminated unions, so

@@ -23,7 +23,7 @@ harn --version
 Add the released connector:
 
 ```sh
-harn add github.com/burin-labs/harn-github-connector@v0.6.6
+harn add github.com/burin-labs/harn-github-connector@v0.6.7
 ```
 
 For local multi-repo development, use a path dependency:
