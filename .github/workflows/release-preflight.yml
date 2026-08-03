@@ -1,0 +1,103 @@
+name: Release preflight
+
+# release.yml is triggered by the tag push, so every gate it runs -- the
+# harn.toml version match, the CHANGELOG heading, and `harn package verify` --
+# executes against an object that is already immutable and signed. When one of
+# those gates fails there is no way to repair it in place: the version is burned
+# and the tag is left with no release behind it. v0.6.7 was stranded exactly
+# that way by a release-gate test that only failed under the release job's
+# environment, and CI stayed green on the same commit throughout.
+#
+# This workflow runs the identical script against main, before any tag exists,
+# so the answer to "would tagging this commit publish cleanly?" is already known
+# when someone reaches for `git tag`. The tag-head guard is off because main
+# legitimately moves ahead of the last release tag; release.yml still enforces
+# it once the tag is real.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-preflight-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  preflight:
+    name: Verify main is releasable
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+
+      - name: Read Harn version
+        id: harn-version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < .harn-version)"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Cache harn-cli
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo-harn/${{ steps.harn-version.outputs.version }}
+          key: harn-cli-${{ runner.os }}-${{ steps.harn-version.outputs.version }}-${{ hashFiles('.harn-version') }}
+          restore-keys: |
+            harn-cli-${{ runner.os }}-${{ steps.harn-version.outputs.version }}-
+
+      - name: Install harn-cli
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bash .github/scripts/install-harn.sh "${{ steps.harn-version.outputs.version }}"
+
+      - name: Resolve the tag this commit would publish
+        id: prospective
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(python3 - <<'PY'
+          from pathlib import Path
+          import re
+          import sys
+
+          source = Path("harn.toml").read_text(encoding="utf-8")
+          match = re.search(r'(?ms)^\[package\]\s+.*?^version\s*=\s*"([^"]+)"', source)
+          if not match:
+              print("could not find [package].version in harn.toml", file=sys.stderr)
+              sys.exit(1)
+          print(match.group(1))
+          PY
+          )"
+          echo "tag=v${version}" >> "${GITHUB_OUTPUT}"
+          echo "Preflighting v${version}"
+
+      - name: Verify the release gate would pass
+        env:
+          # main is expected to sit ahead of the last release tag; release.yml
+          # applies this guard once a real tag exists.
+          CHECK_RELEASE_REQUIRE_TAG_HEAD: "false"
+        run: scripts/check-release.sh "${{ steps.prospective.outputs.tag }}"
+
+      - name: Upload preflight receipt
+        if: ${{ always() && hashFiles('.harn/receipts/package-verify.json') != '' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: release-preflight-${{ steps.prospective.outputs.tag }}
+          path: .harn/receipts/package-verify.json
+          if-no-files-found: error
+          retention-days: 14

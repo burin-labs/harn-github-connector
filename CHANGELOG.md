@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Run the release gate against `main` before a tag exists. `release.yml` is
+  triggered by the tag push, so the version match, the CHANGELOG heading, and
+  `harn package verify` all run against an object that is already immutable and
+  signed; a gate that fails there burns the version and strands the tag, which
+  is how v0.6.1 and v0.6.7 ended up with no release behind them. The preflight
+  runs the same `scripts/check-release.sh` on every push to `main`, deriving the
+  prospective tag from `harn.toml`, so whether a commit is releasable is known
+  before anyone reaches for `git tag`.
+
 - Have the release gate write a package verification receipt and upload it from
   the release job. The human-readable summary names the failing check and
   nothing else, so the failed v0.6.7 release reported `package tests: fail` with
