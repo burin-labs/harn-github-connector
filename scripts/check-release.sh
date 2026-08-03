@@ -58,4 +58,7 @@ if [ "${CHECK_RELEASE_REQUIRE_TAG_HEAD:-false}" = "true" ] \
   fi
 fi
 
-harn package verify . --strict
+# The human-readable summary names the failing check and nothing else, so a
+# failed release cannot say which test failed. The receipt carries each check's
+# stdout, and the release job uploads it whatever the outcome.
+harn package verify . --strict --receipt-out .harn/receipts/package-verify.json

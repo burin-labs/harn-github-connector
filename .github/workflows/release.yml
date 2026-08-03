@@ -75,6 +75,15 @@ jobs:
           CHECK_RELEASE_REQUIRE_TAG_HEAD: "true"
         run: scripts/check-release.sh "${{ steps.release.outputs.tag }}"
 
+      - name: Upload verification receipt
+        if: ${{ always() && hashFiles('.harn/receipts/package-verify.json') != '' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: release-package-verify-${{ steps.release.outputs.tag }}
+          path: .harn/receipts/package-verify.json
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Extract changelog notes
         shell: bash
         env:
