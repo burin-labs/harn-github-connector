@@ -1,0 +1,41 @@
+import { call } from "../api"
+import {
+  GithubConnectorResult,
+  GithubOAuthDeviceCodeRequest,
+  GithubOAuthDevicePollRequest,
+  GithubOAuthExchangeCodeRequest,
+  GithubOAuthRefreshRequest,
+} from "../contracts"
+import { __request_args } from "../request_options"
+
+/** Begin GitHub's user OAuth device flow. */
+pub fn oauth_user_device_code(
+  harness: Harness,
+  request: GithubOAuthDeviceCodeRequest,
+) -> GithubConnectorResult<unknown> {
+  return call(harness, "oauth.user.device_code", __request_args(request))
+}
+
+/** Poll one GitHub user OAuth device flow. */
+pub fn oauth_user_device_poll(
+  harness: Harness,
+  request: GithubOAuthDevicePollRequest,
+) -> GithubConnectorResult<unknown> {
+  return call(harness, "oauth.user.device_poll", __request_args(request))
+}
+
+/** Exchange one GitHub user OAuth web-flow code. */
+pub fn oauth_user_exchange_code(
+  harness: Harness,
+  request: GithubOAuthExchangeCodeRequest,
+) -> GithubConnectorResult<unknown> {
+  return call(harness, "oauth.user.exchange_code", __request_args(request))
+}
+
+/** Refresh one expiring GitHub user token. Persist the rotated refresh token. */
+pub fn oauth_user_refresh(
+  harness: Harness,
+  request: GithubOAuthRefreshRequest,
+) -> GithubConnectorResult<unknown> {
+  return call(harness, "oauth.user.refresh", __request_args(request))
+}

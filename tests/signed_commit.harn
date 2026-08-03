@@ -1,15 +1,16 @@
 import {
+  GithubClientOptions,
   GithubCommitFileAddition,
   GithubCommitFileDeletion,
   GithubSignedCommitRequest,
   github_create_signed_commit,
-} from "../src/lib"
+} from "../src/facade"
 
-fn auth(base: string) -> dict {
+fn auth(base: string) -> GithubClientOptions {
   return {api_base_url: base, installation_token: "github-app-installation-token"}
 }
 
-fn request() -> GithubSignedCommitRequest {
+fn request(base: string) -> GithubSignedCommitRequest {
   const additions: list<GithubCommitFileAddition> = [
     {path: ".harn-version", contents_base64: base64_encode("v0.10.8\n")},
     {path: "VERSION", contents_base64: base64_encode("0.10.8\n")},
@@ -24,6 +25,7 @@ fn request() -> GithubSignedCommitRequest {
     body: "Automated runtime update",
     additions: additions,
     deletions: deletions,
+    options: auth(base),
   }
 }
 
@@ -55,7 +57,7 @@ pipeline test_create_signed_commit_uses_atomic_github_signed_mutation(harness: H
       ),
     },
   )
-  const receipt = unwrap(github_create_signed_commit(harness, request(), auth(base)))
+  const receipt = unwrap(github_create_signed_commit(harness, request(base)))
   assert_eq(receipt.oid, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "commit oid")
   assert_eq(receipt.signature_valid, true, "signature valid")
   assert_eq(receipt.signed_by_github, true, "signed by GitHub")
@@ -117,7 +119,7 @@ pipeline test_create_signed_commit_fails_closed_on_unverified_signature(harness:
       ),
     },
   )
-  const result = github_create_signed_commit(harness, request(), auth(base))
+  const result = github_create_signed_commit(harness, request(base))
   assert(is_err(result), "unverified commit rejected")
   assert_eq(unwrap_err(result).code, "signature_invalid", "signature error code")
   harness.testing.http_mock_clear()
@@ -132,12 +134,12 @@ pipeline test_create_signed_commit_rejects_overlapping_changes_before_network(
     {path: "VERSION", contents_base64: base64_encode("0.10.8\n")},
   ]
   const deletions: list<GithubCommitFileDeletion> = [{path: "VERSION"}]
-  const overlapping: GithubSignedCommitRequest = request()
+  const overlapping: GithubSignedCommitRequest = request("https://api.github.test")
     + {
     additions: additions,
     deletions: deletions,
   }
-  const result = github_create_signed_commit(harness, overlapping, auth("https://api.github.test"))
+  const result = github_create_signed_commit(harness, overlapping)
   assert(is_err(result), "overlapping change rejected")
   assert_eq(unwrap_err(result).code, "schema_drift", "overlap error code")
   assert_eq(len(harness.testing.http_mock_calls()), 0, "no network request")

@@ -1,0 +1,100 @@
+import "../client"
+import "../contracts"
+import { __err } from "../errors"
+import "./shared"
+
+pub fn __github_branch_view(harness: Harness, args, cfg) {
+  const repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  const r = unwrap(repo)
+  const branch = trim(to_string(args?.branch ?? args?.base_branch ?? ""))
+  if branch == "" {
+    return __err("schema_drift", "github.branch.view requires branch")
+  }
+  return __github_branch_head_raw(harness, r, branch, cfg)
+}
+
+pub fn __github_branch_compare_trees(harness: Harness, args, cfg) {
+  const repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  const r = unwrap(repo)
+  const left_ref = trim(to_string(args?.left_ref ?? ""))
+  const right_ref = trim(to_string(args?.right_ref ?? ""))
+  if left_ref == "" || right_ref == "" {
+    return __err("schema_drift", "github.branch.compare_trees requires left_ref and right_ref")
+  }
+  const left = __github_commit_tree_raw(harness, r, left_ref, cfg)
+  if is_err(left) {
+    return left
+  }
+  const right = __github_commit_tree_raw(harness, r, right_ref, cfg)
+  if is_err(right) {
+    return right
+  }
+  const l = unwrap(left)
+  const rr = unwrap(right)
+  const comparison: GithubBranchTreeComparison = {
+    repo: r.full_name,
+    left_ref: left_ref,
+    left_oid: l.oid,
+    left_tree_oid: l.tree_oid,
+    right_ref: right_ref,
+    right_oid: rr.oid,
+    right_tree_oid: rr.tree_oid,
+    equal: l.tree_oid == rr.tree_oid,
+  }
+  return comparison
+}
+
+pub fn __github_branch_head_raw(harness: Harness, repo, branch, cfg) {
+  const value = __github_json(
+    harness,
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + repo.owner + "/" + repo.name + "/branches/" + url_encode(branch),
+    ),
+    nil,
+    cfg,
+  )
+  if is_err(value) {
+    return value
+  }
+  const oid = trim(to_string(value?.commit?.sha ?? ""))
+  if oid == "" {
+    return __err("invalid_response", "GitHub branch response omitted commit.sha")
+  }
+  const result: GithubBranchHead = {
+    repo: repo.owner + "/" + repo.name,
+    branch: branch,
+    oid: oid,
+    url: to_string(value?.html_url ?? value?.commit?.html_url ?? ""),
+  }
+  return result
+}
+
+fn __github_commit_tree_raw(harness: Harness, repo, ref: string, cfg) {
+  const value = __github_json(
+    harness,
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + repo.owner + "/" + repo.name + "/commits/" + url_encode(ref),
+    ),
+    nil,
+    cfg,
+  )
+  if is_err(value) {
+    return value
+  }
+  const oid = trim(to_string(value?.sha ?? ""))
+  const tree_oid = trim(to_string(value?.commit?.tree?.sha ?? ""))
+  if oid == "" || tree_oid == "" {
+    return __err("invalid_response", "GitHub commit response omitted sha or commit.tree.sha")
+  }
+  return {ref: ref, oid: oid, tree_oid: tree_oid}
+}

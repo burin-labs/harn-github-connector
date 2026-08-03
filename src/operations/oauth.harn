@@ -1,0 +1,123 @@
+import { connector_http_json } from "std/connectors/shared"
+import "../client"
+import { __err } from "../errors"
+
+const GITHUB_OAUTH_BASE_URL = "https://github.com"
+
+/**
+ * Dispatch user-to-server OAuth methods. These connect an end user's GitHub
+ * account (distinct from the GitHub App installation flow that drives
+ * webhooks) and post to github.com, not the REST API host. `ghu_` user tokens
+ * expire after 8h and `ghr_` refresh tokens after 6 months; both ROTATE on
+ * refresh, so callers must persist the returned `refresh_token`.
+ */
+@complexity(allow)
+pub fn __oauth_user_dispatch(harness: Harness, method, args) {
+  const client_id = args?.client_id ?? harness.env.get("GITHUB_OAUTH_CLIENT_ID")
+  if client_id == nil || trim(to_string(client_id)) == "" {
+    return __err("schema_drift", method + " requires `client_id`")
+  }
+  const base = args?.oauth_base_url ?? GITHUB_OAUTH_BASE_URL
+  if method == "oauth.user.device_code" {
+    let body = {client_id: to_string(client_id)}
+    if args?.scope != nil {
+      body["scope"] = to_string(args.scope)
+    }
+    return __oauth_post(
+      harness.clock,
+      harness.net,
+      (args?.device_code_url ?? base) + "/login/device/code",
+      body,
+      args,
+    )
+  }
+  if method == "oauth.user.device_poll" {
+    const device_code = args?.device_code
+    if device_code == nil || trim(to_string(device_code)) == "" {
+      return __err("schema_drift", "oauth.user.device_poll requires `device_code`")
+    }
+    return __oauth_post(
+      harness.clock,
+      harness.net,
+      (args?.access_token_url ?? base) + "/login/oauth/access_token",
+      {
+        client_id: to_string(client_id),
+        device_code: to_string(device_code),
+        grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+      },
+      args,
+    )
+  }
+  if method == "oauth.user.exchange_code" {
+    const code = args?.code
+    if code == nil || trim(to_string(code)) == "" {
+      return __err("schema_drift", "oauth.user.exchange_code requires `code`")
+    }
+    let body = {client_id: to_string(client_id), code: to_string(code)}
+    if args?.client_secret != nil {
+      body["client_secret"] = to_string(args.client_secret)
+    }
+    if args?.redirect_uri != nil {
+      body["redirect_uri"] = to_string(args.redirect_uri)
+    }
+    return __oauth_post(
+      harness.clock,
+      harness.net,
+      (args?.access_token_url ?? base) + "/login/oauth/access_token",
+      body,
+      args,
+    )
+  }
+  if method == "oauth.user.refresh" {
+    const refresh_token = args?.refresh_token
+    if refresh_token == nil || trim(to_string(refresh_token)) == "" {
+      return __err("schema_drift", "oauth.user.refresh requires `refresh_token`")
+    }
+    let body = {
+      client_id: to_string(client_id),
+      grant_type: "refresh_token",
+      refresh_token: to_string(refresh_token),
+    }
+    if args?.client_secret != nil {
+      body["client_secret"] = to_string(args.client_secret)
+    }
+    return __oauth_post(
+      harness.clock,
+      harness.net,
+      (args?.access_token_url ?? base) + "/login/oauth/access_token",
+      body,
+      args,
+    )
+  }
+  return __err("method_not_found", "unsupported oauth method `" + method + "`")
+}
+
+fn __oauth_post(clock: HarnessClock, net: HarnessNet, url, body, args) {
+  const response = connector_http_json(
+    clock,
+    net,
+    "POST",
+    url,
+    {
+      provider: "github",
+      operation: "oauth_user",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "User-Agent": GITHUB_USER_AGENT,
+      },
+      body: json_stringify(body),
+      timeout_ms: args?.timeout_ms ?? 30000,
+    },
+  )
+  if !(response.ok ?? false) {
+    if response.status == nil || to_int(response.status ?? 0) == 0 {
+      return __err("network", response?.error?.message ?? to_string(response?.error ?? response))
+    }
+    return __err(
+      "oauth_failed",
+      "github OAuth request failed with status " + to_string(response.status),
+    )
+  }
+  return response.json
+}

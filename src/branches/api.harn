@@ -1,0 +1,30 @@
+import { call_typed } from "../api"
+import {
+  GithubBranchHead,
+  GithubBranchHeadRequest,
+  GithubBranchTreeCompareRequest,
+  GithubBranchTreeComparison,
+  GithubConnectorResult,
+} from "../contracts"
+import { __request_args } from "../request_options"
+
+/** Read one branch's exact current commit. */
+pub fn github_branch_head(
+  harness: Harness,
+  request: GithubBranchHeadRequest,
+) -> GithubConnectorResult<GithubBranchHead> {
+  return call_typed(harness, "github.branch.view", __request_args(request), GithubBranchHead)
+}
+
+/** Compare two refs by exact commit and tree identity. */
+pub fn github_compare_branch_trees(
+  harness: Harness,
+  request: GithubBranchTreeCompareRequest,
+) -> GithubConnectorResult<GithubBranchTreeComparison> {
+  return call_typed(
+    harness,
+    "github.branch.compare_trees",
+    __request_args(request),
+    GithubBranchTreeComparison,
+  )
+}

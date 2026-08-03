@@ -1,0 +1,271 @@
+import { __decorate_dashboard_payload, __reaction_topics } from "./projections"
+import "./values"
+
+const GITHUB_PROVIDER_ID = "github"
+
+@complexity(allow)
+pub fn __normalize_github_payload(event_kind, raw, delivery_id, dedupe_key, occurred_at) {
+  const common = {
+    provider: GITHUB_PROVIDER_ID,
+    event: event_kind,
+    topic: __topic(event_kind, raw?.action),
+    reaction_topics: __reaction_topics(event_kind, raw),
+    action: raw?.action,
+    delivery_id: delivery_id,
+    installation_id: raw?.installation?.id,
+    installation: raw?.installation,
+    repository: raw?.repository,
+    repo: __repo(raw),
+    sender: raw?.sender,
+    raw: raw,
+  }
+  if event_kind == "pull_request" {
+    const pr = raw?.pull_request ?? {}
+    return __decorate_dashboard_payload(
+      event_kind,
+      common
+        + {
+        pull_request: pr,
+        pull_request_id: pr?.id,
+        pull_request_number: raw?.number ?? pr?.number,
+        head_sha: pr?.head?.sha,
+        head_ref: pr?.head?.ref,
+        base_sha: pr?.base?.sha,
+        base_ref: pr?.base?.ref,
+        draft: pr?.draft,
+        merged: pr?.merged,
+        labels: pr?.labels ?? [],
+      },
+      dedupe_key,
+      occurred_at,
+    )
+  }
+  if event_kind == "check_run" {
+    const check = raw?.check_run ?? {}
+    const pr = __first(check?.pull_requests)
+    return __decorate_dashboard_payload(
+      event_kind,
+      common
+        + {
+        check_run: check,
+        check_id: check?.id,
+        check_run_id: check?.id,
+        check_suite_id: check?.check_suite?.id,
+        pull_request_number: pr?.number,
+        head_sha: check?.head_sha ?? pr?.head?.sha,
+        head_ref: pr?.head?.ref,
+        base_ref: pr?.base?.ref,
+        name: check?.name,
+        status: check?.status,
+        conclusion: check?.conclusion,
+      },
+      dedupe_key,
+      occurred_at,
+    )
+  }
+  if event_kind == "check_suite" {
+    const suite = raw?.check_suite ?? {}
+    const pr = __first(suite?.pull_requests)
+    return __decorate_dashboard_payload(
+      event_kind,
+      common
+        + {
+        check_suite: suite,
+        check_suite_id: suite?.id,
+        pull_request_number: pr?.number,
+        head_sha: suite?.head_sha,
+        head_ref: suite?.head_branch ?? pr?.head?.ref,
+        base_ref: pr?.base?.ref,
+        status: suite?.status,
+        conclusion: suite?.conclusion,
+      },
+      dedupe_key,
+      occurred_at,
+    )
+  }
+  if event_kind == "workflow_run" {
+    const run = raw?.workflow_run ?? {}
+    const pr = __first(run?.pull_requests)
+    return __decorate_dashboard_payload(
+      event_kind,
+      common
+        + {
+        workflow_run: run,
+        run_id: run?.id,
+        run_number: run?.run_number,
+        workflow_id: run?.workflow_id,
+        check_suite_id: run?.check_suite_id,
+        pull_request_number: pr?.number,
+        head_sha: run?.head_sha ?? pr?.head?.sha,
+        head_ref: run?.head_branch ?? pr?.head?.ref,
+        base_ref: pr?.base?.ref,
+        name: run?.name,
+        status: run?.status,
+        conclusion: run?.conclusion,
+      },
+      dedupe_key,
+      occurred_at,
+    )
+  }
+  if event_kind == "status" {
+    const branch = __first(raw?.branches)
+    return __decorate_dashboard_payload(
+      event_kind,
+      common
+        + {
+        commit_status: raw,
+        status_id: raw?.id,
+        head_sha: raw?.sha,
+        head_ref: branch?.name,
+        base_ref: branch?.name,
+        state: raw?.state,
+        context: raw?.context,
+        target_url: raw?.target_url,
+      },
+      dedupe_key,
+      occurred_at,
+    )
+  }
+  if event_kind == "merge_group" {
+    const group = raw?.merge_group ?? {}
+    return __decorate_dashboard_payload(
+      event_kind,
+      common
+        + {
+        merge_group: group,
+        merge_group_id: group?.id,
+        head_sha: group?.head_sha,
+        head_ref: group?.head_ref,
+        base_sha: group?.base_sha,
+        base_ref: group?.base_ref,
+        pull_requests: group?.pull_requests ?? raw?.pull_requests ?? [],
+        pull_request_numbers: __pull_request_numbers(group?.pull_requests ?? raw?.pull_requests),
+      },
+      dedupe_key,
+      occurred_at,
+    )
+  }
+  if event_kind == "push" {
+    return __decorate_dashboard_payload(
+      event_kind,
+      common
+        + {
+        ref: raw?.ref,
+        ref_name: __ref_name(raw?.ref),
+        before: raw?.before,
+        after: raw?.after,
+        head_sha: raw?.after,
+        head_ref: __ref_name(raw?.ref),
+        commits: raw?.commits ?? [],
+        distinct_size: raw?.distinct_size,
+        head_commit: raw?.head_commit,
+        pusher: raw?.pusher,
+        deleted: raw?.deleted ?? false,
+        forced: raw?.forced ?? false,
+        created: raw?.created ?? false,
+      },
+      dedupe_key,
+      occurred_at,
+    )
+  }
+  if event_kind == "installation" {
+    return __decorate_dashboard_payload(
+      event_kind,
+      common
+        + {
+        installation: raw?.installation,
+        account: raw?.installation?.account ?? raw?.account,
+        installation_id: raw?.installation?.id,
+        installation_state: __installation_state(raw?.action),
+        suspended: __is_suspension_action(raw?.action),
+        revoked: __is_revocation_action(raw?.action),
+        repositories: raw?.repositories ?? [],
+      },
+      dedupe_key,
+      occurred_at,
+    )
+  }
+  if event_kind == "installation_repositories" {
+    return __decorate_dashboard_payload(
+      event_kind,
+      common
+        + {
+        installation: raw?.installation,
+        account: raw?.installation?.account ?? raw?.account,
+        installation_id: raw?.installation?.id,
+        installation_state: __installation_state(raw?.action),
+        suspended: __is_suspension_action(raw?.action),
+        revoked: __is_revocation_action(raw?.action),
+        repository_selection: raw?.repository_selection,
+        repositories_added: raw?.repositories_added ?? [],
+        repositories_removed: raw?.repositories_removed ?? [],
+      },
+      dedupe_key,
+      occurred_at,
+    )
+  }
+  if event_kind == "release" {
+    const release = raw?.release ?? {}
+    return __decorate_dashboard_payload(
+      event_kind,
+      common
+        + {
+        release: release,
+        release_id: release?.id,
+        tag_name: release?.tag_name,
+        name: release?.name,
+        draft: release?.draft ?? false,
+        prerelease: release?.prerelease ?? false,
+        target_commitish: release?.target_commitish,
+        html_url: release?.html_url,
+        published_at: release?.published_at,
+        assets: release?.assets ?? [],
+      },
+      dedupe_key,
+      occurred_at,
+    )
+  }
+  if event_kind == "issues" {
+    return __decorate_dashboard_payload(
+      event_kind,
+      common + {issue: raw?.issue},
+      dedupe_key,
+      occurred_at,
+    )
+  }
+  if event_kind == "issue_comment" {
+    return __decorate_dashboard_payload(
+      event_kind,
+      common + {issue: raw?.issue, comment: raw?.comment},
+      dedupe_key,
+      occurred_at,
+    )
+  }
+  if event_kind == "pull_request_review" {
+    const pr = raw?.pull_request ?? {}
+    return __decorate_dashboard_payload(
+      event_kind,
+      common
+        + {
+        pull_request: pr,
+        review: raw?.review,
+        pull_request_number: pr?.number,
+        head_sha: pr?.head?.sha,
+        head_ref: pr?.head?.ref,
+        base_sha: pr?.base?.sha,
+        base_ref: pr?.base?.ref,
+      },
+      dedupe_key,
+      occurred_at,
+    )
+  }
+  if event_kind == "deployment_status" {
+    return __decorate_dashboard_payload(
+      event_kind,
+      common + {deployment_status: raw?.deployment_status, deployment: raw?.deployment},
+      dedupe_key,
+      occurred_at,
+    )
+  }
+  return __decorate_dashboard_payload(event_kind, common, dedupe_key, occurred_at)
+}

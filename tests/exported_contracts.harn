@@ -48,7 +48,7 @@ import {
   GithubWorkflowStep,
   call,
   call_typed,
-} from "../src/lib"
+} from "../src/facade"
 
 type ExportedContractCatalog = {
   auto_merge_disable: GithubAutoMergeDisableReceipt,

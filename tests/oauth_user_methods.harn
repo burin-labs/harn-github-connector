@@ -4,7 +4,7 @@ import {
   oauth_user_device_poll,
   oauth_user_exchange_code,
   oauth_user_refresh,
-} from "../src/lib"
+} from "../src/facade"
 
 pipeline test_oauth_user_methods(harness: Harness, task) {
   harness.testing.http_mock_clear()
@@ -28,7 +28,9 @@ pipeline test_oauth_user_methods(harness: Harness, task) {
       ),
     },
   )
-  const device = unwrap(oauth_user_device_code(harness, client_id, "repo", opts))
+  const device = unwrap(
+    oauth_user_device_code(harness, {client_id: client_id, scope: "repo", options: opts}),
+  )
   assert_eq(device.device_code, "dc-123", "device code")
   assert_eq(device.user_code, "WDJB-MJHT", "user code")
   // Device poll: pending then granted.
@@ -54,9 +56,10 @@ pipeline test_oauth_user_methods(harness: Harness, task) {
       ],
     },
   )
-  const pending = unwrap(oauth_user_device_poll(harness, client_id, "dc-123", opts))
+  const poll_request = {client_id: client_id, device_code: "dc-123", options: opts}
+  const pending = unwrap(oauth_user_device_poll(harness, poll_request))
   assert_eq(pending.error, "authorization_pending", "poll pending")
-  const granted = unwrap(oauth_user_device_poll(harness, client_id, "dc-123", opts))
+  const granted = unwrap(oauth_user_device_poll(harness, poll_request))
   assert_eq(granted.access_token, "ghu_user1", "granted user token")
   assert_eq(granted.refresh_token, "ghr_refresh1", "granted refresh token")
   // Web-flow code exchange.
@@ -71,7 +74,10 @@ pipeline test_oauth_user_methods(harness: Harness, task) {
     },
   )
   const exchanged = unwrap(
-    oauth_user_exchange_code(harness, client_id, "web-code", opts + {client_secret: "shh"}),
+    oauth_user_exchange_code(
+      harness,
+      {client_id: client_id, code: "web-code", client_secret: "shh", options: opts},
+    ),
   )
   assert_eq(exchanged.access_token, "ghu_user2", "exchanged token")
   // Refresh rotates the refresh token.
@@ -85,7 +91,12 @@ pipeline test_oauth_user_methods(harness: Harness, task) {
       ),
     },
   )
-  const refreshed = unwrap(oauth_user_refresh(harness, client_id, "ghr_refresh2", opts))
+  const refreshed = unwrap(
+    oauth_user_refresh(
+      harness,
+      {client_id: client_id, refresh_token: "ghr_refresh2", options: opts},
+    ),
+  )
   assert_eq(refreshed.access_token, "ghu_user3", "refreshed token")
   assert_eq(refreshed.refresh_token, "ghr_rotated", "refresh token rotates")
   // Missing client_id is rejected before any network call.

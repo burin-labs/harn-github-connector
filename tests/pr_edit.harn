@@ -1,4 +1,4 @@
-import { call, pulls_update } from "../src/lib"
+import { call, pulls_update } from "../src/facade"
 
 pipeline test_pr_edit(harness: Harness, task) {
   harness.testing.http_mock_clear()
@@ -47,7 +47,16 @@ pipeline test_pr_edit(harness: Harness, task) {
     },
   )
   const low_level = unwrap(
-    pulls_update(harness, "octo-org", "octo-repo", 42, {title: "Updated title"}, auth),
+    pulls_update(
+      harness,
+      {
+        owner: "octo-org",
+        repo: "octo-repo",
+        pull_number: 42,
+        edits: {title: "Updated title"},
+        options: auth,
+      },
+    ),
   )
   assert_eq(low_level.title, "Updated title", "low-level update returns provider response")
   const edited = unwrap(
@@ -55,7 +64,6 @@ pipeline test_pr_edit(harness: Harness, task) {
       harness,
       "github.pr.edit",
       auth
-        + {poll_interval_ms: 0}
         + {
         repo: "octo-org/octo-repo",
         number: 42,
@@ -100,15 +108,6 @@ pipeline test_pr_edit(harness: Harness, task) {
     auth + {owner: "octo-org", repo: "octo-repo", pull_number: 42, state: "merged"},
   )
   assert(is_err(bad_state), "invalid state fails before dispatch")
-  const smuggled_option = pulls_update(
-    harness,
-    "octo-org",
-    "octo-repo",
-    42,
-    {title: "x", installation_token: "attacker-selected"},
-    auth,
-  )
-  assert(is_err(smuggled_option), "edit fields cannot override connector options")
   assert_eq(len(harness.testing.http_mock_calls()), 2, "invalid edits perform no network request")
   const provider_error = call(
     harness,

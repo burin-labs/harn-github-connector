@@ -1,0 +1,50 @@
+pub fn __err(code, message, details = nil) {
+  const error = {code: code, category: __error_category(code), message: message}
+  return Err(
+    if details == nil {
+      error
+    } else {
+      error + details
+    },
+  )
+}
+
+fn __error_category(code) {
+  if code == "auth" || code == "unauthorized" || code == "missing_credentials"
+    || code
+    == "missing_private_key"
+    || code == "missing_app_id" {
+    return "auth"
+  }
+  if code == "permission" || code == "missing_scopes" || code == "inaccessible_resource" {
+    return "permission"
+  }
+  if code == "rate_limit" || code == "rate_limited" {
+    return "rate_limit"
+  }
+  if code == "branch_protection" || code == "protected_branch_requires_admin_override" {
+    return "branch_protection"
+  }
+  if code == "merge_queue" {
+    return "merge_queue"
+  }
+  if code == "checks_pending" {
+    return "checks_pending"
+  }
+  if code == "checks_failed" {
+    return "checks_failed"
+  }
+  if code == "network" || code == "transport" {
+    return "network"
+  }
+  if code == "oauth_failed" {
+    return "auth"
+  }
+  if code == "schema_drift" || code == "invalid_response" || code == "invalid_json" {
+    return "schema_drift"
+  }
+  if code == "stale_head" {
+    return "conflict"
+  }
+  return code
+}

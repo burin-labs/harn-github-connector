@@ -1,0 +1,41 @@
+import { GithubConnectorError, GithubConnectorResult, GithubRawApiRequest } from "./contracts"
+import { __call_raw } from "./dispatch"
+import { __err } from "./errors"
+import { __request_args } from "./request_options"
+
+/** Dispatch a supported GitHub method through one explicit Result boundary. */
+@complexity(allow)
+pub fn call(harness: Harness, method: string, args: dict = {}) -> GithubConnectorResult<unknown> {
+  const value = __call_raw(harness, method, args)
+  if is_err(value) {
+    const error: GithubConnectorError = unwrap_err(value)
+    return Err(error)
+  }
+  return Ok(value)
+}
+
+/** Dispatch and validate one method against an exported success contract. */
+pub fn call_typed<T>(
+  harness: Harness,
+  method: string,
+  args: dict,
+  schema: Schema<T>,
+) -> GithubConnectorResult<T> {
+  const result = call(harness, method, args)
+  if is_err(result) {
+    return Err(unwrap_err(result))
+  }
+  const value = unwrap(result)
+  if schema_is(value, schema) {
+    return Ok(value)
+  }
+  return __err(
+    "invalid_response",
+    "github connector method `" + method + "` did not match its declared success contract",
+  )
+}
+
+/** Dispatch one raw GitHub REST call. Prefer a typed helper when one exists. */
+pub fn api_call(harness: Harness, request: GithubRawApiRequest) -> GithubConnectorResult<unknown> {
+  return call(harness, "api_call", __request_args(request))
+}

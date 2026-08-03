@@ -18,6 +18,31 @@
   the job's environment locally. CI already kept this receipt — the release path
   now keeps the same one at the same path.
 
+## 0.7.0 - 2026-08-02
+
+- Replace long positional helper calls with one closed request record after
+  `harness`. Repository identity, resource identity, mutation leases, payloads,
+  and client policy are now named at every high-level call site. The old
+  positional signatures were removed instead of retained as compatibility
+  shims.
+- Split the former 8,695-line package module into focused API, contract,
+  transport, operation, webhook, pull-request, Actions, OAuth, repository,
+  release, issue, and commit modules. The default export is a public facade;
+  internal modules depend on their owning layers rather than importing the
+  facade back into the implementation.
+- Make `GithubClientOptions` the typed owner of authentication, transport, and
+  retry policy. Request records carry it under `options`; workflow, check, and
+  mergeability monitors carry a separate `GithubPollingPolicy` under
+  `polling`. Adapters normalize each record once at its owning boundary.
+- Point the provider contract at its focused webhook module so connector
+  discovery does not compile the complete outbound API surface.
+- Require Harn 0.10.53. That release compiles exported schemas into separate
+  addressable initializers, allowing this package's complete typed facade to
+  load without a 64 KiB bytecode limit.
+- Replace the mixed-purpose README with focused setup, webhook reference,
+  signed-commit, safety-model, generated API, and contribution pages. Examples
+  use the typed request API.
+
 ## 0.6.8 - 2026-08-02
 
 - Make the release-gate tests hermetic. The fixture package now owns its own

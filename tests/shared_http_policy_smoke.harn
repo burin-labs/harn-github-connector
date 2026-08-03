@@ -1,4 +1,4 @@
-import { call } from "../src/lib"
+import { call } from "../src/facade"
 
 pipeline test_shared_http_policy_smoke(harness: Harness, task) {
   harness.testing.http_mock_clear()

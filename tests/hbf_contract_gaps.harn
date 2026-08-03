@@ -1,4 +1,4 @@
-import { call, github_pr_commits } from "../src/lib"
+import { call, github_pr_commits } from "../src/facade"
 
 const BASE = "https://github-api.test"
 
@@ -133,10 +133,12 @@ pipeline test_pr_commits_reads_every_page_on_one_stable_head(harness: Harness, t
   const result = unwrap(
     github_pr_commits(
       harness,
-      "octo-org",
-      "octo-repo",
-      42,
-      auth() + {per_page: 2, expected_head_oid: head_sha},
+      auth() + {per_page: 2, expected_head_oid: head_sha}
+        + {
+        owner: "octo-org",
+        repo: "octo-repo",
+        pull_number: 42,
+      },
     ),
   )
   assert_eq(result.pull_number, 42, "receipt is bound to the exact pull request")

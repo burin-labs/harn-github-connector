@@ -1,0 +1,237 @@
+import "../client"
+import { GithubConnectorResult, GithubRelease } from "../contracts"
+import { __err } from "../errors"
+import { __validate_pull_response } from "../pulls/normalization"
+import { __request_context_keys } from "../request_options"
+
+pub fn __repo_parts(args) {
+  if args?.owner != nil && args?.repo != nil && !contains(to_string(args.repo), "/") {
+    return Ok(
+      {
+        owner: to_string(args.owner),
+        name: to_string(args.repo),
+        full_name: to_string(args.owner) + "/" + to_string(args.repo),
+      },
+    )
+  }
+  const repo_arg = args?.repository ?? args?.repo_ref ?? args?.repo_full_name ?? args?.repo
+  if type_of(repo_arg) == "dict" {
+    const owner = repo_arg?.owner ?? repo_arg?.owner_login
+    const name = repo_arg?.name ?? repo_arg?.repo
+    const full_name = repo_arg?.full_name
+    if full_name != nil && contains(to_string(full_name), "/") {
+      return __repo_parts({repo: full_name})
+    }
+    if owner != nil && name != nil {
+      return Ok(
+        {
+          owner: to_string(owner),
+          name: to_string(name),
+          full_name: to_string(owner) + "/" + to_string(name),
+        },
+      )
+    }
+  }
+  if repo_arg != nil && contains(to_string(repo_arg), "/") {
+    const parts = split(to_string(repo_arg), "/")
+    if len(parts) == 2 && trim(parts[0]) != "" && trim(parts[1]) != "" {
+      return Ok({owner: parts[0], name: parts[1], full_name: parts[0] + "/" + parts[1]})
+    }
+  }
+  return __err("schema_drift", "github typed API requires repo as `owner/name` or owner + repo")
+}
+
+pub fn __github_branch_protection_raw(harness: Harness, repo, branch, cfg) {
+  if branch == nil || trim(to_string(branch)) == "" {
+    return Ok(nil)
+  }
+  const protection = __github_json(
+    harness,
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + repo.owner + "/" + repo.name + "/branches/" + url_encode(to_string(branch))
+        + "/protection",
+    ),
+    nil,
+    cfg,
+  )
+  if is_err(protection) {
+    const err = unwrap_err(protection)
+    if __is_status_error(err, 404) {
+      return Ok(nil)
+    }
+    return protection
+  }
+  return Ok(protection)
+}
+
+pub fn __github_pull_identity(harness: Harness, repo, number, cfg, surface) {
+  const pull = __github_json(
+    harness,
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + repo.owner + "/" + repo.name + "/pulls/" + to_string(number),
+    ),
+    nil,
+    cfg,
+  )
+  if is_err(pull) {
+    return pull
+  }
+  const valid = __validate_pull_response(pull, surface)
+  if is_err(valid) {
+    return valid
+  }
+  if to_int(pull.number) != number {
+    return __err("invalid_response", surface + " response did not match the requested pull request")
+  }
+  return Ok(pull)
+}
+
+pub fn __stale_pr_head(expected_head_oid, observed_head_oid) {
+  return __err(
+    "stale_head",
+    "pull request head changed while reading canonical evidence",
+    {expected_head_oid: expected_head_oid, observed_head_oid: observed_head_oid},
+  )
+}
+
+pub fn __graphql_merge_method(method) {
+  const normalized = uppercase(to_string(method ?? "MERGE"))
+  if normalized == "MERGE" || normalized == "SQUASH" || normalized == "REBASE" {
+    return Ok(normalized)
+  }
+  return __err("schema_drift", "merge method must be MERGE, SQUASH, or REBASE")
+}
+
+pub fn __typed_release(release) -> GithubConnectorResult<GithubRelease> {
+  if type_of(release) != "dict" || release?.id == nil
+    || trim(to_string(release?.tag_name ?? ""))
+    == "" {
+    return __err("invalid_response", "github.release.view response omitted release id or tag")
+  }
+  let assets: list<GithubReleaseAsset> = []
+  for asset in release?.assets ?? [] {
+    if asset?.id == nil || trim(to_string(asset?.name ?? "")) == "" {
+      return __err("invalid_response", "github.release.view response contained a malformed asset")
+    }
+    assets = assets
+      + [
+      {
+        id: asset.id,
+        name: to_string(asset.name),
+        size: to_int(asset?.size ?? 0),
+        state: to_string(asset?.state ?? ""),
+        content_type: to_string(asset?.content_type ?? ""),
+        download_count: to_int(asset?.download_count ?? 0),
+        url: to_string(asset?.browser_download_url ?? asset?.url ?? ""),
+        created_at: asset?.created_at,
+        updated_at: asset?.updated_at,
+      },
+    ]
+  }
+  return Ok(
+    {
+      id: release.id,
+      tag_name: to_string(release.tag_name),
+      name: to_string(release?.name ?? ""),
+      draft: release?.draft ?? false,
+      prerelease: release?.prerelease ?? false,
+      url: to_string(release?.html_url ?? release?.url ?? ""),
+      target_commitish: to_string(release?.target_commitish ?? ""),
+      body: to_string(release?.body ?? ""),
+      published_at: release?.published_at,
+      assets: assets,
+    },
+  )
+}
+
+pub fn __typed_repository_file(content, ref) {
+  if type_of(content) != "dict" || content?.type != "file" || content?.encoding != "base64"
+    || trim(
+    to_string(content?.path ?? ""),
+  )
+    == ""
+    || trim(to_string(content?.sha ?? "")) == ""
+    || content?.content == nil {
+    return __err("invalid_response", "github.file.view expected one base64-encoded file")
+  }
+  const decoded = try {
+    base64_decode(to_string(content.content).replace("\n", ""))
+  }
+  if is_err(decoded) {
+    return __err("invalid_response", "github.file.view could not decode GitHub file content")
+  }
+  return Ok(
+    {
+      name: to_string(content?.name ?? ""),
+      path: to_string(content.path),
+      sha: to_string(content.sha),
+      size: to_int(content?.size ?? 0),
+      ref: ref,
+      text: unwrap(decoded),
+      url: to_string(content?.html_url ?? content?.url ?? ""),
+    },
+  )
+}
+
+pub fn __is_status_error(err, status) {
+  return to_int(err?.http_status ?? 0) == status
+    || contains(
+    to_string(err?.message ?? ""),
+    "status " + to_string(status),
+  )
+}
+
+pub fn __merge_body(args, pull) {
+  let body = __body_without(
+    args,
+    __request_context_keys()
+      + [
+      "owner",
+      "repo",
+      "pull_number",
+      "admin_override",
+      "delete_branch",
+      "base_branch",
+      "check_branch_protection",
+      "method",
+      "number",
+      "options",
+      "pr_number",
+    ],
+  )
+  if body?.sha == nil && pull?.head?.sha != nil {
+    body["sha"] = pull.head.sha
+  }
+  return body
+}
+
+pub fn __merge_annotation(response, args) {
+  if args?.admin_override ?? false {
+    return response + {admin_override_requested: true}
+  }
+  return response
+}
+
+pub fn __delete_pull_head_branch(harness: Harness, args, pull, cfg) {
+  const head_ref = pull?.head?.ref
+  if head_ref == nil || trim(to_string(head_ref)) == "" {
+    return __err("missing_head_ref", "cannot delete PR branch because pull.head.ref was missing")
+  }
+  const head_repo = pull?.head?.repo
+  const repo_owner = head_repo?.owner?.login ?? args.owner
+  const repo_name = head_repo?.name ?? args.repo
+  return __github_json(
+    harness,
+    "DELETE",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + repo_owner + "/" + repo_name + "/git/refs/heads/" + to_string(head_ref),
+    ),
+    nil,
+    cfg,
+  )
+}

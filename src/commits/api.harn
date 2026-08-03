@@ -1,0 +1,20 @@
+import { call_typed } from "../api"
+import {
+  GithubConnectorResult,
+  GithubSignedCommitReceipt,
+  GithubSignedCommitRequest,
+} from "../contracts"
+import { __request_args } from "../request_options"
+
+/** Append one GitHub-signed commit under an exact branch-head lease. */
+pub fn github_create_signed_commit(
+  harness: Harness,
+  request: GithubSignedCommitRequest,
+) -> GithubConnectorResult<GithubSignedCommitReceipt> {
+  return call_typed(
+    harness,
+    "github.branch.create_signed_commit",
+    __request_args(request),
+    GithubSignedCommitReceipt,
+  )
+}

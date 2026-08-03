@@ -1,0 +1,232 @@
+import {
+  GithubConnectorResult,
+  GithubWorkflowDispatchReceipt,
+  GithubWorkflowJob,
+  GithubWorkflowRun,
+  GithubWorkflowStep,
+} from "../contracts"
+import { __err } from "../errors"
+
+pub fn __typed_workflow_dispatch(
+  repo,
+  ref,
+  resolved,
+) -> GithubConnectorResult<GithubWorkflowDispatchReceipt> {
+  if resolved?.run_id == nil || trim(to_string(resolved?.head_sha ?? "")) == ""
+    || trim(
+    to_string(resolved?.event ?? ""),
+  )
+    == ""
+    || trim(to_string(resolved?.workflow_path ?? "")) == ""
+    || trim(to_string(resolved?.run_url ?? ""))
+    == "" {
+    return __err(
+      "invalid_response",
+      "github.actions.workflow_dispatch could not prove an exact run identity",
+    )
+  }
+  const receipt: GithubWorkflowDispatchReceipt = {
+    repo: repo,
+    accepted: true,
+    run_id: to_int(resolved.run_id),
+    workflow_id: if resolved?.workflow_id == nil {
+      nil
+    } else {
+      to_string(resolved.workflow_id)
+    },
+    workflow_path: to_string(resolved.workflow_path),
+    run_attempt: if resolved?.run_attempt == nil {
+      nil
+    } else {
+      to_int(resolved.run_attempt)
+    },
+    ref: to_string(ref),
+    head_sha: to_string(resolved.head_sha),
+    head_branch: to_string(resolved?.head_branch ?? ""),
+    event: to_string(resolved.event),
+    url: to_string(resolved.run_url),
+    created_at: resolved?.created_at,
+  }
+  return Ok(receipt)
+}
+
+pub fn __typed_workflow_run(repo, run) {
+  const id = __actions_run_id(run?.id)
+  if type_of(run) != "dict" || id == nil || trim(to_string(run?.status ?? "")) == ""
+    || trim(
+    to_string(run?.event ?? ""),
+  )
+    == ""
+    || trim(to_string(run?.path ?? "")) == ""
+    || trim(to_string(run?.head_sha ?? "")) == "" {
+    return __err("invalid_response", "github.actions.run response omitted exact run evidence")
+  }
+  const typed: GithubWorkflowRun = {
+    repo: repo,
+    id: id,
+    workflow_id: if run?.workflow_id == nil {
+      nil
+    } else {
+      to_int(run.workflow_id)
+    },
+    workflow_path: to_string(run.path),
+    run_number: if run?.run_number == nil {
+      nil
+    } else {
+      to_int(run.run_number)
+    },
+    run_attempt: if run?.run_attempt == nil {
+      nil
+    } else {
+      to_int(run.run_attempt)
+    },
+    name: to_string(run?.name ?? ""),
+    event: to_string(run.event),
+    status: lowercase(to_string(run.status)),
+    conclusion: if run?.conclusion == nil {
+      nil
+    } else {
+      lowercase(to_string(run.conclusion))
+    },
+    head_branch: to_string(run?.head_branch ?? ""),
+    head_sha: to_string(run.head_sha),
+    url: to_string(run?.html_url ?? run?.url ?? ""),
+    created_at: if run?.created_at == nil {
+      nil
+    } else {
+      to_string(run.created_at)
+    },
+    run_started_at: if run?.run_started_at == nil {
+      nil
+    } else {
+      to_string(run.run_started_at)
+    },
+    updated_at: if run?.updated_at == nil {
+      nil
+    } else {
+      to_string(run.updated_at)
+    },
+  }
+  return Ok(typed)
+}
+
+pub fn __typed_workflow_job(job) -> GithubConnectorResult<GithubWorkflowJob> {
+  if type_of(job) != "dict" || job?.id == nil || job?.run_id == nil
+    || trim(
+    to_string(job?.name ?? ""),
+  )
+    == ""
+    || trim(to_string(job?.status ?? "")) == ""
+    || type_of(job?.steps ?? []) != "list" {
+    return __err("invalid_response", "github.actions.run_jobs response contained a malformed job")
+  }
+  let steps: list<GithubWorkflowStep> = []
+  for step in job?.steps ?? [] {
+    if step?.number == nil || trim(to_string(step?.name ?? "")) == ""
+      || trim(
+      to_string(step?.status ?? ""),
+    )
+      == "" {
+      return __err(
+        "invalid_response",
+        "github.actions.run_jobs response contained a malformed step",
+      )
+    }
+    steps = steps
+      + [
+      {
+        number: to_int(step.number),
+        name: to_string(step.name),
+        status: lowercase(to_string(step.status)),
+        conclusion: if step?.conclusion == nil {
+          nil
+        } else {
+          lowercase(to_string(step.conclusion))
+        },
+        started_at: step?.started_at,
+        completed_at: step?.completed_at,
+      },
+    ]
+  }
+  return Ok(
+    {
+      id: to_int(job.id),
+      run_id: to_int(job.run_id),
+      name: to_string(job.name),
+      status: lowercase(to_string(job.status)),
+      conclusion: if job?.conclusion == nil {
+        nil
+      } else {
+        lowercase(to_string(job.conclusion))
+      },
+      head_sha: to_string(job?.head_sha ?? ""),
+      url: to_string(job?.html_url ?? job?.url ?? ""),
+      runner_name: to_string(job?.runner_name ?? ""),
+      started_at: job?.started_at,
+      completed_at: job?.completed_at,
+      steps: steps,
+    },
+  )
+}
+
+pub fn __actions_run_id(value) {
+  const raw = trim(to_string(value ?? ""))
+  if len(regex_captures("^[1-9][0-9]*$", raw)) == 0 {
+    return nil
+  }
+  return to_int(raw)
+}
+
+pub fn __positive_decimal(value, max_value) {
+  const parsed = __actions_run_id(value)
+  if parsed == nil || (max_value != nil && parsed > max_value) {
+    return nil
+  }
+  return parsed
+}
+
+pub fn __nonnegative_decimal(value) {
+  const raw = trim(to_string(value ?? ""))
+  if len(regex_captures("^[0-9]+$", raw)) == 0 {
+    return nil
+  }
+  return to_int(raw)
+}
+
+pub fn __extract_actions_run_id(url) {
+  if url == nil || !contains(to_string(url), "/actions/runs/") {
+    return nil
+  }
+  const parts = split(to_string(url), "/actions/runs/")
+  if len(parts) < 2 {
+    return nil
+  }
+  const rest = split(parts[1], "/")[0]
+  const parsed = try {
+    to_int(rest)
+  }
+  if is_err(parsed) {
+    return rest
+  }
+  return unwrap(parsed)
+}
+
+pub fn __duration_seconds(started_at, completed_at) {
+  if started_at == nil || completed_at == nil {
+    return nil
+  }
+  const start = try {
+    to_int(date_parse(to_string(started_at)))
+  }
+  const done = try {
+    to_int(date_parse(to_string(completed_at)))
+  }
+  if is_err(start) || is_err(done) {
+    return nil
+  }
+  const duration = unwrap(done) - unwrap(start)
+  if duration < 0 {
+    return nil
+  }
+  return duration
+}

@@ -1,0 +1,11 @@
+import { call } from "../api"
+import { GithubConnectorResult, GithubIssueTemplateRequest } from "../contracts"
+import { __request_args } from "../request_options"
+
+/** Create one issue by rendering a closed title/body template record. */
+pub fn issues_create_with_template(
+  harness: Harness,
+  request: GithubIssueTemplateRequest,
+) -> GithubConnectorResult<unknown> {
+  return call(harness, "issues.create_with_template", __request_args(request))
+}

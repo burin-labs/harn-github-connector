@@ -1,5 +1,7 @@
 import {
+  GithubClientOptions,
   GithubFileLookupRequest,
+  GithubRepositoryRequest,
   actions_workflow_dispatch,
   actions_workflow_run,
   actions_workflow_runs,
@@ -12,11 +14,20 @@ import {
   repos_get_latest_release,
   repos_get_text,
   repos_list_release_assets,
-} from "../src/lib"
+} from "../src/facade"
+
+fn request_to(calls, method, url) {
+  for call in calls {
+    if call.method == method && call.url == url {
+      return call
+    }
+  }
+  return nil
+}
 
 const BASE = "https://github-api.test"
 
-fn typed_auth() -> dict {
+fn typed_auth() -> GithubClientOptions {
   return {api_base_url: BASE, installation_token: "github-installation-token"}
 }
 
@@ -65,8 +76,9 @@ pipeline test_typed_repository_file_helper_validates_the_normalized_contract(
     repo: "octo-repo",
     path: "VERSION",
     ref: "main",
+    options: typed_auth(),
   }
-  const result = unwrap(github_file_at_ref(harness, request, typed_auth()))
+  const result = unwrap(github_file_at_ref(harness, request))
   assert_eq(result.state, "found")
   assert_eq(result.file?.text, "0.6.6\n")
 }
@@ -94,13 +106,16 @@ pipeline test_typed_latest_release_helper_distinguishes_accessible_absence(harne
       ],
     },
   )
-  const found = unwrap(github_latest_release_lookup(harness, "octo-org", "octo-repo", typed_auth()))
+  const request: GithubRepositoryRequest = {
+    owner: "octo-org",
+    repo: "octo-repo",
+    options: typed_auth(),
+  }
+  const found = unwrap(github_latest_release_lookup(harness, request))
   assert_eq(found.release?.tag_name, "v0.8.4")
-  const absent = unwrap(
-    github_latest_release_lookup(harness, "octo-org", "octo-repo", typed_auth()),
-  )
+  const absent = unwrap(github_latest_release_lookup(harness, request))
   assert_eq(absent, {repo: "octo-org/octo-repo", state: "absent", found: false, release: nil})
-  const masked = github_latest_release_lookup(harness, "octo-org", "octo-repo", typed_auth())
+  const masked = github_latest_release_lookup(harness, request)
   assert(is_err(masked))
   assert_eq(unwrap_err(masked).code, "inaccessible_resource")
 }
@@ -129,7 +144,10 @@ pipeline test_repo_automation_methods(harness: Harness, task) {
     },
   )
   const text = unwrap(
-    repos_get_text(harness, "octo-org", "octo-repo", ".harn-version", "main", auth),
+    repos_get_text(
+      harness,
+      {owner: "octo-org", repo: "octo-repo", path: ".harn-version", ref: "main", options: auth},
+    ),
   )
   assert_eq(trim(text.text), "v0.7.59", "repos.get_text decodes base64 content")
   harness.testing.http_mock(
@@ -147,22 +165,62 @@ pipeline test_repo_automation_methods(harness: Harness, task) {
       headers: {"x-ratelimit-remaining": "9"},
     },
   )
+  harness.testing.http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/actions/runs/123",
+    {
+      responses: [
+        {
+          status: 200,
+          body: json_stringify(
+            {
+              id: 123,
+              workflow_id: 456,
+              path: ".github/workflows/bump-harn.yml",
+              head_sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              head_branch: "main",
+              event: "workflow_dispatch",
+              status: "queued",
+              conclusion: nil,
+              html_url: "https://github.com/octo-org/octo-repo/actions/runs/123",
+            },
+          ),
+          headers: {"x-ratelimit-remaining": "8"},
+        },
+        {
+          status: 200,
+          body: json_stringify(
+            {
+              id: 123,
+              workflow_id: 456,
+              path: ".github/workflows/bump-harn.yml",
+              head_sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              head_branch: "main",
+              event: "workflow_dispatch",
+              status: "completed",
+              conclusion: "success",
+              html_url: "https://github.com/octo-org/octo-repo/actions/runs/123",
+            },
+          ),
+          headers: {"x-ratelimit-remaining": "7"},
+        },
+      ],
+    },
+  )
   const dispatch = unwrap(
     actions_workflow_dispatch(
       harness,
-      "octo-org",
-      "octo-repo",
-      "bump-harn.yml",
-      "main",
-      {version: "v0.7.59"},
-      auth + {return_run_details: false},
+      {
+        owner: "octo-org",
+        repo: "octo-repo",
+        workflow_id: "bump-harn.yml",
+        ref: "main",
+        inputs: {version: "v0.7.59"},
+        options: auth,
+      },
     ),
   )
-  assert_eq(
-    dispatch.workflow_run_id,
-    123,
-    "workflow dispatch returns run id when GitHub provides it",
-  )
+  assert_eq(dispatch.run_id, 123, "workflow dispatch returns the exact run id")
   harness.testing.http_mock(
     "GET",
     base
@@ -175,6 +233,11 @@ pipeline test_repo_automation_methods(harness: Harness, task) {
           workflow_runs: [
             {
               id: 123,
+              workflow_id: 456,
+              path: ".github/workflows/bump-harn.yml",
+              head_sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              head_branch: "main",
+              event: "workflow_dispatch",
               status: "completed",
               conclusion: "success",
               html_url: "https://github.com/octo-org/octo-repo/actions/runs/123",
@@ -188,22 +251,23 @@ pipeline test_repo_automation_methods(harness: Harness, task) {
   const runs = unwrap(
     actions_workflow_runs(
       harness,
-      "octo-org",
-      "octo-repo",
-      auth + {workflow_id: "bump-harn.yml", event: "workflow_dispatch", per_page: 5},
+      {
+        owner: "octo-org",
+        repo: "octo-repo",
+        workflow_id: "bump-harn.yml",
+        event: "workflow_dispatch",
+        per_page: 5,
+        options: auth,
+      },
     ),
   )
-  assert_eq(runs.workflow_runs[0].id, 123, "workflow runs list response")
-  harness.testing.http_mock(
-    "GET",
-    base + "/repos/octo-org/octo-repo/actions/runs/123",
-    {
-      status: 200,
-      body: json_stringify({id: 123, status: "completed", conclusion: "success"}),
-      headers: {"x-ratelimit-remaining": "7"},
-    },
+  assert_eq(runs.runs[0].id, 123, "workflow runs list response")
+  const run = unwrap(
+    actions_workflow_run(
+      harness,
+      {owner: "octo-org", repo: "octo-repo", run_id: 123, options: auth},
+    ),
   )
-  const run = unwrap(actions_workflow_run(harness, "octo-org", "octo-repo", 123, auth))
   assert_eq(run.conclusion, "success", "workflow run get response")
   harness.testing.http_mock(
     "GET",
@@ -228,7 +292,8 @@ pipeline test_repo_automation_methods(harness: Harness, task) {
       headers: {"x-ratelimit-remaining": "7"},
     },
   )
-  const raw_release = unwrap(repos_get_latest_release(harness, "octo-org", "octo-repo", auth))
+  const repo_request = {owner: "octo-org", repo: "octo-repo", options: auth}
+  const raw_release = unwrap(repos_get_latest_release(harness, repo_request))
   assert_eq(raw_release.tag_name, "v0.8.4", "raw latest release tag")
   harness.testing.http_mock(
     "GET",
@@ -248,7 +313,7 @@ pipeline test_repo_automation_methods(harness: Harness, task) {
       headers: {"x-ratelimit-remaining": "7"},
     },
   )
-  const latest = unwrap(github_latest_release(harness, "octo-org", "octo-repo", auth))
+  const latest = unwrap(github_latest_release(harness, repo_request))
   assert_eq(latest.ok, true, "latest release envelope ok")
   assert_eq(latest.tag_name, "v0.8.4", "latest release envelope tag")
   assert_eq(
@@ -266,7 +331,10 @@ pipeline test_repo_automation_methods(harness: Harness, task) {
     },
   )
   const raw_assets = unwrap(
-    repos_list_release_assets(harness, "octo-org", "octo-repo", 501, auth + {per_page: 2}),
+    repos_list_release_assets(
+      harness,
+      {owner: "octo-org", repo: "octo-repo", release_id: 501, per_page: 2, options: auth},
+    ),
   )
   assert_eq(raw_assets[0].name, "harn-aarch64-apple-darwin.tar.gz", "raw release assets")
   harness.testing.http_mock(
@@ -279,7 +347,10 @@ pipeline test_repo_automation_methods(harness: Harness, task) {
     },
   )
   const assets = unwrap(
-    github_release_assets(harness, "octo-org", "octo-repo", 501, auth + {per_page: 2}),
+    github_release_assets(
+      harness,
+      {owner: "octo-org", repo: "octo-repo", release_id: 501, per_page: 2, options: auth},
+    ),
   )
   assert_eq(assets.ok, true, "release assets envelope ok")
   assert_eq(assets.asset_names[0], "harn-x86_64-unknown-linux-gnu.tar.gz", "release assets names")
@@ -293,7 +364,7 @@ pipeline test_repo_automation_methods(harness: Harness, task) {
     },
   )
   const raw = unwrap(
-    api_call(harness, "/repos/octo-org/octo-repo/releases/latest", "GET", nil, auth),
+    api_call(harness, {path: "/repos/octo-org/octo-repo/releases/latest", options: auth}),
   )
   assert_eq(raw.tag_name, "v0.8.4", "raw api_call works as compatibility escape hatch")
   harness.testing.http_mock(
@@ -338,17 +409,29 @@ pipeline test_repo_automation_methods(harness: Harness, task) {
   const auto_merge = unwrap(
     pulls_enable_auto_merge(
       harness,
-      "octo-org",
-      "octo-repo",
-      7,
-      auth + {method: "squash", expected_head_oid: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+      {
+        owner: "octo-org",
+        repo: "octo-repo",
+        pull_number: 7,
+        method: "squash",
+        expected_head_oid: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        options: auth,
+      },
     ),
   )
   assert_eq(auto_merge.state, "enabled", "auto-merge enabled state")
   assert_eq(auto_merge.merge_method, "SQUASH", "auto-merge merge method normalized")
   const calls = harness.testing.http_mock_calls()
-  const dispatch_body = json_parse(calls[1].body)
-  const mutation_body = json_parse(calls[10].body)
+  const dispatch_call = request_to(
+    calls,
+    "POST",
+    base + "/repos/octo-org/octo-repo/actions/workflows/bump-harn.yml/dispatches",
+  )
+  const mutation_call = request_to(calls, "POST", base + "/graphql")
+  assert(dispatch_call != nil, "workflow dispatch request was observed")
+  assert(mutation_call != nil, "auto-merge GraphQL request was observed")
+  const dispatch_body = json_parse(dispatch_call?.body ?? "")
+  const mutation_body = json_parse(mutation_call?.body ?? "")
   const mutation_vars = mutation_body.get("variables")
   assert_eq(dispatch_body.get("return_run_details"), true, "workflow dispatch asks for run details")
   assert_eq(mutation_vars.get("pullRequestId"), "PR_node_7", "auto-merge mutation uses PR node id")

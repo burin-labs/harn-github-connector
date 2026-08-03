@@ -1,4 +1,4 @@
-import { github_branch_head, pulls_disable_auto_merge } from "../src/lib"
+import { github_branch_head, pulls_disable_auto_merge } from "../src/facade"
 
 const BASE_OID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
@@ -79,20 +79,25 @@ pipeline test_branch_and_auto_merge_disable_are_exactly_leased(harness: Harness,
       ),
     },
   )
-  const branch = unwrap(github_branch_head(harness, "octo-org", "octo-repo", "main", auth))
+  const branch = unwrap(
+    github_branch_head(
+      harness,
+      {owner: "octo-org", repo: "octo-repo", branch: "main", options: auth},
+    ),
+  )
   assert_eq(branch.oid, BASE_OID)
   const disabled = unwrap(
     pulls_disable_auto_merge(
       harness,
-      "octo-org",
-      "octo-repo",
-      42,
-      auth
-        + {
+      {
+        owner: "octo-org",
+        repo: "octo-repo",
+        pull_number: 42,
+        options: auth,
         expected_head_oid: HEAD_OID,
         base_branch: "main",
         expected_base_oid: BASE_OID,
-        restore_merge_method: "SQUASH",
+        restore_merge_method: "squash",
       },
     ),
   )
@@ -100,15 +105,15 @@ pipeline test_branch_and_auto_merge_disable_are_exactly_leased(harness: Harness,
   assert_eq(disabled.observed_base_oid, BASE_OID)
   const stale = pulls_disable_auto_merge(
     harness,
-    "octo-org",
-    "octo-repo",
-    42,
-    auth
-      + {
+    {
+      owner: "octo-org",
+      repo: "octo-repo",
+      pull_number: 42,
+      options: auth,
       expected_head_oid: HEAD_OID,
       base_branch: "main",
       expected_base_oid: BASE_OID,
-      restore_merge_method: "SQUASH",
+      restore_merge_method: "squash",
     },
   )
   assert(is_err(stale))
@@ -174,15 +179,15 @@ pipeline test_uncertain_disable_is_compensated_before_failure(harness: Harness, 
   )
   const result = pulls_disable_auto_merge(
     harness,
-    "octo-org",
-    "octo-repo",
-    42,
-    auth
-      + {
+    {
+      owner: "octo-org",
+      repo: "octo-repo",
+      pull_number: 42,
+      options: auth,
       expected_head_oid: HEAD_OID,
       base_branch: "main",
       expected_base_oid: BASE_OID,
-      restore_merge_method: "SQUASH",
+      restore_merge_method: "squash",
     },
   )
   assert(is_err(result))

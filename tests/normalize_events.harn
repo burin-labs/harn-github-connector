@@ -1,4 +1,4 @@
-import { init, shutdown } from "../src/lib"
+import { init, shutdown } from "../src/facade"
 import { fixture_raw, github_normalize } from "./helpers"
 
 pipeline test_normalize_events(harness: Harness, task) {

@@ -28,6 +28,207 @@ pub type GithubConnectorError = {
 /** Canonical fallible boundary for every normalized GitHub operation. */
 pub type GithubConnectorResult<T> = Result<T, GithubConnectorError>
 
+/** GitHub accepts either a workflow file/name or its numeric database id. */
+pub type GithubWorkflowId = string | int
+
+/** Bounded retry policy for one GitHub HTTP request. */
+pub type GithubRetryPolicy = {
+  max_attempts?: int,
+  base_ms?: int,
+  backoff_ms?: int,
+  cap_ms?: int,
+  retry_on?: list<int>,
+  respect_retry_after?: bool,
+}
+
+/** Authentication, transport, and retry policy shared by typed requests. */
+pub type GithubClientOptions = {
+  api_base_url?: string,
+  installation_token?: string,
+  token?: string,
+  bindings?: dict,
+  secrets?: dict,
+  app_id?: string | int,
+  installation_id?: string | int,
+  private_key_pem?: string,
+  private_key_secret?: string,
+  jwt_alg?: string,
+  jwt_backdate_seconds?: int,
+  jwt_ttl_seconds?: int,
+  token_refresh_skew_seconds?: int,
+  now?: int,
+  timeout_ms?: int,
+  rate_limit_max_sleep_seconds?: int,
+  retry?: GithubRetryPolicy,
+  retry_unsafe?: bool,
+  idempotency_key?: string,
+  allow_gh_auth_fallback?: bool,
+  gh_auth_fallback?: bool,
+  gh_token?: string,
+  oauth_base_url?: string,
+  device_code_url?: string,
+  access_token_url?: string,
+}
+
+/** One low-level REST request for an endpoint without a typed helper. */
+pub type GithubRawApiRequest = {
+  path: string,
+  method?: string,
+  body?: unknown,
+  options?: GithubClientOptions,
+}
+
+/** Start GitHub's user OAuth device flow. */
+pub type GithubOAuthDeviceCodeRequest = {
+  client_id: string,
+  scope?: string,
+  options?: GithubClientOptions,
+}
+
+/** Poll one user OAuth device flow. */
+pub type GithubOAuthDevicePollRequest = {
+  client_id: string,
+  device_code: string,
+  options?: GithubClientOptions,
+}
+
+/** Exchange one user OAuth web-flow code. */
+pub type GithubOAuthExchangeCodeRequest = {
+  client_id: string,
+  code: string,
+  client_secret?: string,
+  redirect_uri?: string,
+  options?: GithubClientOptions,
+}
+
+/** Refresh one expiring GitHub user token. */
+pub type GithubOAuthRefreshRequest = {
+  client_id: string,
+  refresh_token: string,
+  client_secret?: string,
+  options?: GithubClientOptions,
+}
+
+/** Commit identity selected by a host or orchestration policy. */
+pub type GithubCommitIdentity = {name: string, email: string}
+
+/** Authorship policy that accompanies a mutation but never enters its body. */
+pub type GithubAuthorChoice = {
+  author_mode?: "human" | "bot",
+  commit_author?: GithubCommitIdentity,
+  commit_committer?: GithubCommitIdentity,
+  trailers?: string,
+}
+
+/** Top-level authorship fields accepted by dynamic mutation operations. */
+pub type GithubAuthorPolicy = {
+  github_author_choice?: GithubAuthorChoice,
+  author_choice?: GithubAuthorChoice,
+  author_mode?: "human" | "bot",
+}
+
+/** Named repository identity plus isolated authentication and transport policy. */
+pub type GithubRepositoryRequest = {owner: string, repo: string, options?: GithubClientOptions}
+
+/** Read one repository file, optionally at an exact ref. */
+pub type GithubRepositoryTextRequest = GithubRepositoryRequest \
+  & {path: string, ref?: string, include_raw?: bool}
+
+/** Decoded repository file content. */
+pub type GithubRepositoryText = {
+  name: string,
+  path: string,
+  sha: string,
+  size: int,
+  encoding: string,
+  ref: string?,
+  text: string,
+  raw: unknown?,
+}
+
+/** Named pull-request identity used instead of a positional repository/number tuple. */
+pub type GithubPullRequestRequest = GithubRepositoryRequest & {pull_number: int}
+
+/** Closed editable field set for a pull request. */
+pub type GithubPullRequestEditInput = {
+  title?: string,
+  body?: string?,
+  state?: "open" | "closed",
+  base?: string,
+}
+
+/** Request for the merge-captain pull-request view with normalized checks. */
+pub type GithubPullsWithChecksRequest = GithubRepositoryRequest \
+  & {state?: "open" | "closed", limit?: int, check_limit?: int}
+
+/** One normalized GraphQL check or legacy commit-status context. */
+pub type GithubStatusCheckContext = {
+  name: string,
+  status: string,
+  conclusion: string?,
+  detailsUrl: string?,
+}
+
+/** Pull-request fields needed by merge automation, including its check contexts. */
+pub type GithubPullRequestWithChecks = {
+  number: int,
+  title: string,
+  headRefName: string,
+  baseRefName: string,
+  isDraft: bool,
+  mergeStateStatus: string,
+  statusCheckRollup: list<GithubStatusCheckContext>,
+  url: string,
+}
+
+/** Ordered pull requests returned by the merge-captain view. */
+pub type GithubPullRequestsWithChecks = list<GithubPullRequestWithChecks>
+
+/** Request for editing one pull request through the canonical typed operation. */
+pub type GithubPullRequestEditRequest = GithubPullRequestRequest \
+  & {edits: GithubPullRequestEditInput}
+
+/** Request for a protected-branch-aware pull-request merge. */
+pub type GithubPullRequestMergeRequest = GithubPullRequestRequest \
+  & {
+  admin_override?: bool,
+  delete_branch?: bool,
+  method?: "merge" | "squash" | "rebase",
+  commit_title?: string,
+  commit_message?: string,
+}
+
+/** Request for enabling auto-merge under an exact head lease. */
+pub type GithubAutoMergeRequest = GithubPullRequestRequest \
+  & {
+  expected_head_oid: string,
+  method?: "merge" | "squash" | "rebase",
+  commit_headline?: string,
+  commit_body?: string,
+}
+
+/** Request for disabling auto-merge under exact pull and base leases. */
+pub type GithubAutoMergeDisableRequest = GithubPullRequestRequest \
+  & {
+  expected_head_oid: string,
+  base_branch: string,
+  expected_base_oid: string,
+  restore_merge_method: "merge" | "squash" | "rebase",
+}
+
+/** Protected-branch-aware merge evidence. Raw provider documents stay nested. */
+pub type GithubPullRequestMergeReceipt = {
+  pull_request: dict,
+  protected: bool,
+  branch_protection: dict?,
+  merge: dict,
+  delete_branch?: dict,
+}
+
+/** Request for reading all commits on one stable pull-request head. */
+pub type GithubPullRequestCommitsRequest = GithubPullRequestRequest \
+  & {per_page?: int, expected_head_oid?: string}
+
 /** Repository and immutable revision identity for one pull-request side. */
 pub type GithubPullRequestRef = {ref: string, sha: string, repo: string, owner: string}
 
@@ -73,15 +274,8 @@ pub type GithubPullRequestCreateReceipt = GithubPullRequestDetails & {created: b
 pub type GithubPullRequestEditReceipt = GithubPullRequestDetails & {ok: bool, updated: bool}
 
 /** Closed input for creating or refreshing one exact automation pull request. */
-pub type GithubPullRequestUpsertRequest = {
-  owner: string,
-  repo: string,
-  head: string,
-  base: string,
-  title: string,
-  body: string,
-  expected_head_oid: string,
-}
+pub type GithubPullRequestUpsertRequest = GithubRepositoryRequest \
+  & {head: string, base: string, title: string, body: string, expected_head_oid: string}
 
 /** Receipt proving whether an exact automation pull request was created or updated. */
 pub type GithubPullRequestUpsertReceipt = GithubPullRequestDetails \
@@ -105,6 +299,9 @@ pub type GithubBranchProtection = {
 /** One repository branch bound to its exact current commit. */
 pub type GithubBranchHead = {repo: string, branch: string, oid: string, url: string}
 
+/** Request for one branch's exact current commit. */
+pub type GithubBranchHeadRequest = GithubRepositoryRequest & {branch: string}
+
 /** Exact commit and tree identities used to compare two repository refs. */
 pub type GithubBranchTreeComparison = {
   repo: string,
@@ -118,12 +315,8 @@ pub type GithubBranchTreeComparison = {
 }
 
 /** Closed ref pair for one repository tree comparison. */
-pub type GithubBranchTreeCompareRequest = {
-  owner: string,
-  repo: string,
-  left_ref: string,
-  right_ref: string,
-}
+pub type GithubBranchTreeCompareRequest = GithubRepositoryRequest \
+  & {left_ref: string, right_ref: string}
 
 /** One repository file decoded at an exact Git ref. */
 pub type GithubRepositoryFile = {
@@ -148,7 +341,7 @@ pub type GithubFileLookup = {
   | {repo: string, path: string, ref: string, state: "absent", found: bool, file: nil}
 
 /** Closed identity for one repository file read. */
-pub type GithubFileLookupRequest = {owner: string, repo: string, path: string, ref: string}
+pub type GithubFileLookupRequest = GithubRepositoryRequest & {path: string, ref: string}
 
 /** One pull request's normalized merge-queue entry. */
 pub type GithubMergeQueueEntry = {
@@ -380,6 +573,209 @@ pub type GithubWorkflowRerunReceipt = {
   state: "rerun_requested",
 }
 
+/** Request for dispatching one workflow and resolving its exact run identity. */
+pub type GithubWorkflowDispatchRequest = GithubRepositoryRequest \
+  & {workflow_id: GithubWorkflowId, ref?: string, inputs?: dict}
+
+/** Filters shared by workflow-run listing and filtered monitoring. */
+pub type GithubWorkflowRunFilter = {
+  workflow_id?: GithubWorkflowId,
+  actor?: string,
+  branch?: string,
+  event?: string,
+  status?: string,
+  created?: string,
+  exclude_pull_requests?: bool,
+  check_suite_id?: int,
+  head_sha?: string,
+  per_page?: int,
+  page?: int,
+}
+
+/** Request for listing workflow runs in one repository. */
+pub type GithubWorkflowRunsRequest = GithubRepositoryRequest & GithubWorkflowRunFilter
+
+/** Request for one exact workflow run. */
+pub type GithubWorkflowRunRequest = {
+  owner: string,
+  repo: string,
+  run_id: int,
+  options?: GithubClientOptions,
+}
+
+/** Request for the jobs and steps of one exact workflow run. */
+pub type GithubWorkflowJobsRequest = GithubWorkflowRunRequest \
+  & {filter?: "latest" | "all", per_page?: int, page?: int}
+
+/** Request for rerunning one exact workflow run. */
+pub type GithubWorkflowRerunRequest = GithubWorkflowRunRequest & {enable_debug_logging?: bool}
+
+/** Repository or organization scope for a self-hosted runner operation. */
+pub type GithubRunnerScope = {
+  owner?: string,
+  repo?: string,
+  org?: string,
+  options?: GithubClientOptions,
+}
+
+/** Request for a self-hosted runner registration token. */
+pub type GithubRunnerRegistrationRequest = GithubRunnerScope
+
+/** Request for one page of self-hosted runners in a named scope. */
+pub type GithubRunnerListRequest = GithubRunnerScope & {per_page?: int, page?: int}
+
+/** Request for an ephemeral self-hosted runner configuration. */
+pub type GithubRunnerJitConfigRequest = GithubRunnerScope \
+  & {name: string, runner_group_id?: int, labels?: list<string>, work_folder?: string}
+
+/** One observable workflow polling attempt. */
+pub type GithubWorkflowWaitAttempt = {
+  attempt: int,
+  kind: string,
+  run_id?: int,
+  status?: string,
+  conclusion?: string?,
+  created_at?: string?,
+  error?: GithubConnectorError,
+}
+
+/** Bounded polling policy for workflow and check monitors. */
+pub type GithubPollingPolicy = {interval_ms?: int, timeout_ms?: int, max_attempts?: int}
+
+/** Terminal workflow-dispatch or monitoring state with exact run evidence. */
+pub type GithubWorkflowWaitReceipt = {
+  ok: bool,
+  status: string,
+  conclusion: string?,
+  run_id: int?,
+  candidate_run_ids: list<int>,
+  run_url: string?,
+  workflow_id: GithubWorkflowId?,
+  workflow_path: string?,
+  run_attempt: int?,
+  head_sha: string?,
+  head_branch: string?,
+  event: string?,
+  created_at: string?,
+  started_at: string?,
+  updated_at: string?,
+  attempts: list<GithubWorkflowWaitAttempt>,
+  timed_out: bool,
+  error: GithubConnectorError?,
+}
+
+/** Request for dispatching and optionally waiting for one workflow run. */
+pub type GithubWorkflowAutomationRequest = GithubWorkflowDispatchRequest \
+  & {polling?: GithubPollingPolicy}
+
+/** Request for monitoring one known or filtered workflow run. */
+pub type GithubWorkflowWaitRequest = GithubRepositoryRequest \
+  & {
+  run_id?: int,
+  filter?: GithubWorkflowRunFilter,
+  workflow_id?: GithubWorkflowId,
+  polling?: GithubPollingPolicy,
+}
+
+/** Request for waiting until the visible checks on a PR or SHA settle. */
+pub type GithubCheckWaitRequest = GithubRepositoryRequest \
+  & {
+  head_sha?: string,
+  pull_number?: int,
+  include_logs?: bool,
+  log_tail_lines?: int,
+  polling?: GithubPollingPolicy,
+}
+
+/** One attempt made while waiting for checks. */
+pub type GithubCheckWaitAttempt = {
+  attempt: int,
+  kind: string,
+  state?: string,
+  total?: int,
+  error?: GithubConnectorError,
+}
+
+/** Structured retrieval failure or a provider-supplied log error message. */
+pub type GithubCheckLogError = GithubConnectorError | string
+
+/** Tail of a failed GitHub Actions check log, or its typed retrieval error. */
+pub type GithubCheckLogSummary = {
+  check_id: int?,
+  name: string?,
+  run_id: int?,
+  content: string?,
+  lines: int,
+  truncated: bool,
+  error: GithubCheckLogError?,
+}
+
+/** Terminal aggregate for bounded check monitoring. */
+pub type GithubCheckWaitReceipt = {
+  ok: bool,
+  state: string,
+  head_sha: string?,
+  checks: list<GithubCheckRun>,
+  failing_checks: list<GithubCheckRun>,
+  pending_checks: list<GithubCheckRun>,
+  attempts: list<GithubCheckWaitAttempt>,
+  timed_out: bool,
+  logs?: list<GithubCheckLogSummary>,
+}
+
+/** Request for locating one open pull request by structural filters. */
+pub type GithubFindPullRequestRequest = GithubRepositoryRequest \
+  & {
+  state?: "open" | "closed" | "all",
+  head_ref?: string,
+  head_owner?: string,
+  base_ref?: string,
+  title?: string,
+  labels?: list<string>,
+  per_page?: int,
+}
+
+/** Result of an open-pull-request lookup. */
+pub type GithubFindPullRequestReceipt = {
+  ok: bool,
+  found: bool,
+  pull_number: int?,
+  pull_request: GithubPullRequestSummary?,
+  total_matches: int,
+  matches: list<GithubPullRequestSummary>,
+  error: GithubConnectorError?,
+}
+
+/** Request for closing a pull request after an optional final comment. */
+pub type GithubClosePullRequestRequest = GithubPullRequestRequest & {comment?: string}
+
+/** Receipt for a pull-request close attempt. */
+pub type GithubClosePullRequestReceipt = {
+  ok: bool,
+  pull_number: int,
+  state: "open" | "closed",
+  comment_posted: bool,
+  pull_request: dict?,
+  error: GithubConnectorError?,
+}
+
+/** Resolve the pull request associated with one commit SHA. */
+pub type GithubResolvePullRequestRequest = GithubRepositoryRequest \
+  & {sha: string, pull_requests?: list<unknown>}
+
+/** Pull-request identity evidence resolved from a payload or GitHub lookup. */
+pub type GithubResolvedPullRequest = {
+  ok: bool,
+  found: bool,
+  pull_number: int?,
+  pull_request: unknown?,
+  source: "payload" | "commit_pulls",
+  error: GithubConnectorError?,
+}
+
+/** Resolve GitHub's asynchronous mergeability state for one pull request. */
+pub type GithubMergeabilityRequest = GithubPullRequestRequest & {polling?: GithubPollingPolicy}
+
 /** One normalized asset attached to a GitHub release. */
 pub type GithubReleaseAsset = {
   id: int,
@@ -407,6 +803,59 @@ pub type GithubRelease = {
   assets: list<GithubReleaseAsset>,
 }
 
+/** Read one exact release tag. */
+pub type GithubReleaseRequest = GithubRepositoryRequest & {tag: string}
+
+/** List release assets, or omit the id to use the latest release. */
+pub type GithubReleaseAssetsRequest = GithubRepositoryRequest \
+  & {release_id?: int, per_page?: int, page?: int}
+
+/** Low-level release-assets request that requires an exact release id. */
+pub type GithubReleaseAssetListRequest = GithubRepositoryRequest \
+  & {release_id: int, per_page?: int, page?: int}
+
+/** Stable latest-release envelope used by orchestration. */
+pub type GithubLatestRelease = {
+  ok: bool,
+  repo: string?,
+  release_id: int?,
+  tag_name: string?,
+  name: string?,
+  draft: bool,
+  prerelease: bool,
+  url: string?,
+  html_url: string?,
+  published_at: string?,
+  assets: list<unknown>,
+  asset_names: list<string>,
+  raw: unknown?,
+  error: GithubConnectorError?,
+}
+
+/** Stable release-assets envelope used by orchestration. */
+pub type GithubReleaseAssets = {
+  ok: bool,
+  repo: string?,
+  release_id: int?,
+  assets: list<unknown>,
+  asset_names: list<string>,
+  raw: unknown?,
+  error: GithubConnectorError?,
+}
+
+/** Closed issue template accepted by the high-level issue helper. */
+pub type GithubIssueTemplate = {
+  title?: string,
+  body?: string,
+  labels?: list<string>,
+  assignees?: list<string>,
+  milestone?: int,
+}
+
+/** Create one issue by rendering a named template record. */
+pub type GithubIssueTemplateRequest = GithubRepositoryRequest \
+  & {template: GithubIssueTemplate, vars?: dict}
+
 /** Immutable tag and release identity used to lease a release mutation. */
 pub type GithubReleaseLease = {
   tag_ref_oid: string,
@@ -414,6 +863,9 @@ pub type GithubReleaseLease = {
   tag_target_type: string,
   release_id: int,
 }
+
+/** Replace a release body under the complete lease returned by a read. */
+pub type GithubReleaseEditRequest = GithubReleaseRequest & {body: string, lease: GithubReleaseLease}
 
 /** Explicit found-or-absent result for a release tag lookup. */
 pub type GithubReleaseLookup = {
@@ -491,9 +943,8 @@ pub type GithubCommitFileAddition = {path: string, contents_base64: string}
 pub type GithubCommitFileDeletion = {path: string}
 
 /** Leased request for one GitHub-signed commit on a branch. */
-pub type GithubSignedCommitRequest = {
-  owner: string,
-  repo: string,
+pub type GithubSignedCommitRequest = GithubRepositoryRequest \
+  & {
   branch: string,
   expected_head_oid: string,
   headline: string,
@@ -581,6 +1032,7 @@ pub type GithubWorktreeCommitRequest = {
   base_oid?: string?,
   create_branch?: bool?,
   reset_branch?: bool?,
+  options?: GithubClientOptions,
 }
 
 /** GitHub's own signature evidence for the published commit. */

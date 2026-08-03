@@ -1,4 +1,4 @@
-import { call, init, shutdown } from "../src/lib"
+import { call, init, shutdown } from "../src/facade"
 import { fixture_raw, github_normalize } from "./helpers"
 
 fn find_intent(intents, name) {

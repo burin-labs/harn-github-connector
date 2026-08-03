@@ -3,7 +3,7 @@ import {
   actions_runner_registration_token,
   actions_runners_list,
   call,
-} from "../src/lib"
+} from "../src/facade"
 
 pipeline test_runner_methods(harness: Harness, task) {
   harness.testing.http_mock_clear()
@@ -21,7 +21,10 @@ pipeline test_runner_methods(harness: Harness, task) {
     },
   )
   const reg = unwrap(
-    actions_runner_registration_token(harness, {owner: "octo-org", repo: "octo-repo"}, auth),
+    actions_runner_registration_token(
+      harness,
+      {owner: "octo-org", repo: "octo-repo", options: auth},
+    ),
   )
   assert_eq(reg.token, "AABBCC", "repo registration token")
   // Org-scope remove token.
@@ -45,11 +48,14 @@ pipeline test_runner_methods(harness: Harness, task) {
   const jit = unwrap(
     actions_runner_generate_jitconfig(
       harness,
-      {org: "octo-org"},
-      "jit-1",
-      1,
-      ["self-hosted", "linux"],
-      auth + {work_folder: "_work"},
+      {
+        org: "octo-org",
+        name: "jit-1",
+        runner_group_id: 1,
+        labels: ["self-hosted", "linux"],
+        work_folder: "_work",
+        options: auth,
+      },
     ),
   )
   assert_eq(jit.runner.id, 77, "jit runner id")
@@ -65,7 +71,10 @@ pipeline test_runner_methods(harness: Harness, task) {
     },
   )
   const runners = unwrap(
-    actions_runners_list(harness, {owner: "octo-org", repo: "octo-repo"}, auth + {per_page: 5}),
+    actions_runners_list(
+      harness,
+      {owner: "octo-org", repo: "octo-repo", per_page: 5, options: auth},
+    ),
   )
   assert_eq(runners.runners[0].id, 77, "list runners")
   // Get + delete a runner.

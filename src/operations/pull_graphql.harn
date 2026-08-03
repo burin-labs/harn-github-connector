@@ -1,0 +1,113 @@
+/** GraphQL documents used by pull-request and merge-queue operations. */
+pub fn __pulls_with_checks_query() {
+  return """
+query HarnGithubConnectorPullsWithChecks($owner: String!, $repo: String!, $states: [PullRequestState!], $limit: Int!, $checkLimit: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequests(states: $states, first: $limit, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      nodes {
+        number
+        title
+        headRefName
+        baseRefName
+        isDraft
+        mergeStateStatus
+        url
+        statusCheckRollup {
+          contexts(first: $checkLimit) {
+            nodes {
+              __typename
+              ... on CheckRun { name status conclusion detailsUrl }
+              ... on StatusContext { context state targetUrl }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+}
+
+pub fn __enable_auto_merge_mutation() {
+  return """
+mutation HarnGithubConnectorEnableAutoMerge($pullRequestId: ID!, $mergeMethod: PullRequestMergeMethod, $commitHeadline: String, $commitBody: String, $expectedHeadOid: GitObjectID) {
+  enablePullRequestAutoMerge(input: {pullRequestId: $pullRequestId, mergeMethod: $mergeMethod, commitHeadline: $commitHeadline, commitBody: $commitBody, expectedHeadOid: $expectedHeadOid}) {
+    actor { login }
+    pullRequest {
+      number
+      url
+      mergeStateStatus
+      autoMergeRequest { enabledAt mergeMethod }
+    }
+  }
+}
+"""
+}
+
+pub fn __disable_auto_merge_mutation() {
+  return """
+mutation HarnGithubConnectorDisableAutoMerge($pullRequestId: ID!) {
+  disablePullRequestAutoMerge(input: {pullRequestId: $pullRequestId}) {
+    actor { login }
+    pullRequest {
+      number
+      url
+      headRefOid
+      baseRefName
+      autoMergeRequest { enabledAt mergeMethod }
+    }
+  }
+}
+"""
+}
+
+pub fn __merge_queue_entries_query() {
+  return """
+query HarnGithubConnectorMergeQueueEntries($owner: String!, $repo: String!, $branch: String!, $limit: Int!) {
+  repository(owner: $owner, name: $repo) {
+    mergeQueue(branch: $branch) {
+      url
+      entries(first: $limit) {
+        nodes {
+          id position state enqueuedAt jump solo estimatedTimeToMerge
+          headCommit { oid }
+          pullRequest { number url headRefOid baseRefName }
+        }
+      }
+    }
+  }
+}
+"""
+}
+
+pub fn __merge_queue_membership_query() {
+  return """
+query HarnGithubConnectorMergeQueueMembership($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      number
+      autoMergeRequest { enabledAt mergeMethod }
+      mergeQueueEntry {
+        id position state enqueuedAt jump solo estimatedTimeToMerge
+        headCommit { oid }
+        pullRequest { number url headRefOid baseRefName }
+      }
+    }
+  }
+}
+"""
+}
+
+pub fn __enqueue_pull_request_mutation() {
+  return """
+mutation HarnGithubConnectorEnqueuePullRequest($input: EnqueuePullRequestInput!) {
+  enqueuePullRequest(input: $input) {
+    mergeQueueEntry {
+      id position state enqueuedAt jump solo estimatedTimeToMerge
+      headCommit { oid }
+      pullRequest { number url headRefOid baseRefName }
+    }
+  }
+}
+"""
+}
