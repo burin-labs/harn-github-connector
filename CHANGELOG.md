@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.6.8 - 2026-08-02
+
 - Make the release-gate tests hermetic. The fixture package now owns its own
   Git repository and states the tag-head requirement explicitly instead of
   inheriting it, so the gate reads fixture tags rather than this checkout's.
