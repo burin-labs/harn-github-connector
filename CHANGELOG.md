@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Make the release-gate tests hermetic. The fixture package now owns its own
+  Git repository and states the tag-head requirement explicitly instead of
+  inheriting it, so the gate reads fixture tags rather than this checkout's.
+  The v0.6.7 release run failed on exactly this: the release job exports
+  `CHECK_RELEASE_REQUIRE_TAG_HEAD=true` and checks out full history, so the
+  fixture resolved the real `v0.6.6` tag and compared it against `HEAD`. Both
+  tag-head outcomes now have direct coverage.
+
 ## 0.6.7 - 2026-08-02
 
 - Export closed file and latest-release lookup contracts plus named typed

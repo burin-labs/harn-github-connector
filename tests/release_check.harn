@@ -12,11 +12,32 @@ fn expect_text(observed: string, wanted: string, label: string) {
 
 type ReleaseTestCapabilities = {fs: HarnessFs, process: HarnessProcess}
 
+fn git_ok(capabilities: ReleaseTestCapabilities, dir: string, args: list<string>) -> string {
+  const result = capabilities.process.run(
+    {program: "git", args: args, cwd: dir, env: {}, stdin: "", timeout_ms: 30000},
+  )
+  expect(
+    result.success,
+    "fixture `git " + join(args, " ") + "` failed: " + to_string(result.stderr),
+  )
+  return trim(to_string(result.stdout))
+}
+
+/**
+ * Run the release gate against one fixture package.
+ *
+ * `require_tag_head` is always passed explicitly. The gate reads it from the
+ * environment, and `process.run` inherits the caller's environment, so a test
+ * that stayed silent would assert whatever the surrounding job happened to
+ * export. The release workflow exports it as `true`, which is how a green CI
+ * run and a red release run disagreed about the same commit.
+ */
 fn run_release_check(
   capabilities: ReleaseTestCapabilities,
   dir: string,
   tag: string,
   receipt: string,
+  require_tag_head: bool,
 ) -> dict {
   const project_root = capabilities.fs.project_root() ?? capabilities.fs.cwd()
   return capabilities.process.run(
@@ -24,13 +45,29 @@ fn run_release_check(
       program: "/bin/bash",
       args: [project_root + "/scripts/check-release.sh", tag],
       cwd: dir,
-      env: {PATH: dir + "/bin:/usr/bin:/bin", HARN_ARGV_RECEIPT: receipt},
+      env: {
+        PATH: dir + "/bin:/usr/bin:/bin",
+        HARN_ARGV_RECEIPT: receipt,
+        CHECK_RELEASE_REQUIRE_TAG_HEAD: if require_tag_head {
+          "true"
+        } else {
+          "false"
+        },
+      },
       stdin: "",
       timeout_ms: 30000,
     },
   )
 }
 
+/**
+ * A fixture package that owns its own Git repository.
+ *
+ * The gate resolves tags and `HEAD` from whatever repository encloses its
+ * working directory. Without a repository of its own the fixture would walk up
+ * into this checkout and read the connector's real tags, so what the gate
+ * observed would depend on the clone depth of the job running the tests.
+ */
 fn release_fixture(capabilities: ReleaseTestCapabilities) -> {dir: string, receipt: string} {
   const dir = capabilities.fs.mkdtemp_in_workspace("harn-release-check-")
   capabilities.fs.mkdir(dir + "/bin", true)
@@ -54,13 +91,24 @@ fn release_fixture(capabilities: ReleaseTestCapabilities) -> {dir: string, recei
     "[package]\nname = \"release-fixture\"\nversion = \"0.6.6\"\n",
   )
   capabilities.fs.write_text(dir + "/CHANGELOG.md", "# Changelog\n\n## 0.6.6 - 2026-08-02\n")
+  git_ok(capabilities, dir, ["init", "-q", "-b", "main", "."])
+  git_ok(capabilities, dir, ["config", "user.email", "harn-release-check@example.test"])
+  git_ok(capabilities, dir, ["config", "user.name", "Harn Release Check Test"])
+  git_ok(capabilities, dir, ["config", "commit.gpgsign", "false"])
+  git_ok(capabilities, dir, ["config", "core.hooksPath", ".git/harn-absent-hooks"])
+  git_ok(capabilities, dir, ["add", "-A"])
+  git_ok(capabilities, dir, ["commit", "-q", "--no-verify", "-m", "release fixture"])
   return {dir: dir, receipt: dir + "/harn-argv.txt"}
+}
+
+fn commit_empty(capabilities: ReleaseTestCapabilities, dir: string, message: string) {
+  git_ok(capabilities, dir, ["commit", "-q", "--no-verify", "--allow-empty", "-m", message])
 }
 
 pipeline test_release_check_delegates_to_one_strict_package_gate(harness: Harness, task) {
   const capabilities = {fs: harness.fs, process: harness.process}
   const fixture = release_fixture(capabilities)
-  const result = run_release_check(capabilities, fixture.dir, "v0.6.6", fixture.receipt)
+  const result = run_release_check(capabilities, fixture.dir, "v0.6.6", fixture.receipt, false)
   expect(result.success, "valid release contract failed: " + to_string(result.stderr))
   expect_text(to_string(result.stdout), "", "stdout")
   expect_text(to_string(result.stderr), "", "stderr")
@@ -77,7 +125,7 @@ pipeline test_release_check_rejects_invalid_tag_before_package_verification(
 ) {
   const capabilities = {fs: harness.fs, process: harness.process}
   const fixture = release_fixture(capabilities)
-  const result = run_release_check(capabilities, fixture.dir, "0.6.6", fixture.receipt)
+  const result = run_release_check(capabilities, fixture.dir, "0.6.6", fixture.receipt, false)
   expect(!result.success, "invalid release tag unexpectedly succeeded")
   expect(result.exit_code == 1, "invalid release tag must exit 1")
   expect_text(to_string(result.stdout), "", "stdout")
@@ -95,7 +143,7 @@ pipeline test_release_check_rejects_manifest_version_mismatch_before_package_ver
 ) {
   const capabilities = {fs: harness.fs, process: harness.process}
   const fixture = release_fixture(capabilities)
-  const result = run_release_check(capabilities, fixture.dir, "v0.6.7", fixture.receipt)
+  const result = run_release_check(capabilities, fixture.dir, "v0.6.7", fixture.receipt, false)
   expect(!result.success, "mismatched package version unexpectedly succeeded")
   expect(result.exit_code == 1, "mismatched package version must exit 1")
   expect_text(to_string(result.stdout), "", "stdout")
@@ -105,4 +153,44 @@ pipeline test_release_check_rejects_manifest_version_mismatch_before_package_ver
     "manifest mismatch error",
   )
   expect(!harness.fs.exists(fixture.receipt), "manifest mismatch reached package verification")
+}
+
+/** The release workflow's own configuration: the tag under release is `HEAD`. */
+pipeline test_release_check_accepts_a_tag_that_is_head_when_tag_head_is_required(
+  harness: Harness,
+  task,
+) {
+  const capabilities = {fs: harness.fs, process: harness.process}
+  const fixture = release_fixture(capabilities)
+  git_ok(capabilities, fixture.dir, ["tag", "v0.6.6"])
+  const result = run_release_check(capabilities, fixture.dir, "v0.6.6", fixture.receipt, true)
+  expect(result.success, "tag at HEAD failed the release gate: " + to_string(result.stderr))
+  expect_text(to_string(result.stderr), "", "stderr")
+  expect_text(
+    harness.fs.read_text(fixture.receipt),
+    "package\nverify\n.\n--strict\n",
+    "canonical Harn argv",
+  )
+}
+
+pipeline test_release_check_rejects_a_tag_behind_head_when_tag_head_is_required(
+  harness: Harness,
+  task,
+) {
+  const capabilities = {fs: harness.fs, process: harness.process}
+  const fixture = release_fixture(capabilities)
+  git_ok(capabilities, fixture.dir, ["tag", "v0.6.6"])
+  commit_empty(capabilities, fixture.dir, "after the tag")
+  const tagged = git_ok(capabilities, fixture.dir, ["rev-list", "-n", "1", "v0.6.6"])
+  const head = git_ok(capabilities, fixture.dir, ["rev-parse", "HEAD"])
+  const result = run_release_check(capabilities, fixture.dir, "v0.6.6", fixture.receipt, true)
+  expect(!result.success, "a tag behind HEAD unexpectedly passed the release gate")
+  expect(result.exit_code == 1, "a tag behind HEAD must exit 1")
+  expect_text(to_string(result.stdout), "", "stdout")
+  expect_text(
+    to_string(result.stderr),
+    "tag v0.6.6 points at " + tagged + ", but HEAD is " + head + "\n",
+    "tag-head error",
+  )
+  expect(!harness.fs.exists(fixture.receipt), "a tag behind HEAD reached package verification")
 }
