@@ -4983,7 +4983,7 @@ fn __oauth_post(clock: HarnessClock, net: HarnessNet, url, body, args) {
     },
   )
   if !(response.ok ?? false) {
-    if response?.status == nil || to_int(response?.status ?? 0) == 0 {
+    if response.status == nil || to_int(response.status ?? 0) == 0 {
       return __err("network", response?.error?.message ?? to_string(response?.error ?? response))
     }
     return __err(
@@ -9128,16 +9128,16 @@ fn __is_rate_limit_response(clock: HarnessClock, response) {
   if response.status == 429 {
     return true
   }
-  return trim(to_string(connector_http_rate_limit(clock, response)?.remaining ?? "")) == "0"
+  return trim(to_string(connector_http_rate_limit(clock, response).remaining ?? "")) == "0"
 }
 
 fn __maybe_wait_for_rate_limit(clock: HarnessClock, response, cfg) {
   const rate_limit = connector_http_rate_limit(clock, response)
-  const remaining = rate_limit?.remaining
+  const remaining = rate_limit.remaining
   if remaining == nil || trim(to_string(remaining)) != "0" {
     return Ok(false)
   }
-  const reset = rate_limit?.x_ratelimit_reset ?? rate_limit?.reset
+  const reset = rate_limit.x_ratelimit_reset ?? rate_limit.reset
   if reset == nil || trim(to_string(reset)) == "" {
     return Ok(true)
   }
@@ -9258,7 +9258,7 @@ fn __exchange_installation_token(harness: Harness, config) {
     if response?.error?.category == "invalid_json" {
       return __err("invalid_response", "GitHub installation token response was not valid JSON")
     }
-    if response?.status == nil {
+    if response.status == nil {
       return __err("transport", response?.error?.message ?? to_string(response?.error ?? response))
     }
     return __err(
