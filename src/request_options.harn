@@ -1,0 +1,61 @@
+import { GithubAuthorPolicy, GithubClientOptions } from "./contracts"
+
+/** Project the client-policy field names from their owning type contract. */
+pub fn __client_option_keys() -> list<string> {
+  return schema_of(GithubClientOptions).properties.keys().sorted()
+}
+
+/**
+ * Project every non-provider field that must stay out of GitHub request bodies.
+ *
+ * The schemas are the single source of truth. Adding a typed option updates
+ * body filtering without maintaining a second string catalog.
+ */
+pub fn __request_context_keys() -> list<string> {
+  return (__client_option_keys() + schema_of(GithubAuthorPolicy).properties.keys()).sorted()
+}
+
+/** Keep only client policy when adapting a request to the dynamic dispatch boundary. */
+pub fn __client_options(options: unknown) -> dict {
+  if type_of(options) != "dict" {
+    return {}
+  }
+  let client = {}
+  for key in __client_option_keys() {
+    const value = options.get(key)
+    if value != nil {
+      client[key] = value
+    }
+  }
+  return client
+}
+
+/** Flatten one typed operation request at the dynamic connector boundary. */
+pub fn __request_args(request: unknown) -> dict {
+  if type_of(request) != "dict" {
+    return {}
+  }
+  const args = request.removing("options")
+  return __client_options(request?.options ?? {}) + args
+}
+
+pub fn __positive_int(value: unknown, fallback: int) -> int {
+  if value == nil {
+    return fallback
+  }
+  const parsed = to_int(value) ?? fallback
+  if parsed < 0 {
+    return 0
+  }
+  return parsed
+}
+
+pub fn __resolve_max_attempts(value: unknown, poll_interval_ms: int, timeout_ms: int) -> int {
+  if value != nil {
+    return max(1, to_int(value) ?? 1)
+  }
+  if poll_interval_ms <= 0 {
+    return 60
+  }
+  return max(1, timeout_ms / poll_interval_ms + 1)
+}

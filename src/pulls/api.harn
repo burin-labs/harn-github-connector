@@ -1,0 +1,121 @@
+import { call_typed } from "../api"
+import {
+  GithubAutoMergeDisableReceipt,
+  GithubAutoMergeDisableRequest,
+  GithubAutoMergeReceipt,
+  GithubAutoMergeRequest,
+  GithubConnectorResult,
+  GithubMergeability,
+  GithubMergeabilityRequest,
+  GithubPullRequestCommits,
+  GithubPullRequestCommitsRequest,
+  GithubPullRequestEditReceipt,
+  GithubPullRequestEditRequest,
+  GithubPullRequestMergeReceipt,
+  GithubPullRequestMergeRequest,
+  GithubPullRequestUpsertReceipt,
+  GithubPullRequestUpsertRequest,
+  GithubPullRequestsWithChecks,
+  GithubPullsWithChecksRequest,
+} from "../contracts"
+import { pr_edit_body } from "../pr_edit"
+import { __request_args } from "../request_options"
+
+/** List pull requests with normalized merge state and CI contexts. */
+pub fn pulls_list_with_checks(
+  harness: Harness,
+  request: GithubPullsWithChecksRequest,
+) -> GithubConnectorResult<GithubPullRequestsWithChecks> {
+  return call_typed(
+    harness,
+    "pulls.list_with_checks",
+    __request_args(request),
+    GithubPullRequestsWithChecks,
+  )
+}
+
+/** Create or refresh the sole open pull request for one exact head/base pair. */
+pub fn github_upsert_pull_request(
+  harness: Harness,
+  request: GithubPullRequestUpsertRequest,
+) -> GithubConnectorResult<GithubPullRequestUpsertReceipt> {
+  return call_typed(
+    harness,
+    "github.pr.upsert",
+    __request_args(request),
+    GithubPullRequestUpsertReceipt,
+  )
+}
+
+/** Update the closed editable field set of one pull request. */
+pub fn pulls_update(
+  harness: Harness,
+  request: GithubPullRequestEditRequest,
+) -> GithubConnectorResult<GithubPullRequestEditReceipt> {
+  const body = pr_edit_body(request.edits)
+  if is_err(body) {
+    return Err(unwrap_err(body))
+  }
+  const args = __request_args(request).removing("edits") + unwrap(body)
+  return call_typed(harness, "github.pr.edit", args, GithubPullRequestEditReceipt)
+}
+
+/** Merge one pull request after checking its base-branch protection. */
+pub fn pulls_merge_safe(
+  harness: Harness,
+  request: GithubPullRequestMergeRequest,
+) -> GithubConnectorResult<GithubPullRequestMergeReceipt> {
+  return call_typed(
+    harness,
+    "pulls.merge_safe",
+    __request_args(request),
+    GithubPullRequestMergeReceipt,
+  )
+}
+
+/** Enable auto-merge under an exact pull-request head lease. */
+pub fn pulls_enable_auto_merge(
+  harness: Harness,
+  request: GithubAutoMergeRequest,
+) -> GithubConnectorResult<GithubAutoMergeReceipt> {
+  return call_typed(
+    harness,
+    "github.pr.enable_auto_merge",
+    __request_args(request),
+    GithubAutoMergeReceipt,
+  )
+}
+
+/** Disable auto-merge under exact pull and base leases. */
+pub fn pulls_disable_auto_merge(
+  harness: Harness,
+  request: GithubAutoMergeDisableRequest,
+) -> GithubConnectorResult<GithubAutoMergeDisableReceipt> {
+  return call_typed(
+    harness,
+    "github.pr.disable_auto_merge",
+    __request_args(request),
+    GithubAutoMergeDisableReceipt,
+  )
+}
+
+/** Read every commit on one stable pull-request head. */
+pub fn github_pr_commits(
+  harness: Harness,
+  request: GithubPullRequestCommitsRequest,
+) -> GithubConnectorResult<GithubPullRequestCommits> {
+  return call_typed(harness, "github.pr.commits", __request_args(request), GithubPullRequestCommits)
+}
+
+/** Resolve GitHub's asynchronous mergeability state with bounded polling. */
+pub fn github_resolve_mergeable(
+  harness: Harness,
+  request: GithubMergeabilityRequest,
+) -> GithubConnectorResult<GithubMergeability> {
+  return call_typed(
+    harness,
+    "pull_requests.resolve_mergeable",
+    __request_args(request),
+    GithubMergeability,
+  )
+}

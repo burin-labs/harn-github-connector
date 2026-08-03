@@ -3,7 +3,7 @@ import {
   issues_create_with_template,
   pulls_list_with_checks,
   pulls_merge_safe,
-} from "../src/lib"
+} from "../src/facade"
 
 pipeline test_merge_captain_methods(harness: Harness, task) {
   harness.testing.http_mock_clear()
@@ -58,7 +58,12 @@ pipeline test_merge_captain_methods(harness: Harness, task) {
       headers: {"x-ratelimit-remaining": "10"},
     },
   )
-  const pulls = unwrap(pulls_list_with_checks(harness, "octo-org", "octo-repo", "open", 2, auth))
+  const pulls = unwrap(
+    pulls_list_with_checks(
+      harness,
+      {owner: "octo-org", repo: "octo-repo", state: "open", limit: 2, options: auth},
+    ),
+  )
   assert_eq(pulls[0].number, 101, "list_with_checks PR number")
   assert_eq(pulls[0].mergeStateStatus, "CLEAN", "list_with_checks merge state")
   assert_eq(pulls[0].statusCheckRollup[0].conclusion, "SUCCESS", "check run conclusion")
@@ -92,15 +97,17 @@ pipeline test_merge_captain_methods(harness: Harness, task) {
   const issue = unwrap(
     issues_create_with_template(
       harness,
-      "octo-org",
-      "octo-repo",
       {
-        title: "Conflict in #{{number}}",
-        body: "PR {{number}} needs a human for {{reason}}.",
-        labels: ["merge-captain", "needs-human"],
+        owner: "octo-org",
+        repo: "octo-repo",
+        template: {
+          title: "Conflict in #{{number}}",
+          body: "PR {{number}} needs a human for {{reason}}.",
+          labels: ["merge-captain", "needs-human"],
+        },
+        vars: {number: 101, reason: "semantic conflict"},
+        options: auth,
       },
-      {number: 101, reason: "semantic conflict"},
-      auth,
     ),
   )
   assert_eq(issue.number, 77, "template issue number")
@@ -231,10 +238,12 @@ pipeline test_merge_captain_methods(harness: Harness, task) {
   const merged = unwrap(
     pulls_merge_safe(
       harness,
-      "octo-org",
-      "octo-repo",
-      101,
-      auth + {merge_method: "squash", admin_override: true, delete_branch: true},
+      auth + {merge_method: "squash", admin_override: true, delete_branch: true}
+        + {
+        owner: "octo-org",
+        repo: "octo-repo",
+        pull_number: 101,
+      },
     ),
   )
   assert(merged.protected, "merge_safe detected protected branch")

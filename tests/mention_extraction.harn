@@ -1,4 +1,4 @@
-import { github_extract_mentions, init, shutdown } from "../src/lib"
+import { github_extract_mentions, init, shutdown } from "../src/facade"
 import { fixture_raw, github_normalize } from "./helpers"
 
 pipeline test_mention_extraction(harness: Harness, task) {

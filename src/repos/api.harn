@@ -1,0 +1,43 @@
+import { call, call_typed } from "../api"
+import {
+  GithubConnectorResult,
+  GithubFileLookup,
+  GithubFileLookupRequest,
+  GithubReleaseAssetListRequest,
+  GithubRepositoryRequest,
+  GithubRepositoryText,
+  GithubRepositoryTextRequest,
+} from "../contracts"
+import { __request_args } from "../request_options"
+
+/** Read one repository file as decoded UTF-8 text. */
+pub fn repos_get_text(
+  harness: Harness,
+  request: GithubRepositoryTextRequest,
+) -> GithubConnectorResult<GithubRepositoryText> {
+  return call_typed(harness, "repos.get_text", __request_args(request), GithubRepositoryText)
+}
+
+/** Read and decode one repository file under an exact Git ref. */
+pub fn github_file_at_ref(
+  harness: Harness,
+  request: GithubFileLookupRequest,
+) -> GithubConnectorResult<GithubFileLookup> {
+  return call_typed(harness, "github.file.view", __request_args(request), GithubFileLookup)
+}
+
+/** Fetch GitHub's raw latest-release resource. */
+pub fn repos_get_latest_release(
+  harness: Harness,
+  request: GithubRepositoryRequest,
+) -> GithubConnectorResult<unknown> {
+  return call(harness, "repos.get_latest_release", __request_args(request))
+}
+
+/** List GitHub's raw assets for one exact release id. */
+pub fn repos_list_release_assets(
+  harness: Harness,
+  request: GithubReleaseAssetListRequest,
+) -> GithubConnectorResult<unknown> {
+  return call(harness, "repos.list_release_assets", __request_args(request))
+}

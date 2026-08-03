@@ -1,4 +1,4 @@
-import { call, reset_token_cache } from "../src/lib"
+import { call, reset_token_cache } from "../src/facade"
 
 fn fixture_key(fs: HarnessFs) {
   return fs.read_text(path_join(fs.source_dir(), "fixtures/github_app_test_key.pem"))

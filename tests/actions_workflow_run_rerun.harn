@@ -1,4 +1,4 @@
-import { actions_workflow_run_rerun, call } from "../src/lib"
+import { actions_workflow_run_rerun, call } from "../src/facade"
 
 const BASE = "https://github-api.test"
 
@@ -21,10 +21,13 @@ pipeline test_actions_workflow_run_rerun_requests_exact_run(harness: Harness, ta
   harness.testing.http_mock("POST", rerun_url(), {status: 201, body: ""})
   const result = actions_workflow_run_rerun(
     harness,
-    "octo-org",
-    "octo-repo",
-    RUN_ID,
-    auth() + {enable_debug_logging: true},
+    {
+      owner: "octo-org",
+      repo: "octo-repo",
+      run_id: RUN_ID,
+      enable_debug_logging: true,
+      options: auth(),
+    },
   )
   assert(is_ok(result), "accepted rerun returns Ok")
   const calls = harness.testing.http_mock_calls()
@@ -54,15 +57,17 @@ pipeline test_github_actions_run_rerun_returns_closed_receipt(harness: Harness, 
 
 pipeline test_actions_workflow_run_rerun_rejects_invalid_input(harness: Harness, task) {
   harness.testing.http_mock_clear()
-  const invalid_id = actions_workflow_run_rerun(harness, "octo-org", "octo-repo", "1/force", auth())
+  const invalid_id = call(
+    harness,
+    "github.actions.run_rerun",
+    auth() + {repo: "octo-org/octo-repo", run_id: "1/force"},
+  )
   assert(is_err(invalid_id), "invalid run id fails before HTTP")
   assert_eq(unwrap_err(invalid_id).code, "schema_drift")
-  const invalid_debug = actions_workflow_run_rerun(
+  const invalid_debug = call(
     harness,
-    "octo-org",
-    "octo-repo",
-    RUN_ID,
-    auth() + {enable_debug_logging: "yes"},
+    "github.actions.run_rerun",
+    auth() + {repo: "octo-org/octo-repo", run_id: RUN_ID, enable_debug_logging: "yes"},
   )
   assert(is_err(invalid_debug), "invalid debug flag fails before HTTP")
   assert_eq(unwrap_err(invalid_debug).code, "schema_drift")

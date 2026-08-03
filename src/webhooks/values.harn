@@ -1,0 +1,142 @@
+pub fn __truncate_summary(value) {
+  const text = to_string(value ?? "")
+  if len(text) <= 80 {
+    return text
+  }
+  return text[0:77] + "..."
+}
+
+pub fn __topic(event_kind, action) {
+  const prefix = "github." + to_string(event_kind)
+  if action == nil || trim(to_string(action)) == "" {
+    return prefix
+  }
+  return prefix + "." + to_string(action)
+}
+
+pub fn __first(values) {
+  const list = values ?? []
+  if len(list) == 0 {
+    return nil
+  }
+  return list[0]
+}
+
+pub fn __pull_request_numbers(pulls) {
+  let numbers = []
+  for pr in pulls ?? [] {
+    if pr?.number != nil {
+      numbers = numbers + [pr.number]
+    }
+  }
+  return numbers
+}
+
+pub fn __ref_name(ref) {
+  if ref == nil {
+    return nil
+  }
+  const text = to_string(ref)
+  if starts_with(text, "refs/heads/") {
+    return text[11:len(text)]
+  }
+  if starts_with(text, "refs/tags/") {
+    return text[10:len(text)]
+  }
+  return text
+}
+
+pub fn __installation_state(action) {
+  const value = to_string(action ?? "")
+  if __is_suspension_action(value) {
+    return "suspended"
+  }
+  if value == "unsuspend" || value == "unsuspended" {
+    return "active"
+  }
+  if __is_revocation_action(value) {
+    return "revoked"
+  }
+  return nil
+}
+
+pub fn __is_suspension_action(action) {
+  const value = to_string(action ?? "")
+  return value == "suspend" || value == "suspended"
+}
+
+pub fn __is_revocation_action(action) {
+  const value = to_string(action ?? "")
+  return value == "deleted" || value == "removed" || value == "revoked"
+}
+
+pub fn __repo(payload) {
+  const repo = payload?.repository ?? {}
+  const owner = repo?.owner ?? {}
+  const owner_name = owner?.login ?? owner?.name ?? ""
+  const repo_name = repo?.name ?? ""
+  const fallback_full_name = if owner_name == "" || repo_name == "" {
+    ""
+  } else {
+    owner_name + "/" + repo_name
+  }
+  return {owner: owner_name, name: repo_name, full_name: repo?.full_name ?? fallback_full_name}
+}
+
+pub fn __occurred_at(event_kind, payload, raw) {
+  if raw?.occurred_at != nil {
+    return raw.occurred_at
+  }
+  if event_kind == "push" {
+    return payload?.head_commit?.timestamp ?? payload?.repository?.pushed_at
+  }
+  if event_kind == "pull_request" {
+    return payload?.pull_request?.updated_at ?? payload?.pull_request?.created_at
+  }
+  if event_kind == "issues" {
+    return payload?.issue?.updated_at ?? payload?.issue?.created_at
+  }
+  if event_kind == "issue_comment" {
+    return payload?.comment?.updated_at ?? payload?.comment?.created_at
+  }
+  if event_kind == "pull_request_review" {
+    return payload?.review?.submitted_at ?? payload?.review?.updated_at
+      ?? payload?.pull_request
+      ?.updated_at
+      ?? payload?.pull_request?.created_at
+  }
+  if event_kind == "workflow_run" {
+    return payload?.workflow_run?.updated_at ?? payload?.workflow_run?.created_at
+      ?? payload
+      ?.workflow_run?.run_started_at
+  }
+  if event_kind == "check_suite" {
+    return payload?.check_suite?.updated_at ?? payload?.check_suite?.created_at
+  }
+  if event_kind == "deployment_status" {
+    return payload?.deployment_status?.created_at ?? payload?.deployment_status?.updated_at
+      ?? payload
+      ?.deployment?.created_at
+  }
+  if event_kind == "status" {
+    return payload?.updated_at ?? payload?.created_at
+  }
+  if event_kind == "merge_group" {
+    return payload?.merge_group?.updated_at ?? payload?.merge_group?.created_at
+      ?? payload?.merge_group
+      ?.head_commit?.timestamp
+  }
+  if event_kind == "installation" || event_kind == "installation_repositories" {
+    return payload?.installation?.updated_at ?? payload?.installation?.created_at
+      ?? payload
+      ?.installation?.suspended_at
+  }
+  if event_kind == "release" {
+    return payload?.release?.published_at ?? payload?.release?.updated_at
+      ?? payload?.release
+      ?.created_at
+  }
+  return payload?.check_run?.completed_at ?? payload?.check_run?.started_at
+    ?? payload?.check_run
+    ?.created_at
+}

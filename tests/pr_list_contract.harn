@@ -1,4 +1,4 @@
-import { call } from "../src/lib"
+import { call } from "../src/facade"
 
 fn auth(base) {
   return {api_base_url: base, installation_token: "test-token"}

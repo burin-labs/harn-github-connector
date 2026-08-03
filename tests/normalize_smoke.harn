@@ -1,4 +1,4 @@
-import { init, shutdown } from "../src/lib"
+import { init, shutdown } from "../src/facade"
 import {
   fixture_body,
   fixture_raw,

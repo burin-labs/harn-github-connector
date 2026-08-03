@@ -1,0 +1,28 @@
+import { logical_line_count, source_length_violations } from "../scripts/check-source-layout"
+
+pipeline test_logical_line_counting_handles_final_newlines(harness: Harness, task) {
+  assert_eq(logical_line_count(""), 0)
+  assert_eq(logical_line_count("one"), 1)
+  assert_eq(logical_line_count("one\n"), 1)
+  assert_eq(logical_line_count("one\ntwo"), 2)
+}
+
+pipeline test_source_policy_reports_only_oversized_matching_files(harness: Harness, task) {
+  const root = path_join(harness.fs.workspace_temp_dir(), "source-layout-" + harness.random.uuid())
+  harness.fs.mkdir(root)
+  harness.fs.mkdir(path_join(root, "nested"))
+  harness.fs.write_text(path_join(root, "small.harn"), "one\ntwo\n")
+  harness.fs.write_text(path_join(root, "nested/large.harn"), "one\ntwo\nthree\n")
+  harness.fs.write_text(path_join(root, "ignored.txt"), "one\ntwo\nthree\nfour\n")
+  const violations = source_length_violations(
+    harness.fs,
+    {root: root, suffix: ".harn", max_lines: 2},
+  )
+  assert_eq(violations.count, 1)
+  const violation = violations[0]
+  if violation == nil {
+    throw "expected one source-length violation"
+  }
+  assert_eq(violation.path, "${root}/nested/large.harn")
+  assert_eq(violation.actual_lines, 3)
+}

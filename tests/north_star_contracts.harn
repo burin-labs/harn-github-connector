@@ -1,14 +1,9 @@
-import { call } from "../src/lib"
+import { call } from "../src/facade"
 
 const BASE = "https://github-api.test"
 
 fn auth() {
-  return {
-    api_base_url: BASE,
-    installation_token: "test-token",
-    poll_interval_ms: 0,
-    max_attempts: 2,
-  }
+  return {api_base_url: BASE, installation_token: "test-token", retry: {max_attempts: 2}}
 }
 
 fn pull(number, sha, auto_merge = nil) {

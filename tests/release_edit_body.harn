@@ -1,4 +1,4 @@
-import { github_release_edit_body } from "../src/lib"
+import { GithubReleaseEditRequest, github_release_edit_body } from "../src/facade"
 
 const REF_OID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
@@ -59,6 +59,17 @@ fn auth(base) {
   return {api_base_url: base, installation_token: "token"}
 }
 
+fn edit_request(base: string, body: string) -> GithubReleaseEditRequest {
+  return {
+    owner: "octo-org",
+    repo: "octo-repo",
+    tag: "v1.2.3",
+    body: body,
+    lease: lease(),
+    options: auth(base),
+  }
+}
+
 pipeline test_release_body_edit_is_leased_and_metadata_only(harness: Harness, task) {
   harness.testing.http_mock_clear()
   const base = "https://github-api.test"
@@ -74,17 +85,7 @@ pipeline test_release_body_edit_is_leased_and_metadata_only(harness: Harness, ta
       headers: {"x-ratelimit-remaining": "7"},
     },
   )
-  const receipt = unwrap(
-    github_release_edit_body(
-      harness,
-      "octo-org",
-      "octo-repo",
-      "v1.2.3",
-      replacement,
-      lease(),
-      auth(base),
-    ),
-  )
+  const receipt = unwrap(github_release_edit_body(harness, edit_request(base, replacement)))
   assert_eq(receipt.state, "edited", "typed edit receipt")
   assert_eq(receipt.release_id, 701, "release lease is retained")
   assert_eq(receipt.tag_ref_oid, REF_OID, "tag object lease is retained")
@@ -105,15 +106,7 @@ pipeline test_release_body_edit_rejects_stale_release(harness: Harness, task) {
   const base = "https://github-api.test"
   mock_release(harness.testing, base, 702, "Old notes\n")
   mock_annotated_tag(harness.testing, base, REF_OID, TARGET_OID)
-  const edited = github_release_edit_body(
-    harness,
-    "octo-org",
-    "octo-repo",
-    "v1.2.3",
-    "New notes\n",
-    lease(),
-    auth(base),
-  )
+  const edited = github_release_edit_body(harness, edit_request(base, "New notes\n"))
   assert(is_err(edited), "stale release fails closed")
   assert_eq(unwrap_err(edited).code, "stale_release", "stale release category")
   assert_eq(len(harness.testing.http_mock_calls()), 3, "stale release performs no mutation")
@@ -124,15 +117,7 @@ pipeline test_release_body_edit_rejects_stale_tag(harness: Harness, task) {
   const base = "https://github-api.test"
   mock_release(harness.testing, base, 701, "Old notes\n")
   mock_annotated_tag(harness.testing, base, REF_OID, "cccccccccccccccccccccccccccccccccccccccc")
-  const edited = github_release_edit_body(
-    harness,
-    "octo-org",
-    "octo-repo",
-    "v1.2.3",
-    "New notes\n",
-    lease(),
-    auth(base),
-  )
+  const edited = github_release_edit_body(harness, edit_request(base, "New notes\n"))
   assert(is_err(edited), "stale tag fails closed")
   assert_eq(unwrap_err(edited).code, "stale_tag", "stale tag category")
   assert_eq(len(harness.testing.http_mock_calls()), 3, "stale tag performs no mutation")
@@ -159,15 +144,7 @@ pipeline test_release_body_edit_rejects_missing_release(harness: Harness, task) 
       headers: {"x-ratelimit-remaining": "9"},
     },
   )
-  const edited = github_release_edit_body(
-    harness,
-    "octo-org",
-    "octo-repo",
-    "v1.2.3",
-    "New notes\n",
-    lease(),
-    auth(base),
-  )
+  const edited = github_release_edit_body(harness, edit_request(base, "New notes\n"))
   assert(is_err(edited), "missing release fails closed")
   assert_eq(unwrap_err(edited).code, "not_found", "missing release category")
   assert_eq(len(harness.testing.http_mock_calls()), 2, "missing release performs no mutation")
@@ -187,15 +164,7 @@ pipeline test_release_body_edit_normalizes_provider_failure(harness: Harness, ta
       headers: {"x-ratelimit-remaining": "7"},
     },
   )
-  const edited = github_release_edit_body(
-    harness,
-    "octo-org",
-    "octo-repo",
-    "v1.2.3",
-    "New notes\n",
-    lease(),
-    auth(base),
-  )
+  const edited = github_release_edit_body(harness, edit_request(base, "New notes\n"))
   assert(is_err(edited), "provider failure remains typed")
   assert_eq(unwrap_err(edited).code, "missing_scopes", "provider failure category")
   assert_eq(unwrap_err(edited).http_status, 403, "provider status is retained")

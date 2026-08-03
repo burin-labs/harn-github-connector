@@ -1,4 +1,4 @@
-import { call, github_resolve_mergeable, github_resolve_pr_for_sha } from "../src/lib"
+import { call, github_resolve_mergeable, github_resolve_pr_for_sha } from "../src/facade"
 
 pipeline test_mergeable_and_commit_pulls(harness: Harness, task) {
   harness.testing.http_mock_clear()
@@ -27,10 +27,13 @@ pipeline test_mergeable_and_commit_pulls(harness: Harness, task) {
   const resolved = unwrap(
     github_resolve_mergeable(
       harness,
-      "octo-org",
-      "octo-repo",
-      42,
-      auth + {poll_interval_ms: 0, max_attempts: 4},
+      {
+        owner: "octo-org",
+        repo: "octo-repo",
+        pull_number: 42,
+        polling: {interval_ms: 0, max_attempts: 4},
+        options: auth,
+      },
     ),
   )
   assert_eq(resolved.mergeable, true, "mergeable resolved true")
@@ -49,7 +52,16 @@ pipeline test_mergeable_and_commit_pulls(harness: Harness, task) {
     },
   )
   const conflict = unwrap(
-    github_resolve_mergeable(harness, "octo-org", "octo-repo", 99, auth + {poll_interval_ms: 0}),
+    github_resolve_mergeable(
+      harness,
+      {
+        owner: "octo-org",
+        repo: "octo-repo",
+        pull_number: 99,
+        polling: {interval_ms: 0},
+        options: auth,
+      },
+    ),
   )
   assert_eq(conflict.is_conflict, true, "dirty is a conflict")
   assert_eq(conflict.mergeable_state, "dirty", "dirty state")
@@ -66,10 +78,13 @@ pipeline test_mergeable_and_commit_pulls(harness: Harness, task) {
   const stuck = unwrap(
     github_resolve_mergeable(
       harness,
-      "octo-org",
-      "octo-repo",
-      7,
-      auth + {poll_interval_ms: 0, max_attempts: 2},
+      {
+        owner: "octo-org",
+        repo: "octo-repo",
+        pull_number: 7,
+        polling: {interval_ms: 0, max_attempts: 2},
+        options: auth,
+      },
     ),
   )
   assert_eq(stuck.resolved, false, "unresolved after max attempts")
@@ -96,10 +111,13 @@ pipeline test_mergeable_and_commit_pulls(harness: Harness, task) {
   // github_resolve_pr_for_sha: prefers payload pull_requests[].
   const from_payload = github_resolve_pr_for_sha(
     harness,
-    "octo-org",
-    "octo-repo",
-    "abcdef1",
-    auth + {pull_requests: [{number: 55}]},
+    {
+      owner: "octo-org",
+      repo: "octo-repo",
+      sha: "abcdef1",
+      pull_requests: [{number: 55}],
+      options: auth,
+    },
   )
   assert_eq(from_payload.source, "payload", "prefers payload PRs")
   assert_eq(from_payload.pull_number, 55, "payload PR number")
@@ -111,10 +129,7 @@ pipeline test_mergeable_and_commit_pulls(harness: Harness, task) {
   )
   const fallback = github_resolve_pr_for_sha(
     harness,
-    "octo-org",
-    "octo-repo",
-    "deadbeef",
-    auth + {pull_requests: []},
+    {owner: "octo-org", repo: "octo-repo", sha: "deadbeef", pull_requests: [], options: auth},
   )
   assert_eq(fallback.source, "commit_pulls", "falls back to commit_pulls")
   assert_eq(fallback.pull_number, 21, "fallback PR number")
@@ -124,7 +139,10 @@ pipeline test_mergeable_and_commit_pulls(harness: Harness, task) {
     base + "/repos/octo-org/octo-repo/commits/orphan/pulls",
     {status: 200, body: "[]", headers: {"x-ratelimit-remaining": "4"}},
   )
-  const none = github_resolve_pr_for_sha(harness, "octo-org", "octo-repo", "orphan", auth)
+  const none = github_resolve_pr_for_sha(
+    harness,
+    {owner: "octo-org", repo: "octo-repo", sha: "orphan", options: auth},
+  )
   assert_eq(none.found, false, "no PR found for orphan commit")
   assert_eq(none.ok, true, "empty result is not an error")
   harness.testing.http_mock_clear()

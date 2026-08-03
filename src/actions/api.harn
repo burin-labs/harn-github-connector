@@ -1,0 +1,106 @@
+import { call, call_typed } from "../api"
+import {
+  GithubConnectorResult,
+  GithubRunnerJitConfigRequest,
+  GithubRunnerListRequest,
+  GithubRunnerRegistrationRequest,
+  GithubWorkflowCancelReceipt,
+  GithubWorkflowDispatchReceipt,
+  GithubWorkflowDispatchRequest,
+  GithubWorkflowJobs,
+  GithubWorkflowJobsRequest,
+  GithubWorkflowRerunReceipt,
+  GithubWorkflowRerunRequest,
+  GithubWorkflowRun,
+  GithubWorkflowRunRequest,
+  GithubWorkflowRuns,
+  GithubWorkflowRunsRequest,
+} from "../contracts"
+import { __request_args } from "../request_options"
+
+/** Dispatch one workflow and return its exact normalized run identity. */
+pub fn actions_workflow_dispatch(
+  harness: Harness,
+  request: GithubWorkflowDispatchRequest,
+) -> GithubConnectorResult<GithubWorkflowDispatchReceipt> {
+  return call_typed(
+    harness,
+    "github.actions.workflow_dispatch",
+    __request_args(request),
+    GithubWorkflowDispatchReceipt,
+  )
+}
+
+/** List normalized workflow runs for a repository or one workflow. */
+pub fn actions_workflow_runs(
+  harness: Harness,
+  request: GithubWorkflowRunsRequest,
+) -> GithubConnectorResult<GithubWorkflowRuns> {
+  return call_typed(harness, "github.actions.runs", __request_args(request), GithubWorkflowRuns)
+}
+
+/** Fetch one normalized workflow run by its exact id. */
+pub fn actions_workflow_run(
+  harness: Harness,
+  request: GithubWorkflowRunRequest,
+) -> GithubConnectorResult<GithubWorkflowRun> {
+  return call_typed(harness, "github.actions.run", __request_args(request), GithubWorkflowRun)
+}
+
+/** List normalized jobs and steps for one exact workflow run. */
+pub fn actions_workflow_run_jobs(
+  harness: Harness,
+  request: GithubWorkflowJobsRequest,
+) -> GithubConnectorResult<GithubWorkflowJobs> {
+  return call_typed(harness, "github.actions.run_jobs", __request_args(request), GithubWorkflowJobs)
+}
+
+/** Request cancellation of one exact workflow run. */
+pub fn actions_workflow_run_cancel(
+  harness: Harness,
+  request: GithubWorkflowRunRequest,
+) -> GithubConnectorResult<GithubWorkflowCancelReceipt> {
+  return call_typed(
+    harness,
+    "github.actions.run_cancel",
+    __request_args(request),
+    GithubWorkflowCancelReceipt,
+  )
+}
+
+/** Request a new attempt for one exact workflow run. */
+pub fn actions_workflow_run_rerun(
+  harness: Harness,
+  request: GithubWorkflowRerunRequest,
+) -> GithubConnectorResult<GithubWorkflowRerunReceipt> {
+  return call_typed(
+    harness,
+    "github.actions.run_rerun",
+    __request_args(request),
+    GithubWorkflowRerunReceipt,
+  )
+}
+
+/** Create a self-hosted runner registration token for one named scope. */
+pub fn actions_runner_registration_token(
+  harness: Harness,
+  request: GithubRunnerRegistrationRequest,
+) -> GithubConnectorResult<unknown> {
+  return call(harness, "actions.runners.registration_token", __request_args(request))
+}
+
+/** Generate one ephemeral just-in-time runner configuration. */
+pub fn actions_runner_generate_jitconfig(
+  harness: Harness,
+  request: GithubRunnerJitConfigRequest,
+) -> GithubConnectorResult<unknown> {
+  return call(harness, "actions.runners.generate_jitconfig", __request_args(request))
+}
+
+/** List self-hosted runners for one repository or organization scope. */
+pub fn actions_runners_list(
+  harness: Harness,
+  request: GithubRunnerListRequest,
+) -> GithubConnectorResult<unknown> {
+  return call(harness, "actions.runners.list", __request_args(request))
+}

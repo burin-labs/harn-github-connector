@@ -1,0 +1,89 @@
+/** Enforce source-size policy from data owned by `source-layout.toml`. */
+const CONFIG_PATH = "scripts/source-layout.toml"
+
+pub type SourcePolicy = {root: string, suffix: string, max_lines: int}
+
+pub type SourceLayoutConfig = {version: int, source: list<SourcePolicy>}
+
+pub type SourceLengthViolation = {path: string, actual_lines: int, max_lines: int}
+
+/** Count logical lines, including a final line without a newline. */
+pub fn logical_line_count(text: string) -> int {
+  if text == "" {
+    return 0
+  }
+  const lines = text.split("\n")
+  return if text.ends_with("\n") {
+    lines.count - 1
+  } else {
+    lines.count
+  }
+}
+
+/** Return every file that exceeds one configured source-tree limit. */
+pub fn source_length_violations(
+  fs: HarnessFs,
+  policy: SourcePolicy,
+) -> list<SourceLengthViolation> {
+  if policy.root == "" || policy.suffix == "" || policy.max_lines < 1 {
+    throw "source policy requires a root, suffix, and positive max_lines"
+  }
+  if !fs.exists(policy.root) {
+    throw "source policy root does not exist: ${policy.root}"
+  }
+  let source_count = 0
+  let violations: list<SourceLengthViolation> = []
+  for entry in fs.walk(policy.root, {follow_symlinks: false}) {
+    if !entry.is_file || !entry.path.ends_with(policy.suffix) {
+      continue
+    }
+    source_count = source_count + 1
+    const lines = logical_line_count(fs.read_text(entry.path))
+    if lines > policy.max_lines {
+      violations = violations.appending(
+        {path: entry.path, actual_lines: lines, max_lines: policy.max_lines},
+      )
+    }
+  }
+  if source_count == 0 {
+    throw "source policy matched no files under ${policy.root}"
+  }
+  return violations.sorted_by({ violation -> violation.path })
+}
+
+pipeline main(harness: Harness, task) {
+  if !harness.fs.exists(CONFIG_PATH) {
+    harness.stdio.eprintln("error: missing ${CONFIG_PATH}")
+    return 1
+  }
+  const raw = try {
+    toml_parse(harness.fs.read_text(CONFIG_PATH))
+  } catch (error) {
+    harness.stdio.eprintln("error: could not parse ${CONFIG_PATH}: ${error}")
+    return 1
+  }
+  if !schema_is(raw, schema_of(SourceLayoutConfig)) {
+    harness.stdio.eprintln("error: ${CONFIG_PATH} does not match SourceLayoutConfig")
+    return 1
+  }
+  const config: SourceLayoutConfig = raw
+  if config.version != 1 || config.source.count == 0 {
+    harness.stdio.eprintln("error: ${CONFIG_PATH} must declare version 1 and at least one source")
+    return 1
+  }
+  let violations: list<SourceLengthViolation> = []
+  for policy in config.source {
+    violations = violations + source_length_violations(harness.fs, policy)
+  }
+  if violations.count == 0 {
+    harness.stdio.println("source layout OK (${config.source.count} policy entries)")
+    return 0
+  }
+  harness.stdio.eprintln("error: ${violations.count} source file(s) exceed their line limit")
+  for violation in violations {
+    harness.stdio.eprintln(
+      "  ${violation.path}: ${violation.actual_lines} > ${violation.max_lines}",
+    )
+  }
+  return 1
+}

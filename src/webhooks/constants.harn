@@ -1,0 +1,8 @@
+pub const GITHUB_CI_FAILURE_CONCLUSIONS = [
+  "failure",
+  "timed_out",
+  "startup_failure",
+  "action_required",
+]
+
+pub const GITHUB_CI_FAILURE_STATES = ["failure", "error"]

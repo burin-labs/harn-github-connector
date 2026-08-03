@@ -1,7 +1,9 @@
+import { api_call } from "./api"
+import { github_create_signed_commit } from "./commits/api"
 /**
  * Worktree-to-signed-commit adapter.
  *
- * `src/lib.harn` owns the HTTP/GraphQL provider surface, including the
+ * The connector's commit API owns the HTTP/GraphQL provider surface, including the
  * `github_create_signed_commit` primitive that atomically publishes typed
  * additions and deletions under an `expected_head_oid` lease and accepts only a
  * GitHub-generated signature. This module is the only place in the package that
@@ -30,6 +32,7 @@
  * An empty delta is a clean outcome: `committed: false` with no network call.
  */
 pub import {
+  GithubClientOptions,
   GithubCommitFileAddition,
   GithubCommitFileDeletion,
   GithubConnectorError,
@@ -41,7 +44,6 @@ pub import {
   GithubWorktreeSelector,
   GithubWorktreeSignature,
 } from "./contracts"
-import { api_call, github_create_signed_commit } from "./lib"
 
 /** Git tree entry modes this adapter reasons about. */
 const WORKTREE_ABSENT_MODE = "000000"
@@ -721,9 +723,12 @@ fn __wc_branch_lease(
   harness: Harness,
   request: GithubWorktreeCommitRequest,
   base_oid: string,
-  options: dict,
+  options: GithubClientOptions,
 ) {
-  const lookup = api_call(harness, __wc_ref_path(request, "/git/ref/heads/"), "GET", nil, options)
+  const lookup = api_call(
+    harness,
+    {path: __wc_ref_path(request, "/git/ref/heads/"), options: options},
+  )
   if is_err(lookup) {
     const failure: GithubConnectorError = unwrap_err(lookup)
     if (failure.http_status ?? 0) != 404 {
@@ -738,10 +743,12 @@ fn __wc_branch_lease(
     }
     const created = api_call(
       harness,
-      "/repos/" + request.owner + "/" + request.repo + "/git/refs",
-      "POST",
-      {ref: "refs/heads/" + request.branch, sha: base_oid},
-      options,
+      {
+        path: "/repos/" + request.owner + "/" + request.repo + "/git/refs",
+        method: "POST",
+        body: {ref: "refs/heads/" + request.branch, sha: base_oid},
+        options: options,
+      },
     )
     if is_err(created) {
       return created
@@ -763,10 +770,12 @@ fn __wc_branch_lease(
   }
   const reset = api_call(
     harness,
-    __wc_ref_path(request, "/git/refs/heads/"),
-    "PATCH",
-    {sha: base_oid, force: true},
-    options,
+    {
+      path: __wc_ref_path(request, "/git/refs/heads/"),
+      method: "PATCH",
+      body: {sha: base_oid, force: true},
+      options: options,
+    },
   )
   if is_err(reset) {
     return reset
@@ -836,9 +845,8 @@ fn __wc_empty_receipt(
 pub fn github_commit_worktree(
   harness: Harness,
   request: GithubWorktreeCommitRequest,
-  options = nil,
 ) -> GithubConnectorResult<GithubWorktreeCommitReceipt> {
-  const opts = options ?? {}
+  const opts = request.options ?? {}
   const valid = __wc_validate(request)
   if is_err(valid) {
     return Err(__wc_error_of(valid))
@@ -870,8 +878,8 @@ pub fn github_commit_worktree(
       body: request.body,
       additions: delta.additions,
       deletions: delta.deletions,
+      options: opts,
     },
-    opts,
   )
   if is_err(published) {
     return Err(__wc_error_of(published))

@@ -1,0 +1,354 @@
+import "../actions/normalization"
+import "../client"
+import { __err } from "../errors"
+import { __request_context_keys } from "../request_options"
+
+/**
+ * Route the raw Actions calls used by higher-level polling without re-entering the global dispatcher.
+ */
+pub fn __actions_call_raw(harness: Harness, method: string, args: dict) {
+  const config = __outbound_config(harness, args)
+  if is_err(config) {
+    return config
+  }
+  const cfg = unwrap(config)
+  if method == "actions.workflow_dispatch" {
+    return __actions_workflow_dispatch(harness, args, cfg)
+  }
+  if method == "actions.workflow_runs.list" {
+    return __actions_workflow_runs_list(harness, args, cfg)
+  }
+  if method == "actions.workflow_run.get" {
+    return __actions_workflow_run_get(harness, args, cfg)
+  }
+  return __err("method_not_found", "Actions polling does not implement `" + method + "`")
+}
+
+pub fn __actions_workflow_dispatch(harness: Harness, args, cfg) {
+  const workflow_id = args?.workflow_id ?? args?.workflow ?? args?.workflow_file
+  if workflow_id == nil || trim(to_string(workflow_id)) == "" {
+    return __err(
+      "schema_drift",
+      "actions.workflow_dispatch requires workflow_id, workflow, or workflow_file",
+    )
+  }
+  const ref = args?.ref ?? args?.branch ?? "main"
+  const body = {ref: ref, inputs: args?.inputs ?? {}, return_run_details: true}
+  return __github_json(
+    harness,
+    "POST",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/actions/workflows/"
+        + url_encode(
+        to_string(workflow_id),
+      )
+        + "/dispatches",
+    ),
+    body,
+    cfg,
+  )
+}
+
+pub fn __actions_workflow_runs_list(harness: Harness, args, cfg) {
+  const workflow_id = args?.workflow_id ?? args?.workflow ?? args?.workflow_file
+  const path = if workflow_id == nil || trim(to_string(workflow_id)) == "" {
+    "/repos/" + args.owner + "/" + args.repo + "/actions/runs"
+  } else {
+    "/repos/" + args.owner + "/" + args.repo + "/actions/workflows/"
+      + url_encode(
+      to_string(workflow_id),
+    )
+      + "/runs"
+  }
+  return __github_json(
+    harness,
+    "GET",
+    __github_api_url(cfg.api_base_url, path + __workflow_runs_query(args)),
+    nil,
+    cfg,
+  )
+}
+
+pub fn __actions_workflow_run_get(harness: Harness, args, cfg) {
+  const run_id = __actions_run_id(args?.run_id ?? args?.id)
+  if run_id == nil {
+    return __err(
+      "schema_drift",
+      "actions.workflow_run.get requires a positive decimal run_id or id",
+    )
+  }
+  return __github_json(
+    harness,
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/actions/runs/" + to_string(run_id),
+    ),
+    nil,
+    cfg,
+  )
+}
+
+pub fn __actions_workflow_run_jobs(harness: Harness, args, cfg) {
+  const run_id = __actions_run_id(args?.run_id)
+  if run_id == nil {
+    return __err("schema_drift", "actions.workflow_run.jobs requires a positive decimal run_id")
+  }
+  const filter = trim(to_string(args?.filter ?? ""))
+  if filter != "" && filter != "latest" && filter != "all" {
+    return __err("schema_drift", "actions.workflow_run.jobs filter must be latest or all")
+  }
+  if args?.per_page != nil && __positive_decimal(args.per_page, 100) == nil {
+    return __err(
+      "schema_drift",
+      "actions.workflow_run.jobs per_page must be an integer from 1 to 100",
+    )
+  }
+  if args?.page != nil && __positive_decimal(args.page, nil) == nil {
+    return __err("schema_drift", "actions.workflow_run.jobs page must be a positive integer")
+  }
+  return __github_json(
+    harness,
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/actions/runs/" + to_string(run_id) + "/jobs"
+        + __workflow_run_jobs_query(
+        args,
+      ),
+    ),
+    nil,
+    cfg,
+  )
+}
+
+pub fn __actions_workflow_run_cancel(harness: Harness, args, cfg) {
+  const run_id = __actions_run_id(args?.run_id)
+  if run_id == nil {
+    return __err("schema_drift", "actions.workflow_run.cancel requires a positive run_id")
+  }
+  return __github_json(
+    harness,
+    "POST",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/actions/runs/" + to_string(run_id)
+        + "/cancel",
+    ),
+    nil,
+    cfg,
+  )
+}
+
+pub fn __actions_workflow_run_rerun(harness: Harness, args, cfg) {
+  const run_id = __actions_run_id(args?.run_id)
+  if run_id == nil {
+    return __err("schema_drift", "actions.workflow_run.rerun requires a positive run_id")
+  }
+  const debug = args?.enable_debug_logging
+  if debug != nil && type_of(debug) != "bool" {
+    return __err("schema_drift", "actions.workflow_run.rerun enable_debug_logging must be bool")
+  }
+  return __github_json(
+    harness,
+    "POST",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/actions/runs/" + to_string(run_id)
+        + "/rerun",
+    ),
+    if debug == nil {
+      nil
+    } else {
+      {enable_debug_logging: debug}
+    },
+    cfg,
+  )
+}
+
+/**
+ * Resolve the REST path prefix for self-hosted-runner methods that accept
+ * either a repo scope (`owner` + `repo`) or an org scope (`org`). Returns
+ * `Ok("/repos/{owner}/{repo}")` or `Ok("/orgs/{org}")`, or a schema_drift error
+ * when neither scope is supplied.
+ */
+fn __runner_scope_prefix(args) {
+  const org = args?.org
+  if org != nil && trim(to_string(org)) != "" {
+    return Ok("/orgs/" + url_encode(to_string(org)))
+  }
+  if args?.owner != nil && trim(to_string(args.owner)) != "" && args?.repo != nil
+    && trim(
+    to_string(args.repo),
+  )
+    != "" {
+    return Ok("/repos/" + to_string(args.owner) + "/" + to_string(args.repo))
+  }
+  return __err("schema_drift", "self-hosted runner methods require `org`, or `owner` + `repo`")
+}
+
+/**
+ * Dispatch GitHub Actions self-hosted runner and runner-group methods.
+ * Mutating methods (registration_token, remove_token, generate_jitconfig,
+ * delete, labels add/replace/remove, runner_groups create/update/delete)
+ * require the `administration:write` repo permission or the
+ * `organization_self_hosted_runners:write` org permission. Read methods
+ * require the matching read permission.
+ */
+@complexity(allow)
+pub fn __actions_runners_dispatch(harness: Harness, method, args, cfg) {
+  const runner_id = args?.runner_id ?? args?.id
+  if method == "actions.runner_groups.list" || method == "actions.runner_groups.create" {
+    const org = args?.org
+    if org == nil || trim(to_string(org)) == "" {
+      return __err("schema_drift", method + " requires `org`")
+    }
+    const url = __github_api_url(
+      cfg.api_base_url,
+      "/orgs/" + url_encode(to_string(org)) + "/actions/runner-groups",
+    )
+    if method == "actions.runner_groups.create" {
+      return __github_json(
+        harness,
+        "POST",
+        url,
+        __body_without(args, __request_context_keys() + ["org"]),
+        cfg,
+      )
+    }
+    return __github_json(harness, "GET", url + __pagination_query(args), nil, cfg)
+  }
+  if method == "actions.runner_groups.get" || method == "actions.runner_groups.update"
+    || method
+    == "actions.runner_groups.delete" {
+    const org = args?.org
+    const group_id = args?.runner_group_id ?? args?.group_id ?? args?.id
+    if org == nil || trim(to_string(org)) == "" || group_id == nil {
+      return __err("schema_drift", method + " requires `org` and `runner_group_id`")
+    }
+    const url = __github_api_url(
+      cfg.api_base_url,
+      "/orgs/" + url_encode(to_string(org)) + "/actions/runner-groups/" + to_string(group_id),
+    )
+    if method == "actions.runner_groups.update" {
+      return __github_json(
+        harness,
+        "PATCH",
+        url,
+        __body_without(
+          args,
+          __request_context_keys() + ["org", "runner_group_id", "group_id", "id"],
+        ),
+        cfg,
+      )
+    }
+    if method == "actions.runner_groups.delete" {
+      return __github_json(harness, "DELETE", url, nil, cfg)
+    }
+    return __github_json(harness, "GET", url, nil, cfg)
+  }
+  const prefix = __runner_scope_prefix(args)
+  if is_err(prefix) {
+    return prefix
+  }
+  const base = unwrap(prefix) + "/actions/runners"
+  if method == "actions.runners.registration_token" {
+    return __github_json(
+      harness,
+      "POST",
+      __github_api_url(cfg.api_base_url, base + "/registration-token"),
+      nil,
+      cfg,
+    )
+  }
+  if method == "actions.runners.remove_token" {
+    return __github_json(
+      harness,
+      "POST",
+      __github_api_url(cfg.api_base_url, base + "/remove-token"),
+      nil,
+      cfg,
+    )
+  }
+  if method == "actions.runners.generate_jitconfig" {
+    if args?.name == nil || trim(to_string(args.name)) == "" {
+      return __err("schema_drift", "actions.runners.generate_jitconfig requires `name`")
+    }
+    return __github_json(
+      harness,
+      "POST",
+      __github_api_url(cfg.api_base_url, base + "/generate-jitconfig"),
+      __runner_jitconfig_body(args),
+      cfg,
+    )
+  }
+  if method == "actions.runners.downloads" {
+    return __github_json(
+      harness,
+      "GET",
+      __github_api_url(cfg.api_base_url, base + "/downloads"),
+      nil,
+      cfg,
+    )
+  }
+  if method == "actions.runners.list" {
+    return __github_json(
+      harness,
+      "GET",
+      __github_api_url(cfg.api_base_url, base + __pagination_query(args)),
+      nil,
+      cfg,
+    )
+  }
+  if method == "actions.runners.get" || method == "actions.runners.delete" {
+    if runner_id == nil {
+      return __err("schema_drift", method + " requires `runner_id`")
+    }
+    const url = __github_api_url(cfg.api_base_url, base + "/" + to_string(runner_id))
+    if method == "actions.runners.delete" {
+      return __github_json(harness, "DELETE", url, nil, cfg)
+    }
+    return __github_json(harness, "GET", url, nil, cfg)
+  }
+  if starts_with(method, "actions.runners.labels.") {
+    if runner_id == nil {
+      return __err("schema_drift", method + " requires `runner_id`")
+    }
+    const url = __github_api_url(cfg.api_base_url, base + "/" + to_string(runner_id) + "/labels")
+    if method == "actions.runners.labels.list" {
+      return __github_json(harness, "GET", url, nil, cfg)
+    }
+    if method == "actions.runners.labels.add" {
+      return __github_json(harness, "POST", url, {labels: args?.labels ?? []}, cfg)
+    }
+    if method == "actions.runners.labels.replace" {
+      return __github_json(harness, "PUT", url, {labels: args?.labels ?? []}, cfg)
+    }
+    if method == "actions.runners.labels.remove" {
+      const label = args?.name ?? args?.label
+      if label != nil && trim(to_string(label)) != "" {
+        return __github_json(harness, "DELETE", url + "/" + url_encode(to_string(label)), nil, cfg)
+      }
+      return __github_json(harness, "DELETE", url, nil, cfg)
+    }
+  }
+  return __err("method_not_found", "unsupported runner method `" + method + "`")
+}
+
+fn __runner_jitconfig_body(args) {
+  let body = {
+    name: to_string(args?.name),
+    runner_group_id: args?.runner_group_id ?? 1,
+    labels: args?.labels ?? [],
+  }
+  if args?.work_folder != nil {
+    body["work_folder"] = args.work_folder
+  }
+  return body
+}
+/**
+ * GET /repos/{owner}/{repo}/commits/{sha}/pulls — list pull requests that
+ * contain the given commit. Used to recover the PR for `status` events and
+ * fork pushes whose webhook `pull_requests[]` array is empty.
+ */

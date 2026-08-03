@@ -1,0 +1,80 @@
+/**
+ * Public GitHub connector API.
+ *
+ * High-level operations accept one named request record after `harness`. Use
+ * `call` or `api_call` only when GitHub exposes an endpoint that the typed API
+ * does not cover yet.
+ */
+pub import {
+  actions_runner_generate_jitconfig,
+  actions_runner_registration_token,
+  actions_runners_list,
+  actions_workflow_dispatch,
+  actions_workflow_run,
+  actions_workflow_run_cancel,
+  actions_workflow_run_jobs,
+  actions_workflow_run_rerun,
+  actions_workflow_runs,
+} from "./actions/api"
+pub import {
+  github_dispatch_workflow_and_resolve_run,
+  github_dispatch_workflow_and_wait,
+  github_wait_for_workflow_run,
+} from "./actions/automation"
+pub import { github_wait_for_pr_checks } from "./actions/checks"
+pub import { api_call, call, call_typed } from "./api"
+pub import { github_branch_head, github_compare_branch_trees } from "./branches/api"
+pub import {
+  github_auth_fallback_enabled,
+  installation_token,
+  invalidate_installation_token,
+  mint_app_jwt,
+  reset_token_cache,
+} from "./client"
+pub import { github_create_signed_commit } from "./commits/api"
+pub import "./contracts"
+pub import { issues_create_with_template } from "./issues/api"
+pub import {
+  oauth_user_device_code,
+  oauth_user_device_poll,
+  oauth_user_exchange_code,
+  oauth_user_refresh,
+} from "./oauth/api"
+pub import {
+  github_pr_commits,
+  github_resolve_mergeable,
+  github_upsert_pull_request,
+  pulls_disable_auto_merge,
+  pulls_enable_auto_merge,
+  pulls_list_with_checks,
+  pulls_merge_safe,
+  pulls_update,
+} from "./pulls/api"
+pub import {
+  github_close_pr,
+  github_find_open_pr,
+  github_resolve_pr_for_sha,
+} from "./pulls/automation"
+pub import {
+  github_latest_release,
+  github_latest_release_lookup,
+  github_release,
+  github_release_assets,
+  github_release_edit_body,
+} from "./releases/api"
+pub import {
+  github_file_at_ref,
+  repos_get_latest_release,
+  repos_get_text,
+  repos_list_release_assets,
+} from "./repos/api"
+pub import {
+  activate,
+  github_extract_mentions,
+  init,
+  kinds,
+  normalize_inbound,
+  payload_schema,
+  provider_id,
+  shutdown,
+} from "./webhooks/provider"

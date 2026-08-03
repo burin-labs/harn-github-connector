@@ -1,0 +1,420 @@
+import "../client"
+import "../contracts"
+import { __err } from "../errors"
+import "../pulls/normalization"
+import { __typed_commit_signature } from "./commits"
+import "./shared"
+
+pub fn __github_release_latest(harness: Harness, args, cfg) {
+  const repo = __repo_parts(args)
+  if is_err(repo) {
+    return __release_error_envelope(nil, unwrap_err(repo))
+  }
+  const r = unwrap(repo)
+  const release = __repos_get_latest_release(harness, args + {owner: r.owner, repo: r.name}, cfg)
+  if is_err(release) {
+    return __release_error_envelope(r.full_name, unwrap_err(release))
+  }
+  return __release_envelope(r.full_name, unwrap(release))
+}
+
+pub fn __github_release_view(harness: Harness, args, cfg) {
+  const repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  const r = unwrap(repo)
+  const raw_tag = args?.tag
+  if raw_tag == nil {
+    return __err("schema_drift", "github.release.view requires a non-empty exact tag")
+  }
+  const tag = trim(to_string(raw_tag))
+  if tag == "" {
+    return __err("schema_drift", "github.release.view requires a non-empty exact tag")
+  }
+  const release = __github_json(
+    harness,
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + r.owner + "/" + r.name + "/releases/tags/" + url_encode(tag),
+    ),
+    nil,
+    cfg,
+  )
+  if is_err(release) {
+    const error = unwrap_err(release)
+    if __is_status_error(error, 404) {
+      const access = __prove_repository_access(harness, r, cfg)
+      if is_err(access) {
+        return access
+      }
+      return {repo: r.full_name, tag: tag, state: "absent", found: false, release: nil, lease: nil}
+    }
+    return release
+  }
+  const typed = __typed_release(release)
+  if is_err(typed) {
+    return typed
+  }
+  const tag_lease = __github_tag_lease(harness, r, tag, cfg)
+  if is_err(tag_lease) {
+    return tag_lease
+  }
+  return {
+    repo: r.full_name,
+    tag: tag,
+    state: "found",
+    found: true,
+    release: unwrap(typed),
+    lease: unwrap(tag_lease) + {release_id: unwrap(typed).id},
+  }
+}
+
+pub fn __github_release_latest_lookup(harness: Harness, args, cfg) {
+  const repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  const r = unwrap(repo)
+  const release = __repos_get_latest_release(harness, args + {owner: r.owner, repo: r.name}, cfg)
+  if is_err(release) {
+    const error = unwrap_err(release)
+    if __is_status_error(error, 404) {
+      const access = __prove_repository_access(harness, r, cfg)
+      if is_err(access) {
+        return access
+      }
+      const absent: GithubLatestReleaseLookup = {
+        repo: r.full_name,
+        state: "absent",
+        found: false,
+        release: nil,
+      }
+      return absent
+    }
+    return release
+  }
+  const typed = __typed_release(unwrap(release))
+  if is_err(typed) {
+    return typed
+  }
+  const found: GithubLatestReleaseLookup = {
+    repo: r.full_name,
+    state: "found",
+    found: true,
+    release: unwrap(typed),
+  }
+  return found
+}
+
+pub fn __github_release_edit_body(harness: Harness, args, cfg) {
+  const repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  const r = unwrap(repo)
+  const tag = trim(to_string(args?.tag ?? ""))
+  const expected_release_id = args?.expected_release_id
+  const expected_tag_ref_oid = trim(to_string(args?.expected_tag_ref_oid ?? ""))
+  const expected_tag_target_oid = trim(to_string(args?.expected_tag_target_oid ?? ""))
+  if tag == "" || args?.body == nil || expected_release_id == nil
+    || expected_tag_ref_oid == ""
+    || expected_tag_target_oid == "" {
+    return __err(
+      "schema_drift",
+      "github.release.edit_body requires tag, body, and the complete observed release/tag lease",
+    )
+  }
+  const observed = __github_release_view(
+    harness,
+    args + {owner: r.owner, repo: r.name, tag: tag},
+    cfg,
+  )
+  if is_err(observed) {
+    return observed
+  }
+  if !observed.found {
+    return __err("not_found", "release does not exist for the exact tag", {tag: tag})
+  }
+  const lease = observed.lease
+  if lease.release_id != expected_release_id {
+    return __err(
+      "stale_release",
+      "release identity changed before metadata edit",
+      {expected_release_id: expected_release_id, observed_release_id: lease.release_id},
+    )
+  }
+  if lease.tag_ref_oid != expected_tag_ref_oid
+    || lease.tag_target_oid != expected_tag_target_oid {
+    return __err(
+      "stale_tag",
+      "tag identity changed before release metadata edit",
+      {
+        expected_tag_ref_oid: expected_tag_ref_oid,
+        observed_tag_ref_oid: lease.tag_ref_oid,
+        expected_tag_target_oid: expected_tag_target_oid,
+        observed_tag_target_oid: lease.tag_target_oid,
+      },
+    )
+  }
+  const body = to_string(args.body)
+  const edited = __github_json(
+    harness,
+    "PATCH",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + r.owner + "/" + r.name + "/releases/" + to_string(lease.release_id),
+    ),
+    {body: body},
+    cfg,
+  )
+  if is_err(edited) {
+    return edited
+  }
+  const typed = __typed_release(edited)
+  if is_err(typed) {
+    return typed
+  }
+  const release = unwrap(typed)
+  if release.id != lease.release_id || release.tag_name != tag || release.body != body {
+    return __err("invalid_response", "release metadata edit response did not confirm the mutation")
+  }
+  return {
+    repo: r.full_name,
+    tag: tag,
+    state: "edited",
+    release_id: release.id,
+    tag_ref_oid: lease.tag_ref_oid,
+    tag_target_oid: lease.tag_target_oid,
+    body: release.body,
+    url: release.url,
+  }
+}
+
+fn __github_tag_lease(harness: Harness, repo, tag, cfg) {
+  const ref = __github_json(
+    harness,
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + repo.owner + "/" + repo.name + "/git/ref/tags/" + url_encode(tag),
+    ),
+    nil,
+    cfg,
+  )
+  if is_err(ref) {
+    return ref
+  }
+  const ref_oid = trim(to_string(ref?.object?.sha ?? ""))
+  let target_oid = ref_oid
+  let target_type = lowercase(trim(to_string(ref?.object?.type ?? "")))
+  if trim(to_string(ref?.ref ?? "")) != "refs/tags/" + tag || ref_oid == ""
+    || target_type == "" {
+    return __err("invalid_response", "GitHub tag reference omitted exact identity")
+  }
+  let depth = 0
+  while target_type == "tag" && depth < 16 {
+    const object = __github_json(
+      harness,
+      "GET",
+      __github_api_url(
+        cfg.api_base_url,
+        "/repos/" + repo.owner + "/" + repo.name + "/git/tags/" + target_oid,
+      ),
+      nil,
+      cfg,
+    )
+    if is_err(object) {
+      return object
+    }
+    target_oid = trim(to_string(object?.object?.sha ?? ""))
+    target_type = lowercase(trim(to_string(object?.object?.type ?? "")))
+    if target_oid == "" || target_type == "" {
+      return __err("invalid_response", "GitHub annotated tag omitted its target identity")
+    }
+    depth = depth + 1
+  }
+  if target_type == "tag" {
+    return __err("invalid_response", "GitHub annotated tag chain exceeded the safety limit")
+  }
+  return Ok({tag_ref_oid: ref_oid, tag_target_oid: target_oid, tag_target_type: target_type})
+}
+
+pub fn __github_file_view(harness: Harness, args, cfg) {
+  const repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  const r = unwrap(repo)
+  const path = __trim_leading_slash(args?.path ?? "")
+  const ref = trim(to_string(args?.ref ?? ""))
+  if path == "" || ref == "" {
+    return __err("schema_drift", "github.file.view requires a non-empty path and exact ref")
+  }
+  const content = __github_json(
+    harness,
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + r.owner + "/" + r.name + "/contents/" + path + "?ref=" + url_encode(ref),
+    ),
+    nil,
+    cfg,
+  )
+  if is_err(content) {
+    const error = unwrap_err(content)
+    if __is_status_error(error, 404) {
+      const access = __prove_repository_access(harness, r, cfg)
+      if is_err(access) {
+        return access
+      }
+      return {repo: r.full_name, path: path, ref: ref, state: "absent", found: false, file: nil}
+    }
+    return content
+  }
+  const file = __typed_repository_file(content, ref)
+  if is_err(file) {
+    return file
+  }
+  return {repo: r.full_name, path: path, ref: ref, state: "found", found: true, file: unwrap(file)}
+}
+
+pub fn __github_commit_signature(harness: Harness, args, cfg) {
+  const repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  const r = unwrap(repo)
+  const ref = trim(to_string(args?.sha ?? args?.ref ?? ""))
+  if ref == "" {
+    return __err("schema_drift", "github.commit.signature requires sha or ref")
+  }
+  const commit = __github_json(
+    harness,
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + r.owner + "/" + r.name + "/commits/" + url_encode(ref),
+    ),
+    nil,
+    cfg,
+  )
+  if is_err(commit) {
+    return commit
+  }
+  const typed = __typed_commit_signature(r.full_name, commit, "github.commit.signature")
+  if is_err(typed) {
+    return typed
+  }
+  return unwrap(typed)
+}
+
+pub fn __github_release_assets(harness: Harness, args, cfg) {
+  const repo = __repo_parts(args)
+  if is_err(repo) {
+    return __release_assets_error_envelope(nil, args?.release_id ?? args?.id, unwrap_err(repo))
+  }
+  const r = unwrap(repo)
+  let release_id = args?.release_id ?? args?.id
+  if release_id == nil || trim(to_string(release_id)) == "" {
+    const release = __repos_get_latest_release(harness, args + {owner: r.owner, repo: r.name}, cfg)
+    if is_err(release) {
+      return __release_assets_error_envelope(r.full_name, nil, unwrap_err(release))
+    }
+    release_id = unwrap(release)?.id
+  }
+  const assets = __repos_list_release_assets(
+    harness,
+    args + {owner: r.owner, repo: r.name, release_id: release_id},
+    cfg,
+  )
+  if is_err(assets) {
+    return __release_assets_error_envelope(r.full_name, release_id, unwrap_err(assets))
+  }
+  return __release_assets_envelope(r.full_name, release_id, unwrap(assets))
+}
+
+pub fn __repos_get_text(harness: Harness, args, cfg) {
+  const content = __github_json(
+    harness,
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/contents/"
+        + __trim_leading_slash(args.path ?? "")
+        + __ref_query(args),
+    ),
+    nil,
+    cfg,
+  )
+  if is_err(content) {
+    return content
+  }
+  if type_of(content) == "list" {
+    return __err(
+      "schema_drift",
+      "repos.get_text requires a file path, but GitHub returned a directory listing",
+    )
+  }
+  const encoding = lowercase(content?.encoding ?? "")
+  if encoding != "base64" {
+    return __err(
+      "invalid_response",
+      "repos.get_text only supports base64-encoded GitHub file content",
+    )
+  }
+  const encoded = (content?.content ?? "").replace("\n", "")
+  const decoded = try {
+    base64_decode(encoded)
+  }
+  if is_err(decoded) {
+    return __err("invalid_response", "repos.get_text could not decode base64 file content")
+  }
+  return {
+    name: content?.name,
+    path: content?.path,
+    sha: content?.sha,
+    size: content?.size,
+    encoding: encoding,
+    ref: args?.ref,
+    text: unwrap(decoded),
+    raw: if args?.include_raw ?? false {
+      content
+    } else {
+      nil
+    },
+  }
+}
+
+pub fn __repos_get_latest_release(harness: Harness, args, cfg) {
+  return __github_json(
+    harness,
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/releases/latest",
+    ),
+    nil,
+    cfg,
+  )
+}
+
+pub fn __repos_list_release_assets(harness: Harness, args, cfg) {
+  const release_id = args?.release_id ?? args?.id
+  if release_id == nil || trim(to_string(release_id)) == "" {
+    return __err("schema_drift", "repos.list_release_assets requires release_id or id")
+  }
+  return __github_json(
+    harness,
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + args.owner + "/" + args.repo + "/releases/" + to_string(release_id)
+        + "/assets"
+        + __pagination_query(args),
+    ),
+    nil,
+    cfg,
+  )
+}

@@ -2,18 +2,18 @@ import {
   github_close_pr,
   github_dispatch_workflow_and_resolve_run,
   github_dispatch_workflow_and_wait,
-  github_ensure_auto_merge,
   github_find_open_pr,
   github_wait_for_pr_checks,
   github_wait_for_workflow_run,
-} from "../src/lib"
+  pulls_enable_auto_merge,
+} from "../src/facade"
 
 const BASE = "https://github-api.test"
 
 const TOKEN = "github-installation-token"
 
 fn auth() {
-  return {api_base_url: BASE, installation_token: TOKEN, poll_interval_ms: 0, max_attempts: 5}
+  return {api_base_url: BASE, installation_token: TOKEN}
 }
 
 fn run_payload(id, status, conclusion = nil, created_at = "2026-05-06T18:00:00Z") {
@@ -87,12 +87,15 @@ pipeline test_dispatch_identity_hydrates_returned_run_id_after_eventual_consiste
   )
   const result = github_dispatch_workflow_and_resolve_run(
     harness,
-    "octo-org",
-    "octo-repo",
-    "identity-returned.yml",
-    "main",
-    nil,
-    auth(),
+    {
+      owner: "octo-org",
+      repo: "octo-repo",
+      workflow_id: "identity-returned.yml",
+      ref: "main",
+      inputs: nil,
+      polling: {interval_ms: 0},
+      options: auth(),
+    },
   )
   assert_eq(result.ok, true, "returned run identity succeeds")
   assert_eq(result.status, "dispatch_accepted", "identity boundary status")
@@ -111,6 +114,7 @@ pipeline test_dispatch_identity_hydrates_returned_run_id_after_eventual_consiste
     "direct-id dispatch hydrates the workflow path",
   )
   assert_eq(result.run_attempt, 1, "direct-id dispatch hydrates the run attempt")
+  assert(result.run_url != nil, "direct-id dispatch returns a run URL")
   assert(result.run_url.contains("/actions/runs/321"), "direct-id dispatch hydrates the run URL")
   assert_eq(result.conclusion, nil, "terminal state is not observed")
   assert_eq(result.timed_out, false, "identity resolution did not time out")
@@ -163,12 +167,15 @@ pipeline test_dispatch_with_run_id_completes_success(harness: Harness, task) {
   )
   const result = github_dispatch_workflow_and_wait(
     harness,
-    "octo-org",
-    "octo-repo",
-    "bump-harn.yml",
-    "main",
-    {version: "v0.7.59"},
-    auth(),
+    {
+      owner: "octo-org",
+      repo: "octo-repo",
+      workflow_id: "bump-harn.yml",
+      ref: "main",
+      inputs: {version: "v0.7.59"},
+      polling: {interval_ms: 0},
+      options: auth(),
+    },
   )
   assert_eq(result.ok, true, "dispatch+wait succeeds")
   assert_eq(result.status, "completed", "status completed")
@@ -182,6 +189,7 @@ pipeline test_dispatch_with_run_id_completes_success(harness: Harness, task) {
   )
   assert_eq(result.head_branch, "main", "terminal run preserves source branch")
   assert_eq(result.event, "workflow_dispatch", "terminal run preserves event")
+  assert(result.run_url != nil, "completed run returns a URL")
   assert(result.run_url.contains("/actions/runs/123"), "run url")
   assert_eq(result.timed_out, false, "not timed out")
   assert(len(result.attempts) >= 2, "polled at least twice")
@@ -250,17 +258,21 @@ pipeline test_dispatch_identity_rejects_legacy_204_without_correlation(harness: 
   )
   const result = github_dispatch_workflow_and_resolve_run(
     harness,
-    "octo-org",
-    "octo-repo",
-    "release.yml",
-    "main",
-    nil,
-    auth() + {head_sha: sha},
+    {
+      owner: "octo-org",
+      repo: "octo-repo",
+      workflow_id: "release.yml",
+      ref: "main",
+      inputs: nil,
+      polling: {interval_ms: 0},
+      options: auth(),
+    },
   )
   assert_eq(result.status, "dispatch_identity_missing", "legacy response fails closed")
   assert_eq(result.ok, false, "legacy response cannot authorize correlation")
   assert_eq(result.run_id, nil, "no listed run is guessed")
   assert_eq(result.candidate_run_ids, [], "no candidate identity is inferred")
+  assert(result.error != nil, "missing dispatch identity returns an error")
   assert_eq(result.error.code, "dispatch_identity_missing", "failure is typed")
   const calls = harness.testing.http_mock_calls()
   assert_eq(len(calls), 1, "legacy response never triggers a workflow-list query")
@@ -311,17 +323,21 @@ pipeline test_dispatch_missing_identity_never_considers_ambiguous_list_rows(
   )
   const result = github_dispatch_workflow_and_wait(
     harness,
-    "octo-org",
-    "octo-repo",
-    "ambiguous.yml",
-    "main",
-    nil,
-    auth(),
+    {
+      owner: "octo-org",
+      repo: "octo-repo",
+      workflow_id: "ambiguous.yml",
+      ref: "main",
+      inputs: nil,
+      polling: {interval_ms: 0},
+      options: auth(),
+    },
   )
   assert_eq(result.ok, false, "missing dispatch identity fails closed")
   assert_eq(result.status, "dispatch_identity_missing", "missing identity is typed")
   assert_eq(result.run_id, nil, "no listed run is pinned")
   assert_eq(result.candidate_run_ids, [], "list rows are never considered")
+  assert(result.error != nil, "missing dispatch identity returns an error")
   assert_eq(result.error.code, "dispatch_identity_missing", "typed error is preserved")
   assert_eq(result.timed_out, false, "missing identity terminates immediately")
   assert_eq(len(harness.testing.http_mock_calls()), 1, "workflow runs are never listed")
@@ -351,12 +367,15 @@ pipeline test_dispatch_identity_missing_does_not_poll_for_a_run(harness: Harness
   )
   const result = github_dispatch_workflow_and_resolve_run(
     harness,
-    "octo-org",
-    "octo-repo",
-    "never.yml",
-    "main",
-    nil,
-    auth() + {max_attempts: 3},
+    {
+      owner: "octo-org",
+      repo: "octo-repo",
+      workflow_id: "never.yml",
+      ref: "main",
+      inputs: nil,
+      polling: {interval_ms: 0, max_attempts: 3},
+      options: auth(),
+    },
   )
   assert_eq(result.ok, false, "ok=false when never found")
   assert_eq(result.status, "dispatch_identity_missing", "status is fail-closed")
@@ -389,12 +408,15 @@ pipeline test_dispatch_returns_dispatch_failed(harness: Harness, task) {
   )
   const result = github_dispatch_workflow_and_resolve_run(
     harness,
-    "octo-org",
-    "octo-repo",
-    "broken.yml",
-    "main",
-    nil,
-    auth(),
+    {
+      owner: "octo-org",
+      repo: "octo-repo",
+      workflow_id: "broken.yml",
+      ref: "main",
+      inputs: nil,
+      polling: {interval_ms: 0},
+      options: auth(),
+    },
   )
   assert_eq(result.ok, false, "ok=false")
   assert_eq(result.status, "dispatch_failed", "status=dispatch_failed")
@@ -431,12 +453,15 @@ pipeline test_dispatch_does_not_query_workflow_runs_before_post(harness: Harness
   )
   const result = github_dispatch_workflow_and_resolve_run(
     harness,
-    "octo-org",
-    "octo-repo",
-    "private.yml",
-    "main",
-    nil,
-    auth(),
+    {
+      owner: "octo-org",
+      repo: "octo-repo",
+      workflow_id: "private.yml",
+      ref: "main",
+      inputs: nil,
+      polling: {interval_ms: 0},
+      options: auth(),
+    },
   )
   assert_eq(result.ok, true, "dispatch does not depend on a list-runs permission probe")
   assert_eq(result.status, "dispatch_accepted", "returned run id is hydrated directly")
@@ -469,10 +494,13 @@ pipeline test_wait_for_workflow_run_times_out_with_known_run(harness: Harness, t
   )
   const result = github_wait_for_workflow_run(
     harness,
-    "octo-org",
-    "octo-repo",
-    777,
-    auth() + {max_attempts: 2},
+    {
+      owner: "octo-org",
+      repo: "octo-repo",
+      run_id: 777,
+      polling: {interval_ms: 0, max_attempts: 2},
+      options: auth(),
+    },
   )
   assert_eq(result.status, "timed_out", "status=timed_out")
   assert_eq(result.timed_out, true, "timed_out flag set")
@@ -508,12 +536,16 @@ pipeline test_ensure_auto_merge_already_enabled(harness: Harness, task) {
     },
   )
   const result = unwrap(
-    github_ensure_auto_merge(
+    pulls_enable_auto_merge(
       harness,
-      "octo-org",
-      "octo-repo",
-      9,
-      auth() + {method: "squash", expected_head_oid: "abc"},
+      {
+        owner: "octo-org",
+        repo: "octo-repo",
+        pull_number: 9,
+        method: "squash",
+        expected_head_oid: "abc",
+        options: auth(),
+      },
     ),
   )
   assert_eq(result.state, "already_enabled", "already_enabled state")
@@ -565,12 +597,15 @@ pipeline test_ensure_auto_merge_enables_via_graphql(harness: Harness, task) {
     },
   )
   const result = unwrap(
-    github_ensure_auto_merge(
+    pulls_enable_auto_merge(
       harness,
-      "octo-org",
-      "octo-repo",
-      12,
-      auth() + {expected_head_oid: "fff"},
+      {
+        owner: "octo-org",
+        repo: "octo-repo",
+        pull_number: 12,
+        expected_head_oid: "fff",
+        options: auth(),
+      },
     ),
   )
   assert_eq(result.state, "enabled", "state=enabled")
@@ -587,12 +622,15 @@ pipeline test_ensure_auto_merge_failed(harness: Harness, task) {
     BASE + "/repos/octo-org/octo-repo/pulls/77",
     {status: 404, body: "{\"message\":\"Not Found\"}", headers: {"x-ratelimit-remaining": "10"}},
   )
-  const result = github_ensure_auto_merge(
+  const result = pulls_enable_auto_merge(
     harness,
-    "octo-org",
-    "octo-repo",
-    77,
-    auth() + {expected_head_oid: "missing"},
+    {
+      owner: "octo-org",
+      repo: "octo-repo",
+      pull_number: 77,
+      expected_head_oid: "missing",
+      options: auth(),
+    },
   )
   assert(is_err(result), "provider error remains a Result failure")
   assert_eq(unwrap_err(result).http_status, 404, "HTTP status remains structured")
@@ -626,7 +664,10 @@ pipeline test_wait_for_pr_checks_green(harness: Harness, task) {
       headers: {"x-ratelimit-remaining": "20"},
     },
   )
-  const result = github_wait_for_pr_checks(harness, "octo-org", "octo-repo", "green-sha", auth())
+  const result = github_wait_for_pr_checks(
+    harness,
+    {owner: "octo-org", repo: "octo-repo", head_sha: "green-sha", options: auth()},
+  )
   assert_eq(result.ok, true, "ok=true")
   assert_eq(result.state, "green", "state=green")
   assert_eq(len(result.failing_checks), 0, "no failing checks")
@@ -681,17 +722,24 @@ pipeline test_wait_for_pr_checks_pending_then_failing_with_logs(harness: Harness
   )
   const result = github_wait_for_pr_checks(
     harness,
-    "octo-org",
-    "octo-repo",
-    "sha-1",
-    auth() + {include_logs: true, log_tail_lines: 50, max_attempts: 4},
+    {
+      owner: "octo-org",
+      repo: "octo-repo",
+      head_sha: "sha-1",
+      include_logs: true,
+      log_tail_lines: 50,
+      polling: {interval_ms: 0, max_attempts: 4},
+      options: auth(),
+    },
   )
   assert_eq(result.state, "failing", "state=failing")
   assert(len(result.failing_checks) == 1, "one failing check")
   assert(result.logs != nil, "logs attached")
-  assert_eq(result.logs[0].run_id, 4242, "log run id resolved from details_url")
-  assert(result.logs[0].lines <= 50, "log lines truncated to tail")
-  assert_eq(result.logs[0].truncated, true, "log marked truncated")
+  const log = result.logs[0]
+  assert(log != nil, "one failing check produces one log summary")
+  assert_eq(log.run_id, 4242, "log run id resolved from details_url")
+  assert(log.lines <= 50, "log lines truncated to tail")
+  assert_eq(log.truncated, true, "log marked truncated")
   harness.testing.http_mock_clear()
 }
 
@@ -710,10 +758,13 @@ pipeline test_wait_for_pr_checks_times_out(harness: Harness, task) {
   )
   const result = github_wait_for_pr_checks(
     harness,
-    "octo-org",
-    "octo-repo",
-    "pending-forever",
-    auth() + {max_attempts: 2},
+    {
+      owner: "octo-org",
+      repo: "octo-repo",
+      head_sha: "pending-forever",
+      polling: {interval_ms: 0, max_attempts: 2},
+      options: auth(),
+    },
   )
   assert_eq(result.state, "timed_out", "state=timed_out")
   assert_eq(result.ok, false, "ok=false on timeout")
@@ -747,14 +798,14 @@ pipeline test_wait_for_pr_checks_log_summary_handles_non_actions_url(harness: Ha
   )
   const result = github_wait_for_pr_checks(
     harness,
-    "octo-org",
-    "octo-repo",
-    "sha-2",
-    auth() + {include_logs: true},
+    {owner: "octo-org", repo: "octo-repo", head_sha: "sha-2", include_logs: true, options: auth()},
   )
   assert_eq(result.state, "failing", "state=failing")
-  assert_eq(result.logs[0].run_id, nil, "no actions run id from non-actions URL")
-  assert_eq(result.logs[0].error, "no_actions_run_url", "error tag for non-actions URL")
+  assert(result.logs != nil, "failing check returns a log summary")
+  const log = result.logs[0]
+  assert(log != nil, "one failing check produces one log summary")
+  assert_eq(log.run_id, nil, "no actions run id from non-actions URL")
+  assert_eq(log.error, "no_actions_run_url", "error tag for non-actions URL")
   harness.testing.http_mock_clear()
 }
 
@@ -767,9 +818,13 @@ pipeline test_find_open_pr_no_match(harness: Harness, task) {
   )
   const result = github_find_open_pr(
     harness,
-    "octo-org",
-    "octo-repo",
-    auth() + {head_ref: "bump/harn-runtime", head_owner: "octo-org"},
+    {
+      owner: "octo-org",
+      repo: "octo-repo",
+      head_ref: "bump/harn-runtime",
+      head_owner: "octo-org",
+      options: auth(),
+    },
   )
   assert_eq(result.ok, true, "ok=true")
   assert_eq(result.found, false, "found=false")
@@ -810,9 +865,14 @@ pipeline test_find_open_pr_matches_by_head_and_filters_labels(harness: Harness, 
   )
   const matched = github_find_open_pr(
     harness,
-    "octo-org",
-    "octo-repo",
-    auth() + {head_ref: "feature/foo", base_ref: "main", labels: ["automation"]},
+    {
+      owner: "octo-org",
+      repo: "octo-repo",
+      head_ref: "feature/foo",
+      base_ref: "main",
+      labels: ["automation"],
+      options: auth(),
+    },
   )
   assert_eq(matched.found, true, "found")
   assert_eq(matched.pull_number, 314, "matched PR has automation label")
@@ -840,7 +900,16 @@ pipeline test_close_pr_with_comment(harness: Harness, task) {
       headers: {"x-ratelimit-remaining": "5"},
     },
   )
-  const closed = github_close_pr(harness, "octo-org", "octo-repo", 55, "stale, closing", auth())
+  const closed = github_close_pr(
+    harness,
+    {
+      owner: "octo-org",
+      repo: "octo-repo",
+      pull_number: 55,
+      comment: "stale, closing",
+      options: auth(),
+    },
+  )
   assert_eq(closed.ok, true, "close ok")
   assert_eq(closed.state, "closed", "state=closed")
   assert_eq(closed.comment_posted, true, "comment posted")
@@ -863,7 +932,10 @@ pipeline test_close_pr_without_comment(harness: Harness, task) {
       headers: {"x-ratelimit-remaining": "5"},
     },
   )
-  const closed = github_close_pr(harness, "octo-org", "octo-repo", 77, nil, auth())
+  const closed = github_close_pr(
+    harness,
+    {owner: "octo-org", repo: "octo-repo", pull_number: 77, comment: nil, options: auth()},
+  )
   assert_eq(closed.ok, true, "close ok without comment")
   assert_eq(closed.comment_posted, false, "no comment posted")
   const calls = harness.testing.http_mock_calls()

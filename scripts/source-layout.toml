@@ -1,0 +1,6 @@
+version = 1
+
+[[source]]
+root = "src"
+suffix = ".harn"
+max_lines = 1500

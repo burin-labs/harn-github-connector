@@ -7,7 +7,7 @@ import {
   payload_schema,
   provider_id,
   shutdown,
-} from "../src/lib"
+} from "../src/facade"
 
 pub fn github_headers(secret, body, event, delivery = "delivery-1") {
   return {

@@ -1,4 +1,8 @@
-import { call, github_release } from "../src/lib"
+import { GithubClientOptions, GithubReleaseRequest, call, github_release } from "../src/facade"
+
+fn release_request(tag: string, options: GithubClientOptions) -> GithubReleaseRequest {
+  return {owner: "octo-org", repo: "octo-repo", tag: tag, options: options}
+}
 
 fn release_fixture(tag) {
   return {
@@ -42,7 +46,7 @@ pipeline test_release_view_by_tag(harness: Harness, task) {
       headers: {"x-ratelimit-remaining": "9"},
     },
   )
-  const lookup = unwrap(github_release(harness, "octo-org", "octo-repo", tag, auth))
+  const lookup = unwrap(github_release(harness, release_request(tag, auth)))
   assert(lookup.found, "release view succeeds")
   assert_eq(lookup.repo, "octo-org/octo-repo", "repo is normalized")
   assert_eq(lookup.release.tag_name, tag, "tag is preserved")
@@ -62,7 +66,7 @@ pipeline test_release_view_requires_exact_tag(harness: Harness, task) {
   const auth = {api_base_url: base, installation_token: "token"}
   const missing = call(harness, "github.release.view", auth + {repo: "octo-org/octo-repo"})
   assert(is_err(missing), "missing exact tag fails closed")
-  const invalid = github_release(harness, "octo-org", "octo-repo", "   ", auth)
+  const invalid = github_release(harness, release_request("   ", auth))
   assert(is_err(invalid), "blank tag fails closed")
   assert_eq(unwrap_err(invalid).code, "schema_drift", "blank tag error category")
   assert_eq(len(harness.testing.http_mock_calls()), 0, "blank tag performs no request")
@@ -90,7 +94,7 @@ pipeline test_release_view_provider_error(harness: Harness, task) {
       headers: {"x-ratelimit-remaining": "9"},
     },
   )
-  const missing = unwrap(github_release(harness, "octo-org", "octo-repo", "v9.9.9", auth))
+  const missing = unwrap(github_release(harness, release_request("v9.9.9", auth)))
   assert_eq(missing.found, false, "accessible repository proves release absence")
   assert_eq(missing.state, "absent", "absence is explicit")
   harness.testing.http_mock(
@@ -102,7 +106,7 @@ pipeline test_release_view_provider_error(harness: Harness, task) {
       headers: {"x-ratelimit-remaining": "10"},
     },
   )
-  const forbidden = github_release(harness, "octo-org", "octo-repo", "v9.9.8", auth)
+  const forbidden = github_release(harness, release_request("v9.9.8", auth))
   assert(is_err(forbidden), "permission failure remains typed")
   assert_eq(unwrap_err(forbidden).http_status, 403, "non-404 provider status is retained")
 }

@@ -1,0 +1,221 @@
+import {
+  GithubClosePullRequestReceipt,
+  GithubClosePullRequestRequest,
+  GithubFindPullRequestReceipt,
+  GithubFindPullRequestRequest,
+  GithubResolvePullRequestRequest,
+  GithubResolvedPullRequest,
+} from "../contracts"
+import { __call_raw } from "../dispatch"
+import { __client_options } from "../request_options"
+
+/** Find the first open pull request that matches a closed filter record. */
+pub fn github_find_open_pr(
+  harness: Harness,
+  request: GithubFindPullRequestRequest,
+) -> GithubFindPullRequestReceipt {
+  const auth = __client_options(request.options ?? {})
+  const query = __pr_finder_query(request)
+  const prs = __call_raw(
+    harness,
+    "github.pr.list",
+    auth + {owner: request.owner, repo: request.repo, filters: query},
+  )
+  if is_err(prs) {
+    return __find_open_pr_error_envelope(unwrap_err(prs))
+  }
+  return __find_open_pr_envelope(__filter_prs(prs ?? [], request))
+}
+
+/** Optionally comment on one pull request, then close it. */
+pub fn github_close_pr(
+  harness: Harness,
+  request: GithubClosePullRequestRequest,
+) -> GithubClosePullRequestReceipt {
+  const auth = __client_options(request.options ?? {})
+  const comment_result = __post_close_comment_if_set(
+    harness,
+    request.owner,
+    request.repo,
+    request.pull_number,
+    request.comment,
+    auth,
+  )
+  if is_err(comment_result) {
+    return __close_pr_envelope(false, request.pull_number, false, nil, unwrap_err(comment_result))
+  }
+  const comment_posted = unwrap(comment_result)
+  const updated = __call_raw(
+    harness,
+    "issues.update",
+    auth
+      + {
+      owner: request.owner,
+      repo: request.repo,
+      issue_number: request.pull_number,
+      state: "closed",
+    },
+  )
+  if is_err(updated) {
+    return __close_pr_envelope(false, request.pull_number, comment_posted, nil, unwrap_err(updated))
+  }
+  return __close_pr_envelope(true, request.pull_number, comment_posted, updated, nil)
+}
+
+/** Resolve a commit SHA to a pull request, preferring event payload evidence. */
+pub fn github_resolve_pr_for_sha(
+  harness: Harness,
+  request: GithubResolvePullRequestRequest,
+) -> GithubResolvedPullRequest {
+  const from_payload = (request.pull_requests ?? []).first()
+  if from_payload != nil && from_payload?.number != nil {
+    return {
+      ok: true,
+      found: true,
+      pull_number: from_payload.number,
+      pull_request: from_payload,
+      source: "payload",
+      error: nil,
+    }
+  }
+  const auth = __client_options(request.options ?? {})
+  const pulls = __call_raw(
+    harness,
+    "repos.commit_pulls",
+    auth + {owner: request.owner, repo: request.repo, sha: request.sha},
+  )
+  if is_err(pulls) {
+    return {
+      ok: false,
+      found: false,
+      pull_number: nil,
+      pull_request: nil,
+      source: "commit_pulls",
+      error: unwrap_err(pulls),
+    }
+  }
+  const first = pulls.first()
+  return {
+    ok: true,
+    found: first != nil && first?.number != nil,
+    pull_number: first?.number,
+    pull_request: first,
+    source: "commit_pulls",
+    error: nil,
+  }
+}
+
+fn __pr_finder_query(opts) {
+  let query = {state: opts?.state ?? "open"}
+  if opts?.head_ref != nil {
+    const head = if opts?.head_owner != nil {
+      to_string(opts.head_owner) + ":" + to_string(opts.head_ref)
+    } else {
+      to_string(opts.head_ref)
+    }
+    query = query + {head: head}
+  }
+  if opts?.base_ref != nil {
+    query = query + {base: to_string(opts.base_ref)}
+  }
+  if opts?.per_page != nil {
+    query = query + {per_page: to_int(opts.per_page) ?? opts.per_page}
+  }
+  return query
+}
+
+fn __filter_prs(prs, opts) {
+  let matches = []
+  for pr in prs {
+    if __pr_matches(pr, opts) {
+      matches = matches + [pr]
+    }
+  }
+  return matches
+}
+
+fn __find_open_pr_error_envelope(err) {
+  return {
+    ok: false,
+    found: false,
+    pull_number: nil,
+    pull_request: nil,
+    total_matches: 0,
+    matches: [],
+    error: err,
+  }
+}
+
+fn __find_open_pr_envelope(matches) {
+  const first = if len(matches) > 0 {
+    matches[0]
+  } else {
+    nil
+  }
+  return {
+    ok: true,
+    found: first != nil,
+    pull_number: first?.number,
+    pull_request: first,
+    total_matches: len(matches),
+    matches: matches,
+    error: nil,
+  }
+}
+
+fn __post_close_comment_if_set(harness: Harness, owner, repo, pull_number, comment, auth) {
+  if comment == nil || trim(to_string(comment)) == "" {
+    return Ok(false)
+  }
+  const posted = __call_raw(
+    harness,
+    "issues.create_comment",
+    auth + {owner: owner, repo: repo, issue_number: pull_number, body: to_string(comment)},
+  )
+  if is_err(posted) {
+    return posted
+  }
+  return Ok(true)
+}
+
+fn __close_pr_envelope(ok, pull_number, comment_posted, pull_request, error) {
+  return {
+    ok: ok,
+    pull_number: pull_number,
+    state: if ok {
+      "closed"
+    } else {
+      "open"
+    },
+    comment_posted: comment_posted,
+    pull_request: pull_request,
+    error: error,
+  }
+}
+
+fn __pr_matches(pr, opts) {
+  if !__pr_matches_title(pr, opts?.title) {
+    return false
+  }
+  return __pr_matches_labels(pr, opts?.labels)
+}
+
+fn __pr_matches_title(pr, title) {
+  if title == nil || trim(to_string(title)) == "" {
+    return true
+  }
+  return contains(to_string(pr?.title ?? ""), to_string(title))
+}
+
+fn __pr_matches_labels(pr, labels) {
+  if labels == nil {
+    return true
+  }
+  const have = pr?.labels ?? []
+  for lbl in labels {
+    if !contains(have, to_string(lbl)) {
+      return false
+    }
+  }
+  return true
+}

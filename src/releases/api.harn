@@ -1,0 +1,65 @@
+import { call_typed } from "../api"
+import {
+  GithubConnectorResult,
+  GithubLatestRelease,
+  GithubLatestReleaseLookup,
+  GithubReleaseAssets,
+  GithubReleaseAssetsRequest,
+  GithubReleaseEditReceipt,
+  GithubReleaseEditRequest,
+  GithubReleaseLookup,
+  GithubReleaseRequest,
+  GithubRepositoryRequest,
+} from "../contracts"
+import { __request_args } from "../request_options"
+
+/** Fetch the latest release as a stable orchestration envelope. */
+pub fn github_latest_release(
+  harness: Harness,
+  request: GithubRepositoryRequest,
+) -> GithubConnectorResult<GithubLatestRelease> {
+  return call_typed(harness, "github.release.latest", __request_args(request), GithubLatestRelease)
+}
+
+/** Resolve the latest release with proven-absence semantics. */
+pub fn github_latest_release_lookup(
+  harness: Harness,
+  request: GithubRepositoryRequest,
+) -> GithubConnectorResult<GithubLatestReleaseLookup> {
+  return call_typed(
+    harness,
+    "github.release.latest_lookup",
+    __request_args(request),
+    GithubLatestReleaseLookup,
+  )
+}
+
+/** Look up one exact release tag with proven-absence semantics. */
+pub fn github_release(
+  harness: Harness,
+  request: GithubReleaseRequest,
+) -> GithubConnectorResult<GithubReleaseLookup> {
+  return call_typed(harness, "github.release.view", __request_args(request), GithubReleaseLookup)
+}
+
+/** Replace a release body under the complete lease returned by `github_release`. */
+pub fn github_release_edit_body(
+  harness: Harness,
+  request: GithubReleaseEditRequest,
+) -> GithubConnectorResult<GithubReleaseEditReceipt> {
+  const args = __request_args(request).removing("lease")
+    + {
+    expected_release_id: request.lease.release_id,
+    expected_tag_ref_oid: request.lease.tag_ref_oid,
+    expected_tag_target_oid: request.lease.tag_target_oid,
+  }
+  return call_typed(harness, "github.release.edit_body", args, GithubReleaseEditReceipt)
+}
+
+/** List release assets as a stable orchestration envelope. */
+pub fn github_release_assets(
+  harness: Harness,
+  request: GithubReleaseAssetsRequest,
+) -> GithubConnectorResult<GithubReleaseAssets> {
+  return call_typed(harness, "github.release.assets", __request_args(request), GithubReleaseAssets)
+}

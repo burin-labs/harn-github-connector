@@ -1,4 +1,4 @@
-import { call, github_auth_fallback_enabled } from "../src/lib"
+import { call, github_auth_fallback_enabled } from "../src/facade"
 
 pipeline test_explicit_canonical_policy_dominates_environment(task) {
   assert_eq(
