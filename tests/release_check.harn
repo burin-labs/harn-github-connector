@@ -114,7 +114,7 @@ pipeline test_release_check_delegates_to_one_strict_package_gate(harness: Harnes
   expect_text(to_string(result.stderr), "", "stderr")
   expect_text(
     harness.fs.read_text(fixture.receipt),
-    "package\nverify\n.\n--strict\n",
+    "package\nverify\n.\n--strict\n--receipt-out\n.harn/receipts/package-verify.json\n",
     "canonical Harn argv",
   )
 }
@@ -168,7 +168,7 @@ pipeline test_release_check_accepts_a_tag_that_is_head_when_tag_head_is_required
   expect_text(to_string(result.stderr), "", "stderr")
   expect_text(
     harness.fs.read_text(fixture.receipt),
-    "package\nverify\n.\n--strict\n",
+    "package\nverify\n.\n--strict\n--receipt-out\n.harn/receipts/package-verify.json\n",
     "canonical Harn argv",
   )
 }

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Have the release gate write a package verification receipt and upload it from
+  the release job. The human-readable summary names the failing check and
+  nothing else, so the failed v0.6.7 release reported `package tests: fail` with
+  no indication of which of 121 tests failed; recovering it meant reproducing
+  the job's environment locally. CI already kept this receipt — the release path
+  now keeps the same one at the same path.
+
 ## 0.6.8 - 2026-08-02
 
 - Make the release-gate tests hermetic. The fixture package now owns its own
