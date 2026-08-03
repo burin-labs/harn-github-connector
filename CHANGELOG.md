@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Export closed file and latest-release lookup contracts plus named typed
+  helpers. Accessible absence remains distinct from masked repositories and
+  transport failure. Found and absent variants are discriminated unions, so
+  orchestrators neither duplicate GitHub response shapes nor admit a missing
+  payload in a found lookup.
+
 ## 0.6.6 - 2026-08-02
 
 - Add exact, typed branch-tree comparison and pull-request upsert operations

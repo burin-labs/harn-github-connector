@@ -432,6 +432,20 @@ pub fn github_latest_release(harness: Harness, owner, repo, options = nil) {
 }
 ```
 
+### fn `github_latest_release_lookup`
+
+Resolve the latest release without exposing the legacy provider envelope.
+
+```harn
+pub fn github_latest_release_lookup(
+  harness: Harness,
+  owner: string,
+  repo: string,
+  options = nil,
+) -> GithubConnectorResult<GithubLatestReleaseLookup> {
+}
+```
+
 ### fn `github_release`
 
 Look up release metadata by one exact tag.
@@ -444,6 +458,19 @@ pub fn github_release(
   tag,
   options = nil,
 ) -> GithubConnectorResult<GithubReleaseLookup> {
+}
+```
+
+### fn `github_file_at_ref`
+
+Read and decode one repository file under an exact Git ref.
+
+```harn
+pub fn github_file_at_ref(
+  harness: Harness,
+  request: GithubFileLookupRequest,
+  options = nil,
+) -> GithubConnectorResult<GithubFileLookup> {
 }
 ```
 
@@ -879,6 +906,44 @@ Canonical fallible boundary for every normalized GitHub operation.
 pub type GithubConnectorResult<T> = Result<T, GithubConnectorError>
 ```
 
+### type `GithubFileLookup`
+
+Explicit found-or-absent result for one repository path at an exact ref.
+
+```harn
+pub type GithubFileLookup = {
+  repo: string,
+  path: string,
+  ref: string,
+  state: "found",
+  found: bool,
+  file: GithubRepositoryFile,
+} \
+  | {repo: string, path: string, ref: string, state: "absent", found: bool, file: nil}
+```
+
+### type `GithubFileLookupRequest`
+
+Closed identity for one repository file read.
+
+```harn
+pub type GithubFileLookupRequest = {owner: string, repo: string, path: string, ref: string}
+```
+
+### type `GithubLatestReleaseLookup`
+
+Explicit found-or-absent result for the repository's latest release.
+
+```harn
+pub type GithubLatestReleaseLookup = {
+  repo: string,
+  state: "found",
+  found: bool,
+  release: GithubRelease,
+} \
+  | {repo: string, state: "absent", found: bool, release: nil}
+```
+
 ### type `GithubMergeQueueEnqueueReceipt`
 
 Receipt binding an enqueue request to the expected pull-request head.
@@ -1214,10 +1279,27 @@ Explicit found-or-absent result for a release tag lookup.
 pub type GithubReleaseLookup = {
   repo: string,
   tag: string,
-  state: string,
+  state: "found",
   found: bool,
-  release: GithubRelease?,
-  lease?: GithubReleaseLease,
+  release: GithubRelease,
+  lease: GithubReleaseLease,
+} \
+  | {repo: string, tag: string, state: "absent", found: bool, release: nil, lease: nil}
+```
+
+### type `GithubRepositoryFile`
+
+One repository file decoded at an exact Git ref.
+
+```harn
+pub type GithubRepositoryFile = {
+  name: string,
+  path: string,
+  sha: string,
+  size: int,
+  ref: string,
+  text: string,
+  url: string,
 }
 ```
 

@@ -1,15 +1,109 @@
 import {
+  GithubFileLookupRequest,
   actions_workflow_dispatch,
   actions_workflow_run,
   actions_workflow_runs,
   api_call,
+  github_file_at_ref,
   github_latest_release,
+  github_latest_release_lookup,
   github_release_assets,
   pulls_enable_auto_merge,
   repos_get_latest_release,
   repos_get_text,
   repos_list_release_assets,
 } from "../src/lib"
+
+const BASE = "https://github-api.test"
+
+fn typed_auth() -> dict {
+  return {api_base_url: BASE, installation_token: "github-installation-token"}
+}
+
+fn release_payload() -> dict {
+  return {
+    id: 501,
+    tag_name: "v0.8.4",
+    name: "v0.8.4",
+    draft: false,
+    prerelease: false,
+    html_url: "https://github.com/octo-org/octo-repo/releases/tag/v0.8.4",
+    target_commitish: "main",
+    body: "notes",
+    published_at: "2026-05-09T18:00:00Z",
+    assets: [],
+  }
+}
+
+pipeline test_typed_repository_file_helper_validates_the_normalized_contract(
+  harness: Harness,
+  task,
+) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/contents/VERSION?ref=main",
+    {
+      status: 200,
+      body: json_stringify(
+        {
+          type: "file",
+          encoding: "base64",
+          name: "VERSION",
+          path: "VERSION",
+          sha: "file-sha",
+          size: 7,
+          content: base64_encode("0.6.6\n"),
+          html_url: "https://github.com/octo-org/octo-repo/blob/main/VERSION",
+        },
+      ),
+      headers: {"x-ratelimit-remaining": "10"},
+    },
+  )
+  const request: GithubFileLookupRequest = {
+    owner: "octo-org",
+    repo: "octo-repo",
+    path: "VERSION",
+    ref: "main",
+  }
+  const result = unwrap(github_file_at_ref(harness, request, typed_auth()))
+  assert_eq(result.state, "found")
+  assert_eq(result.file?.text, "0.6.6\n")
+}
+
+pipeline test_typed_latest_release_helper_distinguishes_accessible_absence(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/releases/latest",
+    {
+      responses: [
+        {status: 200, body: json_stringify(release_payload())},
+        {status: 404, body: json_stringify({message: "Not Found"})},
+        {status: 404, body: json_stringify({message: "Not Found"})},
+      ],
+    },
+  )
+  harness.testing.http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo",
+    {
+      responses: [
+        {status: 200, body: json_stringify({full_name: "octo-org/octo-repo"})},
+        {status: 404, body: json_stringify({message: "Not Found"})},
+      ],
+    },
+  )
+  const found = unwrap(github_latest_release_lookup(harness, "octo-org", "octo-repo", typed_auth()))
+  assert_eq(found.release?.tag_name, "v0.8.4")
+  const absent = unwrap(
+    github_latest_release_lookup(harness, "octo-org", "octo-repo", typed_auth()),
+  )
+  assert_eq(absent, {repo: "octo-org/octo-repo", state: "absent", found: false, release: nil})
+  const masked = github_latest_release_lookup(harness, "octo-org", "octo-repo", typed_auth())
+  assert(is_err(masked))
+  assert_eq(unwrap_err(masked).code, "inaccessible_resource")
+}
 
 pipeline test_repo_automation_methods(harness: Harness, task) {
   harness.testing.http_mock_clear()
