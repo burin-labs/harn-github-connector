@@ -549,9 +549,11 @@ harn check smoke.harn
 ## Release process
 
 Release validation is tag-driven. Before tagging, update `[package].version` in
-`harn.toml` and add a matching `CHANGELOG.md` heading, then run:
+`harn.toml`, regenerate `docs/api.md` with the pinned Harn runtime, and add a
+matching `CHANGELOG.md` heading, then run:
 
 ```sh
+harn package docs
 scripts/check-release.sh vX.Y.Z
 ```
 

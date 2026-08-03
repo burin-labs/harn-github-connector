@@ -66,12 +66,16 @@ pub fn shutdown(_harness: Harness) {
 
 ### fn `normalize_inbound`
 
+Verify and normalize a raw GitHub webhook request into NormalizeResult v1.
+
 ```harn
 pub fn normalize_inbound(harness: Harness, raw) {
 }
 ```
 
 ### fn `call`
+
+Dispatch a supported GitHub method through one explicit Result boundary.
 
 ```harn
 pub fn call(harness: Harness, method: string, args: dict = {}) -> GithubConnectorResult<unknown> {

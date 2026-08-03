@@ -1,0 +1,108 @@
+fn expect(condition: bool, message: string) {
+  if !condition {
+    throw message
+  }
+}
+
+fn expect_text(observed: string, wanted: string, label: string) {
+  if observed != wanted {
+    throw label + ": expected `" + wanted + "`, observed `" + observed + "`"
+  }
+}
+
+type ReleaseTestCapabilities = {fs: HarnessFs, process: HarnessProcess}
+
+fn run_release_check(
+  capabilities: ReleaseTestCapabilities,
+  dir: string,
+  tag: string,
+  receipt: string,
+) -> dict {
+  const project_root = capabilities.fs.project_root() ?? capabilities.fs.cwd()
+  return capabilities.process.run(
+    {
+      program: "/bin/bash",
+      args: [project_root + "/scripts/check-release.sh", tag],
+      cwd: dir,
+      env: {PATH: dir + "/bin:/usr/bin:/bin", HARN_ARGV_RECEIPT: receipt},
+      stdin: "",
+      timeout_ms: 30000,
+    },
+  )
+}
+
+fn release_fixture(capabilities: ReleaseTestCapabilities) -> {dir: string, receipt: string} {
+  const dir = capabilities.fs.mkdtemp_in_workspace("harn-release-check-")
+  capabilities.fs.mkdir(dir + "/bin", true)
+  capabilities.fs.write_text(
+    dir + "/bin/harn",
+    "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$HARN_ARGV_RECEIPT\"\n",
+  )
+  const chmod = capabilities.process.run(
+    {
+      program: "/bin/chmod",
+      args: ["755", dir + "/bin/harn"],
+      cwd: dir,
+      env: {},
+      stdin: "",
+      timeout_ms: 30000,
+    },
+  )
+  expect(chmod.success, "failed to make the fixture Harn executable")
+  capabilities.fs.write_text(
+    dir + "/harn.toml",
+    "[package]\nname = \"release-fixture\"\nversion = \"0.6.6\"\n",
+  )
+  capabilities.fs.write_text(dir + "/CHANGELOG.md", "# Changelog\n\n## 0.6.6 - 2026-08-02\n")
+  return {dir: dir, receipt: dir + "/harn-argv.txt"}
+}
+
+pipeline test_release_check_delegates_to_one_strict_package_gate(harness: Harness, task) {
+  const capabilities = {fs: harness.fs, process: harness.process}
+  const fixture = release_fixture(capabilities)
+  const result = run_release_check(capabilities, fixture.dir, "v0.6.6", fixture.receipt)
+  expect(result.success, "valid release contract failed: " + to_string(result.stderr))
+  expect_text(to_string(result.stdout), "", "stdout")
+  expect_text(to_string(result.stderr), "", "stderr")
+  expect_text(
+    harness.fs.read_text(fixture.receipt),
+    "package\nverify\n.\n--strict\n",
+    "canonical Harn argv",
+  )
+}
+
+pipeline test_release_check_rejects_invalid_tag_before_package_verification(
+  harness: Harness,
+  task,
+) {
+  const capabilities = {fs: harness.fs, process: harness.process}
+  const fixture = release_fixture(capabilities)
+  const result = run_release_check(capabilities, fixture.dir, "0.6.6", fixture.receipt)
+  expect(!result.success, "invalid release tag unexpectedly succeeded")
+  expect(result.exit_code == 1, "invalid release tag must exit 1")
+  expect_text(to_string(result.stdout), "", "stdout")
+  expect_text(
+    to_string(result.stderr),
+    "expected release tag like v0.1.0, got '0.6.6'\n",
+    "invalid-tag error",
+  )
+  expect(!harness.fs.exists(fixture.receipt), "invalid tag reached package verification")
+}
+
+pipeline test_release_check_rejects_manifest_version_mismatch_before_package_verification(
+  harness: Harness,
+  task,
+) {
+  const capabilities = {fs: harness.fs, process: harness.process}
+  const fixture = release_fixture(capabilities)
+  const result = run_release_check(capabilities, fixture.dir, "v0.6.7", fixture.receipt)
+  expect(!result.success, "mismatched package version unexpectedly succeeded")
+  expect(result.exit_code == 1, "mismatched package version must exit 1")
+  expect_text(to_string(result.stdout), "", "stdout")
+  expect_text(
+    to_string(result.stderr),
+    "tag v0.6.7 does not match harn.toml package version 0.6.6\n",
+    "manifest mismatch error",
+  )
+  expect(!harness.fs.exists(fixture.receipt), "manifest mismatch reached package verification")
+}
