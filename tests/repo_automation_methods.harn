@@ -1,5 +1,7 @@
 import {
+  GithubClientOptions,
   GithubFileLookupRequest,
+  GithubRepositoryRequest,
   actions_workflow_dispatch,
   actions_workflow_run,
   actions_workflow_runs,
@@ -25,7 +27,7 @@ fn request_to(calls, method, url) {
 
 const BASE = "https://github-api.test"
 
-fn typed_auth() -> dict {
+fn typed_auth() -> GithubClientOptions {
   return {api_base_url: BASE, installation_token: "github-installation-token"}
 }
 
@@ -104,7 +106,11 @@ pipeline test_typed_latest_release_helper_distinguishes_accessible_absence(harne
       ],
     },
   )
-  const request = {owner: "octo-org", repo: "octo-repo", options: typed_auth()}
+  const request: GithubRepositoryRequest = {
+    owner: "octo-org",
+    repo: "octo-repo",
+    options: typed_auth(),
+  }
   const found = unwrap(github_latest_release_lookup(harness, request))
   assert_eq(found.release?.tag_name, "v0.8.4")
   const absent = unwrap(github_latest_release_lookup(harness, request))
