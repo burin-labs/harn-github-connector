@@ -125,6 +125,31 @@ pub type GithubBranchTreeCompareRequest = {
   right_ref: string,
 }
 
+/** One repository file decoded at an exact Git ref. */
+pub type GithubRepositoryFile = {
+  name: string,
+  path: string,
+  sha: string,
+  size: int,
+  ref: string,
+  text: string,
+  url: string,
+}
+
+/** Explicit found-or-absent result for one repository path at an exact ref. */
+pub type GithubFileLookup = {
+  repo: string,
+  path: string,
+  ref: string,
+  state: "found",
+  found: bool,
+  file: GithubRepositoryFile,
+} \
+  | {repo: string, path: string, ref: string, state: "absent", found: bool, file: nil}
+
+/** Closed identity for one repository file read. */
+pub type GithubFileLookupRequest = {owner: string, repo: string, path: string, ref: string}
+
 /** One pull request's normalized merge-queue entry. */
 pub type GithubMergeQueueEntry = {
   id: string,
@@ -394,11 +419,21 @@ pub type GithubReleaseLease = {
 pub type GithubReleaseLookup = {
   repo: string,
   tag: string,
-  state: string,
+  state: "found",
   found: bool,
-  release: GithubRelease?,
-  lease?: GithubReleaseLease,
-}
+  release: GithubRelease,
+  lease: GithubReleaseLease,
+} \
+  | {repo: string, tag: string, state: "absent", found: bool, release: nil, lease: nil}
+
+/** Explicit found-or-absent result for the repository's latest release. */
+pub type GithubLatestReleaseLookup = {
+  repo: string,
+  state: "found",
+  found: bool,
+  release: GithubRelease,
+} \
+  | {repo: string, state: "absent", found: bool, release: nil}
 
 /** Receipt binding an edited release to its leased tag and release identity. */
 pub type GithubReleaseEditReceipt = {

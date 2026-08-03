@@ -23,7 +23,7 @@ harn --version
 Add the released connector:
 
 ```sh
-harn add github.com/burin-labs/harn-github-connector@v0.4.0
+harn add github.com/burin-labs/harn-github-connector@v0.6.6
 ```
 
 For local multi-repo development, use a path dependency:
@@ -156,8 +156,13 @@ const release = unwrap(result)
 
 The default module exports closed records for pull requests, checks, workflow
 runs and dispatches, releases, merge queues, mergeability, auto-merge receipts,
-commit signatures, and connector errors. These records are importable in
-downstream annotations and compose through `GithubConnectorResult<T>`.
+repository files, commit signatures, and connector errors. These records are
+importable in downstream annotations and compose through
+`GithubConnectorResult<T>`.
+
+Use `std/git` for local repository operations and `std/gh` only as an explicit
+GitHub CLI escape hatch. This connector owns remote GitHub authentication,
+REST/GraphQL normalization, mutation leases, and provider error semantics.
 
 | Area | Methods |
 |---|---|
@@ -166,7 +171,7 @@ downstream annotations and compose through `GithubConnectorResult<T>`.
 | Self-hosted runners | `actions.runners.registration_token`, `actions.runners.remove_token`, `actions.runners.generate_jitconfig`, `actions.runners.list`, `actions.runners.get`, `actions.runners.delete`, `actions.runners.downloads`, `actions.runners.labels.list`, `actions.runners.labels.add`, `actions.runners.labels.replace`, `actions.runners.labels.remove`, `actions.runner_groups.list`, `actions.runner_groups.create`, `actions.runner_groups.get`, `actions.runner_groups.update`, `actions.runner_groups.delete` |
 | User OAuth | `oauth.user.device_code`, `oauth.user.device_poll`, `oauth.user.exchange_code`, `oauth.user.refresh` |
 | Issues | `github.issue.create`, `github.issue.comment`, `issues.create_comment`, `issues.create`, `issues.create_with_template`, `issues.update`, `issues.add_labels` |
-| Repository and release data | `github.file.view`, `github.release.view`, `github.release.edit_body`, `github.release.latest`, `github.release.assets`, `github.commit.signature`, `github.branch.view`, `github.branch.compare_trees`, `github.branch.protection`, `github.branch.create_signed_commit`, `repos.get_content`, `repos.get_text`, `repos.create_or_update_file`, `repos.put_content`, `repos.delete_file`, `repos.get_latest_release`, `repos.list_release_assets`, `repos.get_branch_protection`, `git.create_commit`, `git.delete_ref` |
+| Repository and release data | `github.file.view`, `github.release.view`, `github.release.edit_body`, `github.release.latest`, `github.release.latest_lookup`, `github.release.assets`, `github.commit.signature`, `github.branch.view`, `github.branch.compare_trees`, `github.branch.protection`, `github.branch.create_signed_commit`, `repos.get_content`, `repos.get_text`, `repos.create_or_update_file`, `repos.put_content`, `repos.delete_file`, `repos.get_latest_release`, `repos.list_release_assets`, `repos.get_branch_protection`, `git.create_commit`, `git.delete_ref` |
 | Merge queue | `github.merge_queue.entries`, `github.merge_queue.membership`, `github.merge_queue.enqueue` |
 | Raw access | `api_call`, `graphql` |
 
@@ -213,6 +218,9 @@ raw REST responses for the same operation.
   only after the same credential proves repository access. Masked private
   resources and transport failures remain `Err`. Exact release views include
   the release id, tag-ref object, and peeled tag target as a mutation lease.
+  `github_file_at_ref` and `github_latest_release_lookup` expose the corresponding
+  closed lookup records without requiring callers to restate provider-owned
+  response shapes.
 - `github.release.edit_body` accepts that complete lease and re-observes it
   before issuing one body-only metadata update. Stale release ids or tag
   identities fail closed; tags and assets cannot be included in the request.
@@ -242,6 +250,8 @@ Named helpers:
 | `api_call(path, method, body, options)` | Call one REST endpoint. Prefer typed helpers when available. |
 | `repos_get_text(owner, repo, path, ref, options)` | Decode repository file content as UTF-8 text. |
 | `repos_get_latest_release(owner, repo, options)` | Fetch latest release metadata. |
+| `github_file_at_ref(harness, request, options)` | Read one repository file at an exact ref as a typed found-or-absent lookup. |
+| `github_latest_release_lookup(harness, owner, repo, options)` | Resolve the latest release as a typed found-or-absent lookup. |
 | `repos_list_release_assets(owner, repo, release_id, options)` | List assets for a release id. |
 | `github_latest_release(owner, repo, options)` | Fetch latest release metadata in a stable envelope. |
 | `github_release_assets(owner, repo, release_id, options)` | List release assets in a stable envelope; defaults to the latest release. |
