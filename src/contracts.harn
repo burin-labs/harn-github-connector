@@ -302,6 +302,32 @@ pub type GithubBranchHead = {repo: string, branch: string, oid: string, url: str
 /** Request for one branch's exact current commit. */
 pub type GithubBranchHeadRequest = GithubRepositoryRequest & {branch: string}
 
+/**
+ * Request to claim one fully qualified ref for an exact object.
+ *
+ * `ref` is the complete name, `refs/heads/...` or `refs/tags/...`, because the
+ * create and read endpoints spell the same ref differently and normalizing at
+ * one boundary is what keeps a claim and its read-back describing the same ref.
+ */
+pub type GithubRefClaimRequest = GithubRepositoryRequest & {ref: string, oid: string}
+
+/**
+ * Outcome of one atomic ref claim.
+ *
+ * `oid` is what the ref points at once the call returns, whoever won, so a
+ * caller that lost still learns the holder. `holder_headline` is the first line
+ * of the holding commit's message when the ref resolves to a commit and the
+ * claim was lost; it is empty otherwise. It is what turns "someone else holds
+ * this" into "who, and since when", so a lock payload has somewhere to live.
+ */
+pub type GithubRefClaim = {
+  repo: string,
+  ref: string,
+  oid: string,
+  claimed: bool,
+  holder_headline: string,
+}
+
 /** Exact commit and tree identities used to compare two repository refs. */
 pub type GithubBranchTreeComparison = {
   repo: string,

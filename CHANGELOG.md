@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Add `github_claim_ref`, an atomic ref claim. `POST /git/refs` is the only
+  GitHub primitive that serializes across machines, and the connector exposed
+  `git.delete_ref` and `git.create_commit` but no way to create a ref, so a
+  caller wanting a cross-machine lock had no typed path to one. Contention is
+  returned as an outcome rather than an error: a lost claim carries the holder's
+  oid and the first line of its commit message, which is what lets a payload
+  commit answer *who* holds the ref. GitHub spends one 422 on "taken", "no such
+  object", and "bad ref name", so the claim reads the ref back to tell them
+  apart and only reports contention when the ref really resolves.
+
 - Run the release gate against `main` before a tag exists. `release.yml` is
   triggered by the tag push, so the version match, the CHANGELOG heading, and
   `harn package verify` all run against an object that is already immutable and

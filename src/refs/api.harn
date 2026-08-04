@@ -1,0 +1,18 @@
+import { call_typed } from "../api"
+import { GithubConnectorResult, GithubRefClaim, GithubRefClaimRequest } from "../contracts"
+import { __request_args } from "../request_options"
+
+/**
+ * Claim one ref for an exact object, and learn the holder when the claim is
+ * lost.
+ *
+ * Contention is an outcome, not an error: a lost claim returns `claimed: false`
+ * with the holder's oid and message headline. Only a real failure — no
+ * permission, no such object, a malformed ref — is an `Err`.
+ */
+pub fn github_claim_ref(
+  harness: Harness,
+  request: GithubRefClaimRequest,
+) -> GithubConnectorResult<GithubRefClaim> {
+  return call_typed(harness, "github.ref.claim", __request_args(request), GithubRefClaim)
+}
