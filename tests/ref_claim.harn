@@ -116,3 +116,104 @@ pipeline test_a_partial_ref_is_refused_before_any_request(harness: Harness, task
   const without_oid: GithubRefClaimRequest = request() + {oid: ""}
   assert(is_err(github_claim_ref(harness, without_oid)))
 }
+
+const BASE_REF = "refs/heads/main"
+
+const BASE_TIP = "3333333333333333333333333333333333333333"
+
+const BASE_TREE = "4444444444444444444444444444444444444444"
+
+const MINTED = "5555555555555555555555555555555555555555"
+
+fn payload_request() -> GithubRefClaimRequest {
+  return {
+    owner: "octo-org",
+    repo: "octo-repo",
+    ref: REF,
+    payload: {message: "release-lock v1.2.3 run=019fc846 host=laptop", base_ref: BASE_REF},
+    options: auth(),
+  }
+}
+
+fn mint_mocks(testing: HarnessTesting) {
+  testing.http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/git/ref/heads/main",
+    {status: 200, body: json_stringify({ref: BASE_REF, object: {sha: BASE_TIP, type: "commit"}})},
+  )
+  testing.http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/git/commits/" + BASE_TIP,
+    {status: 200, body: json_stringify({sha: BASE_TIP, tree: {sha: BASE_TREE}})},
+  )
+  testing.http_mock(
+    "POST",
+    BASE + "/repos/octo-org/octo-repo/git/commits",
+    {status: 201, body: json_stringify({sha: MINTED, tree: {sha: BASE_TREE}})},
+  )
+}
+
+pipeline test_a_claim_with_no_oid_mints_its_own_payload(harness: Harness, task) {
+  // A lock has nothing to point at yet, so the connector mints the object the
+  // ref will name and the caller never handles a tree.
+  harness.testing.http_mock_clear()
+  mint_mocks(harness.testing)
+  harness.testing.http_mock(
+    "POST",
+    refs_url(),
+    {status: 201, body: json_stringify({ref: REF, object: {sha: MINTED, type: "commit"}})},
+  )
+  const claim = unwrap(github_claim_ref(harness, payload_request()))
+  assert_eq(claim.claimed, true)
+  assert_eq(claim.oid, MINTED)
+  const minted = harness.testing.http_mock_calls().filter(
+    { call -> call.method == "POST" && call.url == BASE + "/repos/octo-org/octo-repo/git/commits" },
+  )
+    .to_list()
+  assert_eq(len(minted), 1)
+  const body: {message: string, tree: string, parents: list<string>} = json_parse(
+    to_string(minted[0]?.body ?? "{}"),
+  )
+  assert_eq(body.tree, BASE_TREE)
+  // Parentless on purpose: a lock is a label, not history.
+  assert_eq(body.parents, [])
+  assert_eq(body.message, "release-lock v1.2.3 run=019fc846 host=laptop")
+}
+
+pipeline test_a_minted_payload_still_reports_the_holder_when_the_claim_is_lost(
+  harness: Harness,
+  task,
+) {
+  harness.testing.http_mock_clear()
+  mint_mocks(harness.testing)
+  harness.testing.http_mock("POST", refs_url(), taken("Reference already exists"))
+  harness.testing.http_mock(
+    "GET",
+    ref_read_url(),
+    {status: 200, body: json_stringify({ref: REF, object: {sha: HOLDER_OID, type: "commit"}})},
+  )
+  harness.testing.http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/git/commits/" + HOLDER_OID,
+    {
+      status: 200,
+      body: json_stringify({sha: HOLDER_OID, message: "release-lock v1.2.3 run=019fc7eb"}),
+    },
+  )
+  const claim = unwrap(github_claim_ref(harness, payload_request()))
+  assert_eq(claim.claimed, false)
+  assert_eq(claim.oid, HOLDER_OID)
+  assert_eq(claim.holder_headline, "release-lock v1.2.3 run=019fc7eb")
+}
+
+pipeline test_a_claim_with_neither_an_oid_nor_a_payload_is_refused_before_any_request(
+  harness: Harness,
+  task,
+) {
+  harness.testing.http_mock_clear()
+  const failure = unwrap_err(
+    github_claim_ref(harness, {owner: "octo-org", repo: "octo-repo", ref: REF, options: auth()}),
+  )
+  assert_eq(failure.code, "schema_drift")
+  assert_eq(len(harness.testing.http_mock_calls()), 0)
+}

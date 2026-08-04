@@ -1,0 +1,112 @@
+import { GithubClientOptions, GithubRefReleaseRequest, github_release_ref } from "../src/facade"
+
+/**
+ * Releasing a lock is a delete, and GitHub's ref delete takes no lease.
+ *
+ * The only thing separating "release my lock" from "delete whoever holds it
+ * now" is reading the ref first and refusing when it has moved. Every test here
+ * is about that read.
+ */
+const BASE = "https://api.github.test"
+
+const OURS = "2222222222222222222222222222222222222222"
+
+const THEIRS = "1111111111111111111111111111111111111111"
+
+const REF = "refs/release-lock/v1.2.3"
+
+fn auth() -> GithubClientOptions {
+  return {api_base_url: BASE, installation_token: "github-app-installation-token"}
+}
+
+fn request() -> GithubRefReleaseRequest {
+  return {owner: "octo-org", repo: "octo-repo", ref: REF, expected_oid: OURS, options: auth()}
+}
+
+fn read_url() -> string {
+  return BASE + "/repos/octo-org/octo-repo/git/ref/release-lock/v1.2.3"
+}
+
+fn delete_url() -> string {
+  return BASE + "/repos/octo-org/octo-repo/git/refs/release-lock/v1.2.3"
+}
+
+fn deletes(testing: HarnessTesting) -> int {
+  return len(testing.http_mock_calls().filter({ call -> call.method == "DELETE" }).to_list())
+}
+
+pipeline test_a_ref_still_holding_our_object_is_released(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
+    "GET",
+    read_url(),
+    {status: 200, body: json_stringify({ref: REF, object: {sha: OURS, type: "commit"}})},
+  )
+  harness.testing.http_mock("DELETE", delete_url(), {status: 204, body: ""})
+  const released = unwrap(github_release_ref(harness, request()))
+  assert_eq(released.released, true)
+  assert_eq(released.reason, "released")
+  assert_eq(released.oid, OURS)
+  assert_eq(deletes(harness.testing), 1)
+}
+
+pipeline test_a_ref_that_moved_on_is_left_alone(harness: Harness, task) {
+  // The case the read exists for. Deleting here would take a lock another
+  // machine is actively holding, which is the failure this whole mechanism is
+  // meant to prevent.
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
+    "GET",
+    read_url(),
+    {status: 200, body: json_stringify({ref: REF, object: {sha: THEIRS, type: "commit"}})},
+  )
+  harness.testing.http_mock("DELETE", delete_url(), {status: 204, body: ""})
+  const result = unwrap(github_release_ref(harness, request()))
+  assert_eq(result.released, false)
+  assert_eq(result.reason, "held_by_another")
+  assert_eq(result.oid, THEIRS)
+  assert_eq(deletes(harness.testing), 0)
+}
+
+pipeline test_an_absent_ref_is_the_intended_end_state(harness: Harness, task) {
+  // A release that retries after a partial failure has to be able to finish.
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
+    "GET",
+    read_url(),
+    {status: 404, body: json_stringify({message: "Not Found"})},
+  )
+  const result = unwrap(github_release_ref(harness, request()))
+  assert_eq(result.released, false)
+  assert_eq(result.reason, "already_absent")
+  assert_eq(result.oid, "")
+  assert_eq(deletes(harness.testing), 0)
+}
+
+pipeline test_an_unreadable_ref_is_an_error_not_an_absence(harness: Harness, task) {
+  // A 500 is not evidence the lock is gone, and treating it as one would let a
+  // release proceed against a lock it never checked.
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
+    "GET",
+    read_url(),
+    {status: 500, body: json_stringify({message: "Server Error"})},
+  )
+  assert(is_err(github_release_ref(harness, request())))
+  assert_eq(deletes(harness.testing), 0)
+}
+
+pipeline test_a_release_without_an_expected_oid_is_refused_before_any_request(
+  harness: Harness,
+  task,
+) {
+  harness.testing.http_mock_clear()
+  const failure = unwrap_err(
+    github_release_ref(
+      harness,
+      {owner: "octo-org", repo: "octo-repo", ref: REF, expected_oid: "", options: auth()},
+    ),
+  )
+  assert_eq(failure.code, "schema_drift")
+  assert_eq(len(harness.testing.http_mock_calls()), 0)
+}

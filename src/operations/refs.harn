@@ -25,13 +25,14 @@ pub fn __github_ref_claim(harness: Harness, args, cfg) {
   }
   const r = unwrap(repo)
   const ref = trim(to_string(args?.ref ?? ""))
-  const oid = trim(to_string(args?.oid ?? args?.sha ?? ""))
-  if !starts_with(ref, "refs/") || oid == "" {
-    return __err(
-      "schema_drift",
-      "github.ref.claim requires a fully qualified `refs/...` ref and an oid",
-    )
+  if !starts_with(ref, "refs/") {
+    return __err("schema_drift", "github.ref.claim requires a fully qualified `refs/...` ref")
   }
+  const minted = __github_claim_object(harness, r, args, cfg)
+  if is_err(minted) {
+    return minted
+  }
+  const oid = unwrap(minted)
   const created = __github_json(
     harness,
     "POST",
@@ -113,4 +114,144 @@ fn __github_commit_headline(harness: Harness, repo, holder, cfg) -> string {
     return ""
   }
   return trim(split(to_string(value?.message ?? ""), "\n")[0] ?? "")
+}
+
+/**
+ * The object this claim will point at: the caller's oid, or one minted here.
+ *
+ * Exactly one of `oid` and `payload` is meaningful. A caller with neither is
+ * asking for a ref to nothing, which is the schema error it looks like.
+ */
+fn __github_claim_object(harness: Harness, repo, args, cfg) {
+  const oid = trim(to_string(args?.oid ?? args?.sha ?? ""))
+  if oid != "" {
+    return Ok(oid)
+  }
+  const payload = args?.payload
+  const message = trim(to_string(payload?.message ?? ""))
+  const base_ref = trim(to_string(payload?.base_ref ?? ""))
+  if type_of(payload) != "dict" || message == "" || base_ref == "" {
+    return __err(
+      "schema_drift",
+      "github.ref.claim requires an `oid`, or a `payload` with `message` and `base_ref`",
+    )
+  }
+  const base = __github_ref_object(harness, repo, base_ref, cfg)
+  if is_err(base) {
+    return base
+  }
+  const tree = __github_commit_tree(harness, repo, unwrap(base).oid, cfg)
+  if is_err(tree) {
+    return tree
+  }
+  // Parentless: the payload is a label, not history. Giving it the base commit
+  // as a parent would make it reachable from a lock ref and let a careless
+  // merge carry it into the branch it was only ever describing.
+  const created = __github_json(
+    harness,
+    "POST",
+    __github_api_url(cfg.api_base_url, "/repos/" + repo.owner + "/" + repo.name + "/git/commits"),
+    {message: message, tree: unwrap(tree), parents: []},
+    cfg,
+  )
+  if is_err(created) {
+    return created
+  }
+  const minted = trim(to_string(created?.sha ?? ""))
+  if minted == "" {
+    return __err("invalid_response", "GitHub commit creation response omitted sha")
+  }
+  return Ok(minted)
+}
+
+fn __github_commit_tree(harness: Harness, repo, oid: string, cfg) {
+  const value = __github_json(
+    harness,
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + repo.owner + "/" + repo.name + "/git/commits/" + oid,
+    ),
+    nil,
+    cfg,
+  )
+  if is_err(value) {
+    return value
+  }
+  const tree = trim(to_string(value?.tree?.sha ?? ""))
+  if tree == "" {
+    return __err("invalid_response", "GitHub commit response omitted tree.sha")
+  }
+  return Ok(tree)
+}
+
+/**
+ * Release one ref, and only while it still holds the caller's exact object.
+ *
+ * GitHub's ref delete takes no lease, so this reads first and refuses when the
+ * ref has moved. A ref that is already gone is the intended end state, not a
+ * failure: a release that retries after a partial failure should be able to
+ * finish.
+ */
+pub fn __github_ref_release(harness: Harness, args, cfg) {
+  const repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  const r = unwrap(repo)
+  const ref = trim(to_string(args?.ref ?? ""))
+  const expected = lowercase(trim(to_string(args?.expected_oid ?? "")))
+  if !starts_with(ref, "refs/") || expected == "" {
+    return __err(
+      "schema_drift",
+      "github.ref.release requires a fully qualified `refs/...` ref and an expected_oid",
+    )
+  }
+  const existing = __github_ref_object(harness, r, ref, cfg)
+  if is_err(existing) {
+    const failure = unwrap_err(existing)
+    if (failure?.http_status ?? 0) != 404 {
+      return Err(failure)
+    }
+    const absent: GithubRefRelease = {
+      repo: r.full_name,
+      ref: ref,
+      oid: "",
+      released: false,
+      reason: "already_absent",
+    }
+    return absent
+  }
+  const holder = lowercase(unwrap(existing).oid)
+  if holder != expected {
+    const other: GithubRefRelease = {
+      repo: r.full_name,
+      ref: ref,
+      oid: holder,
+      released: false,
+      reason: "held_by_another",
+    }
+    return other
+  }
+  const deleted = __github_json(
+    harness,
+    "DELETE",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + r.owner + "/" + r.name + "/git/refs/" + regex_replace("^refs/", "", ref),
+    ),
+    nil,
+    cfg,
+  )
+  if is_err(deleted) {
+    return deleted
+  }
+  const released: GithubRefRelease = {
+    repo: r.full_name,
+    ref: ref,
+    oid: holder,
+    released: true,
+    reason: "released",
+  }
+  return released
 }
