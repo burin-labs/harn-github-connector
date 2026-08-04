@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.0 - 2026-08-04
 
 - Add `github_claim_ref`, an atomic ref claim. `POST /git/refs` is the only
   GitHub primitive that serializes across machines, and the connector exposed
@@ -28,7 +28,6 @@
   the job's environment locally. CI already kept this receipt — the release path
   now keeps the same one at the same path.
 
-## 0.7.0 - 2026-08-02
 
 - Replace long positional helper calls with one closed request record after
   `harness`. Repository identity, resource identity, mutation leases, payloads,
