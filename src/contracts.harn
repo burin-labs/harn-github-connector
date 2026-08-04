@@ -309,7 +309,42 @@ pub type GithubBranchHeadRequest = GithubRepositoryRequest & {branch: string}
  * create and read endpoints spell the same ref differently and normalizing at
  * one boundary is what keeps a claim and its read-back describing the same ref.
  */
-pub type GithubRefClaimRequest = GithubRepositoryRequest & {ref: string, oid: string}
+pub type GithubRefClaimRequest = GithubRepositoryRequest \
+  & {ref: string, oid?: string, payload?: GithubRefClaimPayload}
+
+/**
+ * A message to mint the claimed object from, when the caller has no oid.
+ *
+ * A lock has nothing to point at: the work it guards has not happened yet. The
+ * connector mints a parentless commit carrying `message`, reusing the tree at
+ * `base_ref` because a commit needs one and the caller has no opinion about it.
+ * Minting here rather than in the caller keeps the claim a single round trip
+ * from the caller's side, and keeps Git plumbing on the side of the boundary
+ * that already owns it.
+ *
+ * The commit is never merged and never reachable from a branch. If the claim is
+ * lost, the object is unreferenced and GitHub collects it.
+ */
+pub type GithubRefClaimPayload = {message: string, base_ref: string}
+
+/**
+ * Request to release one ref this caller still holds.
+ *
+ * `expected_oid` is not optional and not a convenience: GitHub's ref delete has
+ * no compare-and-swap, so the only thing separating "release my lock" from
+ * "delete whatever is there now" is reading the ref first and refusing when it
+ * has moved. A payload minted per run makes that check exact.
+ */
+pub type GithubRefReleaseRequest = GithubRepositoryRequest & {ref: string, expected_oid: string}
+
+/** Outcome of one ref release. `oid` is what the ref held when it was read. */
+pub type GithubRefRelease = {
+  repo: string,
+  ref: string,
+  oid: string,
+  released: bool,
+  reason: "released" | "already_absent" | "held_by_another",
+}
 
 /**
  * Outcome of one atomic ref claim.

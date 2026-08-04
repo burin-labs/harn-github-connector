@@ -47,6 +47,7 @@ const GITHUB_OUTBOUND_METHODS = [
   "github.branch.compare_trees",
   "github.branch.create_signed_commit",
   "github.ref.claim",
+  "github.ref.release",
   "github.commit.signature",
   "github.file.view",
   "github.app.installation_token",
@@ -455,6 +456,9 @@ pub fn __call_raw(harness: Harness, method, args = {}) {
   }
   if method == "github.ref.claim" {
     return __github_ref_claim(harness, args, cfg)
+  }
+  if method == "github.ref.release" {
+    return __github_ref_release(harness, args, cfg)
   }
   if method == "git.create_commit" {
     return __git_create_commit(harness, args, cfg)

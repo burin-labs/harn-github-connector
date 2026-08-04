@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.8.0 - 2026-08-04
+
+- Let `github_claim_ref` mint its own payload. A lock has nothing to point at
+  when it is taken: the work it guards has not happened yet. Passing `payload`
+  instead of `oid` has the connector create a parentless commit carrying the
+  caller's message, reusing the tree at `base_ref`, and claim the ref with it —
+  so a caller gets "who holds this, and since when" out of the existing
+  `holder_headline` without handling a tree. Parentless on purpose: a lock is a
+  label, not history, and a payload with the base commit as its parent could be
+  carried into the branch it was only ever describing. `oid` is now optional;
+  callers that pass one are unaffected.
+
+- Add `github_release_ref`. GitHub's ref delete has no compare-and-swap, so the
+  only thing separating "release my lock" from "delete whoever holds it now" is
+  reading the ref first: the delete is refused when the ref has moved, and an
+  absent ref is reported as the intended end state rather than an error, so a
+  release that retries after a partial failure can finish. An unreadable ref
+  stays an error, because a 500 is not evidence a lock is gone.
+
 ## 0.7.0 - 2026-08-04
 
 - Add `github_claim_ref`, an atomic ref claim. `POST /git/refs` is the only
