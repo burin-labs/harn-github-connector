@@ -1,0 +1,118 @@
+import { GithubClientOptions, GithubRefClaimRequest, github_claim_ref } from "../src/facade"
+
+const BASE = "https://api.github.test"
+
+const HOLDER_OID = "1111111111111111111111111111111111111111"
+
+const OURS = "2222222222222222222222222222222222222222"
+
+const REF = "refs/heads/release-lock/v1.2.3"
+
+fn auth() -> GithubClientOptions {
+  return {api_base_url: BASE, installation_token: "github-app-installation-token"}
+}
+
+fn request() -> GithubRefClaimRequest {
+  return {owner: "octo-org", repo: "octo-repo", ref: REF, oid: OURS, options: auth()}
+}
+
+fn refs_url() -> string {
+  return BASE + "/repos/octo-org/octo-repo/git/refs"
+}
+
+fn ref_read_url() -> string {
+  return BASE + "/repos/octo-org/octo-repo/git/ref/heads/release-lock/v1.2.3"
+}
+
+fn taken(message: string) {
+  return {
+    status: 422,
+    body: json_stringify({message: message, documentation_url: "https://docs.github.test"}),
+  }
+}
+
+pipeline test_an_uncontended_ref_is_claimed(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
+    "POST",
+    refs_url(),
+    {status: 201, body: json_stringify({ref: REF, object: {sha: OURS, type: "commit"}})},
+  )
+  const claim = unwrap(github_claim_ref(harness, request()))
+  assert_eq(claim.claimed, true)
+  assert_eq(claim.oid, OURS)
+  assert_eq(claim.ref, REF)
+  assert_eq(claim.repo, "octo-org/octo-repo")
+  assert_eq(claim.holder_headline, "")
+}
+
+pipeline test_a_taken_ref_reports_the_holder_instead_of_failing(harness: Harness, task) {
+  // The point of the primitive: losing the race is an answer a caller can act
+  // on at second one, not an error it has to classify.
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock("POST", refs_url(), taken("Reference already exists"))
+  harness.testing.http_mock(
+    "GET",
+    ref_read_url(),
+    {status: 200, body: json_stringify({ref: REF, object: {sha: HOLDER_OID, type: "commit"}})},
+  )
+  harness.testing.http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/git/commits/" + HOLDER_OID,
+    {
+      status: 200,
+      body: json_stringify(
+        {
+          sha: HOLDER_OID,
+          message:
+            "release-lock v1.2.3 run 019fc846 on hosted-runner\n\nstarted 2026-08-03T10:00:00Z",
+        },
+      ),
+    },
+  )
+  const claim = unwrap(github_claim_ref(harness, request()))
+  assert_eq(claim.claimed, false)
+  assert_eq(claim.oid, HOLDER_OID)
+  assert_eq(claim.holder_headline, "release-lock v1.2.3 run 019fc846 on hosted-runner")
+}
+
+pipeline test_a_holder_without_a_readable_payload_is_still_a_lost_claim(harness: Harness, task) {
+  // A lock whose commit has been garbage collected is still held. Reporting the
+  // headline is best effort; reporting the loss is not.
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock("POST", refs_url(), taken("Reference already exists"))
+  harness.testing.http_mock(
+    "GET",
+    ref_read_url(),
+    {status: 200, body: json_stringify({ref: REF, object: {sha: HOLDER_OID, type: "tag"}})},
+  )
+  const claim = unwrap(github_claim_ref(harness, request()))
+  assert_eq(claim.claimed, false)
+  assert_eq(claim.oid, HOLDER_OID)
+  assert_eq(claim.holder_headline, "")
+}
+
+pipeline test_a_422_that_is_not_contention_stays_an_error(harness: Harness, task) {
+  // GitHub spends one status on "taken", "no such object", and "bad ref name".
+  // Reading the ref back is what tells them apart; without it a caller would
+  // wait for a lock nobody holds.
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock("POST", refs_url(), taken("Object does not exist"))
+  harness.testing.http_mock("GET", ref_read_url(), {status: 404, body: json_stringify({})})
+  const result = github_claim_ref(harness, request())
+  assert(is_err(result))
+  assert_eq(unwrap_err(result).http_status, 422)
+}
+
+pipeline test_a_partial_ref_is_refused_before_any_request(harness: Harness, task) {
+  // `git/refs` and `git/ref` spell the same ref differently. Requiring the
+  // qualified name at the boundary is what keeps the claim and the read-back
+  // describing one ref.
+  harness.testing.http_mock_clear()
+  const partial: GithubRefClaimRequest = request() + {ref: "heads/release-lock/v1.2.3"}
+  const result = github_claim_ref(harness, partial)
+  assert(is_err(result))
+  assert_eq(unwrap_err(result).code, "schema_drift")
+  const without_oid: GithubRefClaimRequest = request() + {oid: ""}
+  assert(is_err(github_claim_ref(harness, without_oid)))
+}

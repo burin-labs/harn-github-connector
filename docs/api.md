@@ -956,6 +956,36 @@ pub type GithubRawApiRequest = {
 }
 ```
 
+### type `GithubRefClaim`
+
+Outcome of one atomic ref claim.
+`oid` is what the ref points at once the call returns, whoever won, so a
+caller that lost still learns the holder. `holder_headline` is the first line
+of the holding commit's message when the ref resolves to a commit and the
+claim was lost; it is empty otherwise. It is what turns "someone else holds
+this" into "who, and since when", so a lock payload has somewhere to live.
+
+```harn
+pub type GithubRefClaim = {
+  repo: string,
+  ref: string,
+  oid: string,
+  claimed: bool,
+  holder_headline: string,
+}
+```
+
+### type `GithubRefClaimRequest`
+
+Request to claim one fully qualified ref for an exact object.
+`ref` is the complete name, `refs/heads/...` or `refs/tags/...`, because the
+create and read endpoints spell the same ref differently and normalizing at
+one boundary is what keeps a claim and its read-back describing the same ref.
+
+```harn
+pub type GithubRefClaimRequest = GithubRepositoryRequest & {ref: string, oid: string}
+```
+
 ### type `GithubRelease`
 
 One normalized GitHub release and its assets.
@@ -1822,6 +1852,22 @@ pub fn github_branch_head(
   harness: Harness,
   request: GithubBranchHeadRequest,
 ) -> GithubConnectorResult<GithubBranchHead> {
+}
+```
+
+### fn `github_claim_ref`
+
+Claim one ref for an exact object, and learn the holder when the claim is
+lost.
+Contention is an outcome, not an error: a lost claim returns `claimed: false`
+with the holder's oid and message headline. Only a real failure — no
+permission, no such object, a malformed ref — is an `Err`.
+
+```harn
+pub fn github_claim_ref(
+  harness: Harness,
+  request: GithubRefClaimRequest,
+) -> GithubConnectorResult<GithubRefClaim> {
 }
 ```
 

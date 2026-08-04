@@ -1,0 +1,116 @@
+import "../client"
+import "../contracts"
+import { __err } from "../errors"
+import "./shared"
+
+/**
+ * Claim one ref for an exact object, atomically.
+ *
+ * `POST /git/refs` is the only GitHub primitive that serializes across
+ * machines: it either creates the ref or fails, and no caller can observe a
+ * half-created one. Every softer check — read then write, or ask whether a tag
+ * or PR already claims the work — has a window where two agents both decide
+ * they are alone.
+ *
+ * GitHub answers a taken ref with a generic 422, the same status it uses for a
+ * malformed ref name or a missing object, so the status alone cannot be read as
+ * contention. Reading the ref back is what separates the two: if it resolves,
+ * someone holds it; if it does not, the 422 meant something else and stays an
+ * error.
+ */
+pub fn __github_ref_claim(harness: Harness, args, cfg) {
+  const repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  const r = unwrap(repo)
+  const ref = trim(to_string(args?.ref ?? ""))
+  const oid = trim(to_string(args?.oid ?? args?.sha ?? ""))
+  if !starts_with(ref, "refs/") || oid == "" {
+    return __err(
+      "schema_drift",
+      "github.ref.claim requires a fully qualified `refs/...` ref and an oid",
+    )
+  }
+  const created = __github_json(
+    harness,
+    "POST",
+    __github_api_url(cfg.api_base_url, "/repos/" + r.owner + "/" + r.name + "/git/refs"),
+    {ref: ref, sha: oid},
+    cfg,
+  )
+  if !is_err(created) {
+    const won: GithubRefClaim = {
+      repo: r.full_name,
+      ref: ref,
+      oid: oid,
+      claimed: true,
+      holder_headline: "",
+    }
+    return won
+  }
+  const failure = unwrap_err(created)
+  if (failure?.http_status ?? 0) != 422 {
+    return Err(failure)
+  }
+  const existing = __github_ref_object(harness, r, ref, cfg)
+  if is_err(existing) {
+    return Err(failure)
+  }
+  const holder = unwrap(existing)
+  const lost: GithubRefClaim = {
+    repo: r.full_name,
+    ref: ref,
+    oid: holder.oid,
+    claimed: false,
+    holder_headline: __github_commit_headline(harness, r, holder, cfg),
+  }
+  return lost
+}
+
+fn __github_ref_object(harness: Harness, repo, ref: string, cfg) {
+  const value = __github_json(
+    harness,
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + repo.owner + "/" + repo.name + "/git/ref/" + regex_replace("^refs/", "", ref),
+    ),
+    nil,
+    cfg,
+  )
+  if is_err(value) {
+    return value
+  }
+  const oid = trim(to_string(value?.object?.sha ?? ""))
+  if oid == "" {
+    return __err("invalid_response", "GitHub ref response omitted object.sha")
+  }
+  return {oid: oid, type: trim(to_string(value?.object?.type ?? ""))}
+}
+
+/**
+ * The holder's first message line, or empty when there is nothing to read.
+ *
+ * A missing headline never fails the claim: `claimed` is the answer the caller
+ * acted on, and a lock whose payload has been garbage collected is still held.
+ */
+fn __github_commit_headline(harness: Harness, repo, holder, cfg) -> string {
+  if holder.type != "commit" {
+    return ""
+  }
+  const value = __github_json(
+    harness,
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + repo.owner + "/" + repo.name + "/git/commits/" + holder.oid,
+    ),
+    nil,
+    cfg,
+  )
+  if is_err(value) {
+    return ""
+  }
+  return trim(split(to_string(value?.message ?? ""), "\n")[0] ?? "")
+}

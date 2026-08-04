@@ -7,6 +7,7 @@ import "./operations/commits"
 import "./operations/oauth"
 import "./operations/pull_upsert"
 import "./operations/pulls"
+import "./operations/refs"
 import "./operations/releases"
 import "./operations/shared"
 import { __request_context_keys } from "./request_options"
@@ -45,6 +46,7 @@ const GITHUB_OUTBOUND_METHODS = [
   "github.branch.view",
   "github.branch.compare_trees",
   "github.branch.create_signed_commit",
+  "github.ref.claim",
   "github.commit.signature",
   "github.file.view",
   "github.app.installation_token",
@@ -450,6 +452,9 @@ pub fn __call_raw(harness: Harness, method, args = {}) {
       nil,
       cfg,
     )
+  }
+  if method == "github.ref.claim" {
+    return __github_ref_claim(harness, args, cfg)
   }
   if method == "git.create_commit" {
     return __git_create_commit(harness, args, cfg)

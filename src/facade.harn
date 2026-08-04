@@ -55,6 +55,7 @@ pub import {
   github_find_open_pr,
   github_resolve_pr_for_sha,
 } from "./pulls/automation"
+pub import { github_claim_ref } from "./refs/api"
 pub import {
   github_latest_release,
   github_latest_release_lookup,
