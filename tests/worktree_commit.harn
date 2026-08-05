@@ -72,6 +72,14 @@ fn new_repo(fs: HarnessFs, process: HarnessProcess) -> string {
   git_ok(process, dir, ["config", "core.autocrlf", "false"])
   git_ok(process, dir, ["config", "core.hooksPath", ".git/harn-absent-hooks"])
   git_ok(process, dir, ["config", "core.fileMode", "true"])
+  // `gc.autoDetach` defaults on, so `git commit` can fork a repack that outlives
+  // the command and keeps writing into `.git` after the test believes the
+  // fixture is idle. Teardown then races it and `rm -rf` reports the directory
+  // as not empty — which failed the v0.8.1 release on a test that had asserted
+  // everything it came to assert. Nothing here has enough objects to need
+  // maintenance, so the cheapest fix is to leave no background writer at all.
+  git_ok(process, dir, ["config", "gc.auto", "0"])
+  git_ok(process, dir, ["config", "maintenance.auto", "false"])
   fs.write_text(dir + "/keep.txt", "hello\n")
   fs.write_text(
     dir + "/old.txt",
