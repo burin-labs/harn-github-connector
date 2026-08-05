@@ -725,6 +725,12 @@ fn __wc_branch_lease(
   base_oid: string,
   options: GithubClientOptions,
 ) {
+  // The lease on the branch this call may overwrite, meaning exactly what `git
+  // push --force-with-lease=<branch>:<oid>` means: act only while the branch is
+  // still at the head the caller planned against. Every path below that writes
+  // consults it, because "the branch is not where I left it" is one answer
+  // whether it moved on, was reset to the base, or was deleted outright.
+  const expected_branch = lowercase(trim(to_string(request.expected_branch_oid ?? "")))
   const lookup = api_call(
     harness,
     {path: __wc_ref_path(request, "/git/ref/heads/"), options: options},
@@ -733,6 +739,17 @@ fn __wc_branch_lease(
     const failure: GithubConnectorError = unwrap_err(lookup)
     if (failure.http_status ?? 0) != 404 {
       return Err(failure)
+    }
+    // A deleted branch is a lease violation, not an invitation to recreate it.
+    // The caller named a head it meant to rewrite; creating the ref instead
+    // would resurrect a branch someone deliberately removed and publish onto it.
+    if expected_branch != "" {
+      return __wc_err(
+        "stale_head",
+        "branch `" + request.branch + "` does not exist, but this rewrite was planned against "
+          + expected_branch,
+        {expected_head_oid: expected_branch, observed_head_oid: ""},
+      )
     }
     if !(request.create_branch ?? true) {
       return __wc_err(
@@ -757,6 +774,19 @@ fn __wc_branch_lease(
   }
   const reference: dict = unwrap(lookup)
   const observed = lowercase(trim(to_string(reference?.object?.sha ?? "")))
+  // Ahead of every other verdict, including the one that decides nothing needs
+  // writing. A branch that has already been reset to the base sits at exactly
+  // `base_oid`, so checking the lease after that shortcut would wave through
+  // the case where a peer got there first and is about to commit.
+  if expected_branch != "" && observed != expected_branch {
+    return __wc_err(
+      "stale_head",
+      "branch `" + request.branch + "` is at " + observed + ", not the expected "
+        + expected_branch
+        + "; it moved since this rewrite was planned",
+      {expected_head_oid: expected_branch, observed_head_oid: observed},
+    )
+  }
   if observed == base_oid {
     return Ok("unchanged")
   }

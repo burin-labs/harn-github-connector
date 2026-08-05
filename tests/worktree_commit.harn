@@ -749,3 +749,118 @@ pipeline test_delta_rejects_a_base_oid_that_is_not_the_local_head(harness: Harne
   drop_repo(harness.fs, harness.process, dir)
   harness.testing.http_mock_clear()
 }
+
+fn request_with_branch_lease(dir: string, expected: string?) -> GithubWorktreeCommitRequest {
+  return {
+    owner: OWNER,
+    repo: REPO,
+    branch: BRANCH,
+    headline: "Rewrite the pull-request head",
+    body: nil,
+    repo_dir: dir,
+    source: "worktree",
+    base_oid: nil,
+    create_branch: true,
+    reset_branch: true,
+    expected_branch_oid: expected,
+    options: options(),
+  }
+}
+
+pipeline test_a_reset_refuses_a_branch_that_moved_since_the_rewrite_was_planned(
+  harness: Harness,
+  task,
+) {
+  // `reset_branch` is a force. A caller rewriting a pull-request head to make
+  // it signable discards whatever landed on that branch in the meantime unless
+  // it can say which head it decided to rewrite — which is the whole job of
+  // `git push --force-with-lease=<branch>:<oid>`.
+  harness.testing.http_mock_clear()
+  const dir = new_repo(harness.fs, harness.process)
+  harness.fs.write_text(dir + "/keep.txt", "changed\n")
+  mock_ref_at(harness.testing, OTHER_OID)
+  mock_ref_reset(harness.testing)
+  mock_commit(harness.testing, true)
+  const stale = github_commit_worktree(
+    harness,
+    request_with_branch_lease(dir, "dddddddddddddddddddddddddddddddddddddddd"),
+  )
+  expect(is_err(stale), "a moved branch refuses the reset")
+  assert_eq(unwrap_err(stale).code, "stale_head")
+  assert_eq(unwrap_err(stale).observed_head_oid, OTHER_OID)
+  let resets = 0
+  for call in harness.testing.http_mock_calls() {
+    if to_string(call.method) == "PATCH" && to_string(call.url) == ref_update_url(BRANCH) {
+      resets = resets + 1
+    }
+  }
+  assert_eq(resets, 0, "nothing was forced")
+  drop_repo(harness.fs, harness.process, dir)
+  harness.testing.http_mock_clear()
+}
+
+pipeline test_a_reset_proceeds_when_the_branch_is_where_the_caller_left_it(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  const dir = new_repo(harness.fs, harness.process)
+  harness.fs.write_text(dir + "/keep.txt", "changed\n")
+  mock_ref_at(harness.testing, OTHER_OID)
+  mock_ref_reset(harness.testing)
+  mock_commit(harness.testing, true)
+  const result = github_commit_worktree(harness, request_with_branch_lease(dir, OTHER_OID))
+  expect(!is_err(result), "the matching lease permits the reset")
+  assert_eq(unwrap(result).branch_action, "reset")
+  drop_repo(harness.fs, harness.process, dir)
+  harness.testing.http_mock_clear()
+}
+
+pipeline test_a_branch_already_at_the_base_still_answers_to_the_lease(harness: Harness, task) {
+  // The reset this call would perform puts the branch at exactly `base_oid`, so
+  // a peer that got there first leaves the branch sitting on the one value that
+  // needs no write. Deciding "nothing to force" before consulting the lease
+  // would publish onto that peer's branch without ever noticing it existed.
+  harness.testing.http_mock_clear()
+  const dir = new_repo(harness.fs, harness.process)
+  harness.fs.write_text(dir + "/keep.txt", "changed\n")
+  const base = head_oid(harness.process, dir)
+  mock_ref_at(harness.testing, base)
+  mock_ref_reset(harness.testing)
+  mock_commit(harness.testing, true)
+  const stale = github_commit_worktree(
+    harness,
+    request_with_branch_lease(dir, "dddddddddddddddddddddddddddddddddddddddd"),
+  )
+  expect(is_err(stale), "a branch resting on the base is still not where the caller left it")
+  assert_eq(unwrap_err(stale).code, "stale_head")
+  assert_eq(unwrap_err(stale).observed_head_oid, base)
+  assert_eq(len(graphql_calls(harness.testing)), 0, "nothing was published")
+  drop_repo(harness.fs, harness.process, dir)
+  harness.testing.http_mock_clear()
+}
+
+pipeline test_a_deleted_branch_is_a_lease_violation_not_an_invitation_to_recreate(
+  harness: Harness,
+  task,
+) {
+  // `create_branch` is on by default, so without this the call would answer a
+  // deleted branch by recreating it and publishing there — resurrecting a ref
+  // someone removed on purpose, under a lease that named a head it no longer
+  // has. Gone is not where the caller left it either.
+  harness.testing.http_mock_clear()
+  const dir = new_repo(harness.fs, harness.process)
+  harness.fs.write_text(dir + "/keep.txt", "changed\n")
+  mock_ref_missing(harness.testing)
+  mock_ref_create(harness.testing)
+  mock_commit(harness.testing, true)
+  const stale = github_commit_worktree(harness, request_with_branch_lease(dir, OTHER_OID))
+  expect(is_err(stale), "a deleted branch refuses the lease")
+  assert_eq(unwrap_err(stale).code, "stale_head")
+  assert_eq(unwrap_err(stale).observed_head_oid, "")
+  const created = harness.testing.http_mock_calls().filter(
+    { call -> call.method == "POST" && call.url == refs_url() },
+  )
+    .to_list()
+  assert_eq(len(created), 0, "the branch was not recreated")
+  assert_eq(len(graphql_calls(harness.testing)), 0, "nothing was published")
+  drop_repo(harness.fs, harness.process, dir)
+  harness.testing.http_mock_clear()
+}

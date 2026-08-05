@@ -1664,6 +1664,13 @@ One worktree-to-signed-commit publication request.
 `base_oid` when it does not exist. `reset_branch` (default `false`) allows
 force-resetting an existing branch back to `base_oid`; without it a branch
 head that differs from the lease fails closed with `stale_head`.
+`expected_branch_oid` is the lease on the branch that reset overwrites, and
+it means exactly what `git push --force-with-lease=<branch>:<oid>` means:
+proceed only while the branch is still at the head this call was planned
+against. Anything else — moved on, reset by someone else, deleted — is
+`stale_head`, and nothing is written. Give the full 40-character oid; an
+abbreviation will not match and fails closed. Optional, because a branch this
+call creates from scratch has no head to lease.
 
 ```harn
 pub type GithubWorktreeCommitRequest = {
@@ -1677,6 +1684,7 @@ pub type GithubWorktreeCommitRequest = {
   base_oid?: string?,
   create_branch?: bool?,
   reset_branch?: bool?,
+  expected_branch_oid?: string?,
   options?: GithubClientOptions,
 }
 ```
@@ -2656,6 +2664,13 @@ One worktree-to-signed-commit publication request.
 `base_oid` when it does not exist. `reset_branch` (default `false`) allows
 force-resetting an existing branch back to `base_oid`; without it a branch
 head that differs from the lease fails closed with `stale_head`.
+`expected_branch_oid` is the lease on the branch that reset overwrites, and
+it means exactly what `git push --force-with-lease=<branch>:<oid>` means:
+proceed only while the branch is still at the head this call was planned
+against. Anything else — moved on, reset by someone else, deleted — is
+`stale_head`, and nothing is written. Give the full 40-character oid; an
+abbreviation will not match and fails closed. Optional, because a branch this
+call creates from scratch has no head to lease.
 
 ```harn
 pub type GithubWorktreeCommitRequest = {
@@ -2669,6 +2684,7 @@ pub type GithubWorktreeCommitRequest = {
   base_oid?: string?,
   create_branch?: bool?,
   reset_branch?: bool?,
+  expected_branch_oid?: string?,
   options?: GithubClientOptions,
 }
 ```
