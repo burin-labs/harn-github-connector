@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.8.2 - 2026-08-05
+
+- Stop `github_commit_worktree` closing the pull request it rewrites.
+  `createCommitOnBranch` can only append to a branch's current head, so a
+  rewrite has to put a branch at the base commit before the commit exists — and
+  doing that to the target left it resting on exactly the base for the length of
+  the mutation. GitHub reads a pull request whose head equals its base as having
+  nothing to merge and closes it. Observed, not predicted: on
+  burin-labs/harn-bump-fleet#697 `head_ref_force_pushed` and `closed` landed in
+  the same second, and the pull request stayed closed with its head frozen at
+  the base while the branch itself moved on to the signed commit. Reopening does
+  not restore the checks, reviews, or auto-merge arming that closing dropped.
+
+  A rewrite now commits on a short-lived staging branch and moves the target
+  exactly once, from the head `expected_branch_oid` named to the finished
+  commit — the same single ref update `git push --force-with-lease` performs,
+  which a pull request survives as an ordinary force-push. The lease is re-read
+  immediately before that write, because the commit is made in between and a
+  REST force update carries no compare-and-swap of its own; that window is one
+  round trip, and is the narrowest the API allows. Receipts are unchanged and
+  still name the caller's branch. Callers that create a branch, or whose branch
+  already sits at the base, are unaffected — neither can have an open pull
+  request to lose.
+
 ## 0.8.1 - 2026-08-05
 
 - Let `github_commit_worktree` lease the branch it resets. `reset_branch` is a
