@@ -168,6 +168,25 @@ fn mock_ref_reset(testing: HarnessTesting) {
   )
 }
 
+/** Answer the staging branch's delete, whatever unique name the run picked. */
+fn mock_staging_drop(testing: HarnessTesting) {
+  testing.http_mock("DELETE", ref_update_url("harn-worktree-staging/*"), {status: 204, body: ""})
+}
+
+fn created_branch(ref: string) -> string {
+  return replace(ref, "refs/heads/", "")
+}
+
+fn calls_matching(testing: HarnessTesting, method: string, url: string) -> list<dict> {
+  let out = []
+  for call in testing.http_mock_calls() {
+    if to_string(call.method) == method && to_string(call.url) == url {
+      out = out + [call]
+    }
+  }
+  return out
+}
+
 fn commit_body(signed: bool) -> string {
   return json_stringify(
     {
@@ -676,27 +695,47 @@ pipeline test_missing_branch_is_created_at_the_base_lease(harness: Harness, task
   harness.testing.http_mock_clear()
 }
 
-pipeline test_diverged_branch_is_reset_only_when_the_caller_opts_in(harness: Harness, task) {
+pipeline test_a_rewrite_moves_the_target_once_and_never_through_the_base(harness: Harness, task) {
+  // The target may not rest at the base, even for the length of one mutation:
+  // GitHub closes a pull request whose head equals its base, and reopening does
+  // not bring back the checks, reviews, or auto-merge arming that dropped with
+  // it. So the commit is staged elsewhere and the target moves exactly once,
+  // straight from the leased head to the finished commit.
   harness.testing.http_mock_clear()
   const dir = new_repo(harness.fs, harness.process)
   harness.fs.write_text(dir + "/keep.txt", "changed\n")
   const base = head_oid(harness.process, dir)
   mock_ref_at(harness.testing, OTHER_OID)
   mock_ref_reset(harness.testing)
+  mock_ref_create(harness.testing)
+  mock_staging_drop(harness.testing)
   mock_commit(harness.testing, true)
   const result = github_commit_worktree(harness, request_for(dir, "worktree", true))
-  expect(!is_err(result), "diverged branch reset under the lease")
-  assert_eq(unwrap(result).branch_action, "reset", "branch was reset")
-  let reset = nil
-  for call in harness.testing.http_mock_calls() {
-    if to_string(call.method) == "PATCH" && to_string(call.url) == ref_update_url(BRANCH) {
-      reset = call
-    }
-  }
-  expect(reset != nil, "a branch reset request was observed")
-  const body: {sha: string, force: bool} = json_parse(to_string(reset.body))
-  assert_eq(body.sha, base, "reset to the base lease")
-  assert_eq(body.force, true, "reset is an explicit force")
+  expect(!is_err(result), "diverged branch rewritten under the lease")
+  assert_eq(unwrap(result).branch_action, "reset", "the rewrite is still reported as a reset")
+  assert_eq(unwrap(result).branch, BRANCH, "the receipt names where it landed")
+  const created: {ref: string, sha: string} = json_parse(
+    to_string(calls_matching(harness.testing, "POST", refs_url())[0].body),
+  )
+  assert(
+    starts_with(created.ref, "refs/heads/harn-worktree-staging/"),
+    "the branch created at the base is the staging branch, not the target",
+  )
+  assert_eq(created.sha, base, "staging starts at the base lease")
+  const input = graphql_input(harness.testing)
+  assert_eq(to_string(input.branch.branchName), replace(created.ref, "refs/heads/", ""))
+  assert_eq(to_string(input.expectedHeadOid), base, "the commit is parented on the base")
+  const moves = calls_matching(harness.testing, "PATCH", ref_update_url(BRANCH))
+  assert_eq(len(moves), 1, "the target is written exactly once")
+  const body: {sha: string, force: bool} = json_parse(to_string(moves[0].body))
+  assert_eq(body.sha, COMMIT_OID, "and it goes straight to the finished commit")
+  assert(body.sha != base, "never to the base")
+  assert_eq(body.force, true, "the move is an explicit force")
+  assert_eq(
+    len(calls_matching(harness.testing, "DELETE", ref_update_url(created_branch(created.ref)))),
+    1,
+    "the staging branch is dropped",
+  )
   drop_repo(harness.fs, harness.process, dir)
   harness.testing.http_mock_clear()
 }
@@ -813,6 +852,8 @@ pipeline test_a_reset_proceeds_when_the_branch_is_where_the_caller_left_it(harne
   harness.fs.write_text(dir + "/keep.txt", "changed\n")
   mock_ref_at(harness.testing, OTHER_OID)
   mock_ref_reset(harness.testing)
+  mock_ref_create(harness.testing)
+  mock_staging_drop(harness.testing)
   mock_commit(harness.testing, true)
   const result = github_commit_worktree(harness, request_with_branch_lease(dir, OTHER_OID))
   expect(!is_err(result), "the matching lease permits the reset")

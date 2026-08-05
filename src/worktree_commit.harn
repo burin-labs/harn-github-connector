@@ -23,7 +23,8 @@ import { github_create_signed_commit } from "./commits/api"
  * 3. Map renames to delete-old plus add-new.
  * 4. Gate file modes against what the transport can actually carry, before any
  *    network request. See `__wc_mode_gate` for the exact rule and its evidence.
- * 5. Create or reset `refs/heads/<branch>` only under the exact base lease.
+ * 5. Move `refs/heads/<branch>` only under the exact base lease, and only once.
+ *    A rewrite stages the commit elsewhere first; see `WORKTREE_STAGING_PREFIX`.
  * 6. Call the existing `github_create_signed_commit` owner. This module never
  *    writes its own `createCommitOnBranch` mutation.
  * 7. Return one receipt binding repository, branch, base lease, commit oid,
@@ -67,6 +68,30 @@ const WORKTREE_HEX = "0123456789abcdef"
 
 /** Characters accepted in an owner, repository, or branch path segment. */
 const WORKTREE_REF_ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
+
+/**
+ * Namespace for the branch a rewrite commits on before the target moves.
+ *
+ * `createCommitOnBranch` can only append to a branch's current head, so a
+ * rewrite has to put a branch at the base commit before the commit exists. Done
+ * to the target directly, that leaves it resting on exactly the base for as long
+ * as the mutation takes — and GitHub reads a pull request whose head equals its
+ * base as having nothing to merge and closes it. Observed on
+ * burin-labs/harn-bump-fleet#697: `head_ref_force_pushed` and `closed` in the
+ * same second, then the pull request stayed closed with its head frozen at the
+ * base while the branch itself moved on. Reopening does not restore the reviews,
+ * checks, or auto-merge arming that closing dropped.
+ *
+ * So the commit is made here instead, and the target moves exactly once, from
+ * the head the lease named to the finished commit. That is the single ref update
+ * `git push --force-with-lease` performs, and a pull request survives it as an
+ * ordinary force-push.
+ *
+ * The staging branch is a real branch for the seconds it exists, because the
+ * mutation accepts nothing else, so a repository with an unfiltered `on: push`
+ * workflow will see it. It is deleted as soon as the commit is made.
+ */
+const WORKTREE_STAGING_PREFIX = "harn-worktree-staging/"
 
 fn __wc_category(code: string) -> string {
   if code == "schema_drift" {
@@ -718,6 +743,99 @@ fn __wc_ref_path(request: GithubWorktreeCommitRequest, prefix: string) -> string
   return "/repos/" + request.owner + "/" + request.repo + prefix + request.branch
 }
 
+fn __wc_repo_path(request: GithubWorktreeCommitRequest, suffix: string) -> string {
+  return "/repos/" + request.owner + "/" + request.repo + suffix
+}
+
+/**
+ * A staging branch name that cannot collide with another run or shadow a real
+ * branch. Every `/` in the target is flattened, so the name is one path segment
+ * and can never sit inside or above another branch as a directory.
+ */
+fn __wc_staging_branch(random: HarnessRandom, branch: string) -> string {
+  return WORKTREE_STAGING_PREFIX + replace(branch, "/", "-") + "-" + random.uuid_v7()
+}
+
+fn __wc_create_branch(
+  harness: Harness,
+  request: GithubWorktreeCommitRequest,
+  branch: string,
+  oid: string,
+  options: GithubClientOptions,
+) {
+  return api_call(
+    harness,
+    {
+      path: __wc_repo_path(request, "/git/refs"),
+      method: "POST",
+      body: {ref: "refs/heads/" + branch, sha: oid},
+      options: options,
+    },
+  )
+}
+
+/** Best effort: a staging branch left behind is litter, not a failed publish. */
+fn __wc_drop_branch(
+  harness: Harness,
+  request: GithubWorktreeCommitRequest,
+  branch: string,
+  options: GithubClientOptions,
+) {
+  api_call(
+    harness,
+    {
+      path: __wc_repo_path(request, "/git/refs/heads/") + branch,
+      method: "DELETE",
+      options: options,
+    },
+  )
+}
+
+/**
+ * Move the target from the head the lease named to the finished commit.
+ *
+ * The lease is re-read immediately before the write because the commit was made
+ * in between, and a force update carries no compare-and-swap of its own. This is
+ * weaker than the git protocol's `--force-with-lease`, which the server checks
+ * atomically; the window here is one round trip and it is the narrowest the REST
+ * API allows.
+ */
+fn __wc_retarget(
+  harness: Harness,
+  request: GithubWorktreeCommitRequest,
+  commit_oid: string,
+  leased: string,
+  options: GithubClientOptions,
+) {
+  const lookup = api_call(
+    harness,
+    {path: __wc_ref_path(request, "/git/ref/heads/"), options: options},
+  )
+  if is_err(lookup) {
+    return lookup
+  }
+  const reference: dict = unwrap(lookup)
+  const observed = lowercase(trim(to_string(reference?.object?.sha ?? "")))
+  if observed != leased {
+    return __wc_err(
+      "stale_head",
+      "branch `" + request.branch + "` moved to " + observed + " while the commit for "
+        + leased
+        + " was being created; it was not updated",
+      {expected_head_oid: leased, observed_head_oid: observed},
+    )
+  }
+  return api_call(
+    harness,
+    {
+      path: __wc_ref_path(request, "/git/refs/heads/"),
+      method: "PATCH",
+      body: {sha: commit_oid, force: true},
+      options: options,
+    },
+  )
+}
+
 @complexity(allow)
 fn __wc_branch_lease(
   harness: Harness,
@@ -758,19 +876,11 @@ fn __wc_branch_lease(
         {expected_head_oid: base_oid, observed_head_oid: ""},
       )
     }
-    const created = api_call(
-      harness,
-      {
-        path: "/repos/" + request.owner + "/" + request.repo + "/git/refs",
-        method: "POST",
-        body: {ref: "refs/heads/" + request.branch, sha: base_oid},
-        options: options,
-      },
-    )
+    const created = __wc_create_branch(harness, request, request.branch, base_oid, options)
     if is_err(created) {
       return created
     }
-    return Ok("created")
+    return Ok({action: "created", commit_branch: request.branch, leased: ""})
   }
   const reference: dict = unwrap(lookup)
   const observed = lowercase(trim(to_string(reference?.object?.sha ?? "")))
@@ -788,7 +898,7 @@ fn __wc_branch_lease(
     )
   }
   if observed == base_oid {
-    return Ok("unchanged")
+    return Ok({action: "unchanged", commit_branch: request.branch, leased: ""})
   }
   if !(request.reset_branch ?? false) {
     return __wc_err(
@@ -798,19 +908,14 @@ fn __wc_branch_lease(
       {expected_head_oid: base_oid, observed_head_oid: observed},
     )
   }
-  const reset = api_call(
-    harness,
-    {
-      path: __wc_ref_path(request, "/git/refs/heads/"),
-      method: "PATCH",
-      body: {sha: base_oid, force: true},
-      options: options,
-    },
-  )
-  if is_err(reset) {
-    return reset
+  // The target is not touched here. See `WORKTREE_STAGING_PREFIX`: putting it at
+  // the base so the mutation can append would close any pull request open on it.
+  const staging = __wc_staging_branch(harness.random, request.branch)
+  const created = __wc_create_branch(harness, request, staging, base_oid, options)
+  if is_err(created) {
+    return created
   }
-  return Ok("reset")
+  return Ok({action: "reset", commit_branch: staging, leased: observed})
 }
 
 fn __wc_validate(request: GithubWorktreeCommitRequest) {
@@ -896,13 +1001,15 @@ pub fn github_commit_worktree(
   if is_err(lease) {
     return Err(__wc_error_of(lease))
   }
-  const branch_action = to_string(unwrap(lease))
+  const plan: dict = unwrap(lease)
+  const branch_action = to_string(plan.action)
+  const staged = plan.commit_branch != request.branch
   const published = github_create_signed_commit(
     harness,
     {
       owner: request.owner,
       repo: request.repo,
-      branch: request.branch,
+      branch: to_string(plan.commit_branch),
       expected_head_oid: delta.base_oid,
       headline: request.headline,
       body: request.body,
@@ -912,14 +1019,26 @@ pub fn github_commit_worktree(
     },
   )
   if is_err(published) {
+    if staged {
+      __wc_drop_branch(harness, request, to_string(plan.commit_branch), opts)
+    }
     return Err(__wc_error_of(published))
   }
   const commit = unwrap(published)
+  if staged {
+    const moved = __wc_retarget(harness, request, commit.oid, to_string(plan.leased), opts)
+    __wc_drop_branch(harness, request, to_string(plan.commit_branch), opts)
+    if is_err(moved) {
+      return Err(__wc_error_of(moved))
+    }
+  }
   const receipt: GithubWorktreeCommitReceipt = {
     repository: request.owner + "/" + request.repo,
     owner: request.owner,
     repo: request.repo,
-    branch: commit.branch,
+    // Where it landed, which is the branch the caller named -- never the staging
+    // branch the mutation had to be pointed at.
+    branch: request.branch,
     source: delta.source,
     base_oid: delta.base_oid,
     committed: true,
