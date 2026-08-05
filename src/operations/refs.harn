@@ -4,6 +4,17 @@ import { __err } from "../errors"
 import "./shared"
 
 /**
+ * Refusals from `POST /git/refs` that might mean the ref is already there.
+ *
+ * 422 is what GitHub returns for a taken ref today, verified against the live
+ * API. 409 is what its create contract documents for the same case, and a claim
+ * that treats a documented status as an unknown failure reports contention as
+ * an unreadable lock — the one answer a caller cannot act on. Both statuses buy
+ * a read-back, and the read-back is what decides.
+ */
+const CLAIM_CONTENTION_STATUSES = [409, 422]
+
+/**
  * Claim one ref for an exact object, atomically.
  *
  * `POST /git/refs` is the only GitHub primitive that serializes across
@@ -12,11 +23,12 @@ import "./shared"
  * or PR already claims the work — has a window where two agents both decide
  * they are alone.
  *
- * GitHub answers a taken ref with a generic 422, the same status it uses for a
- * malformed ref name or a missing object, so the status alone cannot be read as
- * contention. Reading the ref back is what separates the two: if it resolves,
- * someone holds it; if it does not, the 422 meant something else and stays an
- * error.
+ * No status answers "is it taken". GitHub returns 422 for a taken ref today,
+ * and spends that same status on a malformed ref name and a missing object; the
+ * documented create contract also lists 409. Reading the ref back is what
+ * separates them: if it resolves, someone holds it; if it does not, the refusal
+ * meant something else and stays an error. The status only decides whether the
+ * read-back is worth a round trip.
  */
 pub fn __github_ref_claim(harness: Harness, args, cfg) {
   const repo = __repo_parts(args)
@@ -51,7 +63,7 @@ pub fn __github_ref_claim(harness: Harness, args, cfg) {
     return won
   }
   const failure = unwrap_err(created)
-  if (failure?.http_status ?? 0) != 422 {
+  if !CLAIM_CONTENTION_STATUSES.contains(failure?.http_status ?? 0) {
     return Err(failure)
   }
   const existing = __github_ref_object(harness, r, ref, cfg)

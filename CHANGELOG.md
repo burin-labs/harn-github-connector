@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.8.1 - 2026-08-05
+
+- Read the ref back when `github_claim_ref` is refused with 409, not only 422.
+  GitHub answers a taken ref with 422 today — verified against the live API —
+  and its create contract documents 409 for the same case. Only the read-back
+  can tell contention from a bad ref name or a missing object, so the status
+  merely decides whether that read is worth a round trip; treating a documented
+  one as an unknown failure reported a held lock as unreadable, which is the one
+  answer a caller cannot act on. Any other status still fails without a second
+  request, because a 500 is not evidence of a holder.
+
 ## 0.8.0 - 2026-08-04
 
 - Let `github_claim_ref` mint its own payload. A lock has nothing to point at

@@ -24,9 +24,9 @@ fn ref_read_url() -> string {
   return BASE + "/repos/octo-org/octo-repo/git/ref/heads/release-lock/v1.2.3"
 }
 
-fn taken(message: string) {
+fn taken(message: string, status: int = 422) {
   return {
-    status: 422,
+    status: status,
     body: json_stringify({message: message, documentation_url: "https://docs.github.test"}),
   }
 }
@@ -102,6 +102,49 @@ pipeline test_a_422_that_is_not_contention_stays_an_error(harness: Harness, task
   const result = github_claim_ref(harness, request())
   assert(is_err(result))
   assert_eq(unwrap_err(result).http_status, 422)
+}
+
+pipeline test_the_documented_conflict_status_reports_the_holder_too(harness: Harness, task) {
+  // GitHub answers a taken ref with 422 today, and documents 409 for the same
+  // case on the create endpoint. A claim that reads back on only one of them
+  // turns contention into an unreadable lock — a caller can wait for a holder,
+  // but it cannot do anything with "the claim failed for an unknown reason".
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock("POST", refs_url(), taken("Reference already exists", 409))
+  harness.testing.http_mock(
+    "GET",
+    ref_read_url(),
+    {status: 200, body: json_stringify({ref: REF, object: {sha: HOLDER_OID, type: "commit"}})},
+  )
+  harness.testing.http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/git/commits/" + HOLDER_OID,
+    {status: 200, body: json_stringify({sha: HOLDER_OID, message: "release-lock v1.2.3 run=019f"})},
+  )
+  const claim = unwrap(github_claim_ref(harness, request()))
+  assert_eq(claim.claimed, false)
+  assert_eq(claim.oid, HOLDER_OID)
+  assert_eq(claim.holder_headline, "release-lock v1.2.3 run=019f")
+}
+
+pipeline test_a_refusal_that_is_not_a_conflict_never_costs_a_read_back(harness: Harness, task) {
+  // The read-back is only reachable from a status that could mean "already
+  // there". A 500 is not evidence of a holder, and asking again would report
+  // whoever happens to hold the ref as the reason this claim failed.
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock("POST", refs_url(), taken("Server Error", 500))
+  harness.testing.http_mock(
+    "GET",
+    ref_read_url(),
+    {status: 200, body: json_stringify({ref: REF, object: {sha: HOLDER_OID, type: "commit"}})},
+  )
+  const result = github_claim_ref(harness, request())
+  assert(is_err(result))
+  assert_eq(unwrap_err(result).http_status, 500)
+  assert_eq(
+    len(harness.testing.http_mock_calls().filter({ call -> call.method == "GET" }).to_list()),
+    0,
+  )
 }
 
 pipeline test_a_partial_ref_is_refused_before_any_request(harness: Harness, task) {
