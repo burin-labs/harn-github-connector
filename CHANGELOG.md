@@ -2,6 +2,17 @@
 
 ## 0.8.1 - 2026-08-05
 
+- Let `github_commit_worktree` lease the branch it resets. `reset_branch` is a
+  force, and the only lease it carried was on the *base*: a caller rewriting a
+  pull-request head to make it signable would discard whatever had landed on
+  that branch since the head it decided to rewrite. `expected_branch_oid` is the
+  missing half, and it means what `git push --force-with-lease=<branch>:<oid>`
+  means — proceed only while the branch is still where the caller left it.
+  Anything else is `stale_head` and nothing is written: moved on, already reset
+  to the base by a peer, or deleted outright, which is refused rather than
+  answered by recreating the branch. Optional, because a branch this call
+  creates from scratch has no head to lease, so existing callers are unaffected.
+
 - Read the ref back when `github_claim_ref` is refused with 409, not only 422.
   GitHub answers a taken ref with 422 today — verified against the live API —
   and its create contract documents 409 for the same case. Only the read-back
