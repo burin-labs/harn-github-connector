@@ -76,6 +76,61 @@ pipeline test_a_taken_ref_reports_the_holder_instead_of_failing(harness: Harness
   assert_eq(claim.holder_headline, "release-lock v1.2.3 run 019fc846 on hosted-runner")
 }
 
+pipeline test_a_taken_ref_waits_for_the_holder_to_become_visible(harness: Harness, task) {
+  harness.testing.clock_set(1700000000000)
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock("POST", refs_url(), taken("Reference already exists"))
+  harness.testing.http_mock(
+    "GET",
+    ref_read_url(),
+    {
+      responses: [
+        {status: 404, body: json_stringify({message: "Not Found"})},
+        {status: 200, body: json_stringify({ref: REF, object: {sha: HOLDER_OID, type: "commit"}})},
+      ],
+    },
+  )
+  harness.testing.http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/git/commits/" + HOLDER_OID,
+    {status: 200, body: json_stringify({sha: HOLDER_OID, message: "release-lock v1.2.3 run=019f"})},
+  )
+  const claim = unwrap(github_claim_ref(harness, request()))
+  assert_eq(claim.claimed, false)
+  assert_eq(claim.oid, HOLDER_OID)
+  assert_eq(claim.holder_headline, "release-lock v1.2.3 run=019f")
+  const read_backs = harness.testing.http_mock_calls().filter(
+    { call -> call.method == "GET" && call.url == ref_read_url() },
+  )
+    .to_list()
+  assert_eq(len(read_backs), 2)
+}
+
+pipeline test_a_taken_ref_stops_after_the_bounded_visibility_window(harness: Harness, task) {
+  harness.testing.clock_set(1700000000000)
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock("POST", refs_url(), taken("Reference already exists"))
+  harness.testing.http_mock(
+    "GET",
+    ref_read_url(),
+    {
+      responses: [
+        {status: 404, body: json_stringify({message: "Not Found"})},
+        {status: 404, body: json_stringify({message: "Not Found"})},
+        {status: 404, body: json_stringify({message: "Not Found"})},
+      ],
+    },
+  )
+  const result = github_claim_ref(harness, request())
+  assert(is_err(result))
+  assert_eq(unwrap_err(result).http_status, 422)
+  const read_backs = harness.testing.http_mock_calls().filter(
+    { call -> call.method == "GET" && call.url == ref_read_url() },
+  )
+    .to_list()
+  assert_eq(len(read_backs), 3)
+}
+
 pipeline test_a_holder_without_a_readable_payload_is_still_a_lost_claim(harness: Harness, task) {
   // A lock whose commit has been garbage collected is still held. Reporting the
   // headline is best effort; reporting the loss is not.
@@ -96,6 +151,7 @@ pipeline test_a_422_that_is_not_contention_stays_an_error(harness: Harness, task
   // GitHub spends one status on "taken", "no such object", and "bad ref name".
   // Reading the ref back is what tells them apart; without it a caller would
   // wait for a lock nobody holds.
+  harness.testing.clock_set(1700000000000)
   harness.testing.http_mock_clear()
   harness.testing.http_mock("POST", refs_url(), taken("Object does not exist"))
   harness.testing.http_mock("GET", ref_read_url(), {status: 404, body: json_stringify({})})

@@ -6,6 +6,20 @@ import {
   github_create_signed_commit,
 } from "../src/facade"
 
+type SignedCommitPayload = {
+  query: string,
+  variables: {
+    input: {
+      branch: {repositoryNameWithOwner: string, branchName: string},
+      expectedHeadOid: string,
+      fileChanges: {additions: list<{path: string}>, deletions: list<{path: string}>},
+      author?: unknown,
+      committer?: unknown,
+      signature?: unknown,
+    },
+  },
+}
+
 fn auth(base: string) -> GithubClientOptions {
   return {api_base_url: base, installation_token: "github-app-installation-token"}
 }
@@ -64,20 +78,12 @@ pipeline test_create_signed_commit_uses_atomic_github_signed_mutation(harness: H
   assert_eq(receipt.signature_state, "VALID", "signature state")
   const calls = harness.testing.http_mock_calls()
   assert_eq(len(calls), 1, "one atomic GraphQL request")
-  const payload: {
-    query: string,
-    variables: {
-      input: {
-        branch: {repositoryNameWithOwner: string, branchName: string},
-        expectedHeadOid: string,
-        fileChanges: {additions: list<{path: string}>, deletions: list<{path: string}>},
-        author: unknown?,
-        committer: unknown?,
-        signature: unknown?,
-      },
-    },
-  } = json_parse(calls[0].body)
-  const input = payload.variables.input
+  const payload = json_parse(calls[0].body)
+  guard schema_is(payload, SignedCommitPayload) else {
+    throw "signed commit payload shape drifted"
+  }
+  const typed_payload: SignedCommitPayload = payload
+  const input = typed_payload.variables.input
   assert_eq(input.branch.repositoryNameWithOwner, "octo-org/octo-repo", "repository")
   assert_eq(input.branch.branchName, "automation/release-v1.2.3", "branch")
   assert_eq(
@@ -90,7 +96,7 @@ pipeline test_create_signed_commit_uses_atomic_github_signed_mutation(harness: H
   assert_eq(input.author, nil, "no custom author")
   assert_eq(input.committer, nil, "no custom committer")
   assert_eq(input.signature, nil, "no custom signature")
-  assert(contains(payload.query, "createCommitOnBranch"), "signed commit mutation")
+  assert(contains(typed_payload.query, "createCommitOnBranch"), "signed commit mutation")
   harness.testing.http_mock_clear()
 }
 
