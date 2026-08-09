@@ -1,5 +1,7 @@
 import { call } from "../src/facade"
 
+type BotContentBody = {author?: unknown, committer?: unknown, message: string}
+
 pipeline test_author_mode(harness: Harness, task) {
   harness.testing.http_mock_clear()
   const base_url = "https://github-api.test"
@@ -146,13 +148,15 @@ pipeline test_author_mode(harness: Harness, task) {
     contains(human_body.message, "Co-Authored-By: Merge Captain <merge-captain@bots.example>"),
     "human content write appends trailers",
   )
-  const bot_body: {author: unknown?, committer: unknown?, message: string} = json_parse(
-    calls[1].body,
-  )
-  assert(bot_body.author == nil, "bot content write omits custom author")
-  assert(bot_body.committer == nil, "bot content write omits custom committer")
+  const bot_body = json_parse(calls[1].body)
+  guard schema_is(bot_body, BotContentBody) else {
+    throw "bot content body shape drifted"
+  }
+  const typed_bot_body: BotContentBody = bot_body
+  assert(typed_bot_body.author == nil, "bot content write omits custom author")
+  assert(typed_bot_body.committer == nil, "bot content write omits custom committer")
   assert(
-    !contains(bot_body.message, "Co-Authored-By"),
+    !contains(typed_bot_body.message, "Co-Authored-By"),
     "bot content write leaves commit identity to GitHub App",
   )
   const pr_body: {body: string} = json_parse(calls[2].body)

@@ -14,6 +14,10 @@ import "./shared"
  */
 const CLAIM_CONTENTION_STATUSES = [409, 422]
 
+const CLAIM_READ_BACK_MAX_ATTEMPTS = 3
+
+const CLAIM_READ_BACK_DELAY_MS = 100
+
 /**
  * Claim one ref for an exact object, atomically.
  *
@@ -66,7 +70,7 @@ pub fn __github_ref_claim(harness: Harness, args, cfg) {
   if !CLAIM_CONTENTION_STATUSES.contains(failure?.http_status ?? 0) {
     return Err(failure)
   }
-  const existing = __github_ref_object(harness, r, ref, cfg)
+  const existing = __github_ref_after_contention(harness, r, ref, cfg)
   if is_err(existing) {
     return Err(failure)
   }
@@ -79,6 +83,31 @@ pub fn __github_ref_claim(harness: Harness, args, cfg) {
     holder_headline: __github_commit_headline(harness, r, holder, cfg),
   }
   return lost
+}
+
+/**
+ * Read a lost claim through GitHub's short ref-propagation window.
+ *
+ * The create endpoint is authoritative that somebody won, but a GET routed to
+ * another replica can briefly return 404. The harness clock keeps this bounded
+ * delay instant under test-time virtualization. Any non-404 failure stops the
+ * retry, and the caller preserves the original create refusal if no holder
+ * becomes visible.
+ */
+fn __github_ref_after_contention(harness: Harness, repo, ref: string, cfg) {
+  let observed = nil
+  for attempt in range(0, CLAIM_READ_BACK_MAX_ATTEMPTS) {
+    observed = __github_ref_object(harness, repo, ref, cfg)
+    if !is_err(observed) {
+      return observed
+    }
+    const status = unwrap_err(observed)?.http_status ?? 0
+    if status != 404 || attempt + 1 >= CLAIM_READ_BACK_MAX_ATTEMPTS {
+      return observed
+    }
+    harness.clock.sleep_ms(CLAIM_READ_BACK_DELAY_MS)
+  }
+  return observed
 }
 
 fn __github_ref_object(harness: Harness, repo, ref: string, cfg) {
