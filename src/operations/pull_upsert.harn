@@ -1,7 +1,108 @@
 import "../contracts"
 import { __err } from "../errors"
+import { __positive_int, __resolve_max_attempts } from "../request_options"
 import "./pulls"
 import "./shared"
+
+const PR_HEAD_CONSISTENCY_INTERVAL_MS = 1000
+
+const PR_HEAD_CONSISTENCY_TIMEOUT_MS = 5000
+
+fn __github_pr_upsert_stale(expected_head_oid, observed_head_oid, message) {
+  return __err(
+    "stale_head",
+    message,
+    {expected_head_oid: expected_head_oid, observed_head_oid: observed_head_oid},
+  )
+}
+
+/**
+ * Resolve one exact pull through GitHub's branch-to-pull propagation window.
+ *
+ * Only the caller's explicitly leased preceding head is retryable. A different
+ * head is evidence of another writer and fails immediately.
+ */
+fn __github_pr_upsert_existing(
+  harness: Harness,
+  args,
+  cfg,
+  repo,
+  head: string,
+  base: string,
+  expected_head_oid: string,
+  previous_head_oid: string,
+) {
+  const polling = args?.polling ?? {}
+  const interval_ms = __positive_int(polling?.interval_ms, PR_HEAD_CONSISTENCY_INTERVAL_MS)
+  const timeout_ms = __positive_int(polling?.timeout_ms, PR_HEAD_CONSISTENCY_TIMEOUT_MS)
+  const max_attempts = __resolve_max_attempts(polling?.max_attempts, interval_ms, timeout_ms)
+  let attempt = 0
+  while attempt < max_attempts {
+    attempt = attempt + 1
+    const matches = __github_pr_list(
+      harness,
+      {
+        owner: repo.owner,
+        repo: repo.name,
+        filters: {head: head, base: base, state: "open", per_page: 2},
+      },
+      cfg,
+    )
+    if is_err(matches) {
+      return matches
+    }
+    if len(matches) > 1 {
+      return __err(
+        "ambiguous_pull_request",
+        "github.pr.upsert found multiple open pull requests for the exact head/base pair",
+      )
+    }
+    if len(matches) == 0 {
+      if attempt > 1 {
+        return __github_pr_upsert_stale(
+          expected_head_oid,
+          "",
+          "open pull request disappeared during the bounded consistency wait",
+        )
+      }
+      return nil
+    }
+    const existing = matches[0]
+    const observed_head_oid = trim(to_string(existing?.head?.sha ?? ""))
+    if existing?.head?.ref != head || existing?.base?.ref != base {
+      return __github_pr_upsert_stale(
+        expected_head_oid,
+        observed_head_oid,
+        "open pull request no longer matches the exact head/base identity",
+      )
+    }
+    if observed_head_oid == expected_head_oid {
+      return existing
+    }
+    if previous_head_oid == "" || observed_head_oid != previous_head_oid {
+      return __github_pr_upsert_stale(
+        expected_head_oid,
+        observed_head_oid,
+        "open pull request head no longer matches expected_head_oid",
+      )
+    }
+    if attempt >= max_attempts {
+      return __github_pr_upsert_stale(
+        expected_head_oid,
+        observed_head_oid,
+        "open pull request still exposes the preceding head after the bounded consistency wait",
+      )
+    }
+    if interval_ms > 0 {
+      harness.clock.sleep_ms(interval_ms)
+    }
+  }
+  return __github_pr_upsert_stale(
+    expected_head_oid,
+    previous_head_oid,
+    "open pull request did not converge to expected_head_oid",
+  )
+}
 
 /** Create or refresh the sole open pull request for one exact head/base pair. */
 pub fn __github_pr_upsert(harness: Harness, args, cfg) {
@@ -14,37 +115,31 @@ pub fn __github_pr_upsert(harness: Harness, args, cfg) {
   const base = trim(to_string(args?.base ?? ""))
   const title = trim(to_string(args?.title ?? ""))
   const expected_head_oid = trim(to_string(args?.expected_head_oid ?? ""))
+  const previous_head_oid = trim(to_string(args?.previous_head_oid ?? ""))
   if head == "" || base == "" || title == "" || expected_head_oid == "" {
     return __err(
       "schema_drift",
       "github.pr.upsert requires head, base, title, and expected_head_oid",
     )
   }
-  const matches = __github_pr_list(
+  if previous_head_oid == expected_head_oid {
+    return __err(
+      "schema_drift",
+      "github.pr.upsert previous_head_oid must differ from expected_head_oid",
+    )
+  }
+  const existing = __github_pr_upsert_existing(
     harness,
-    {owner: r.owner, repo: r.name, filters: {head: head, base: base, state: "open", per_page: 2}},
+    args,
     cfg,
+    r,
+    head,
+    base,
+    expected_head_oid,
+    previous_head_oid,
   )
-  if is_err(matches) {
-    return matches
-  }
-  if len(matches) > 1 {
-    return __err(
-      "ambiguous_pull_request",
-      "github.pr.upsert found multiple open pull requests for the exact head/base pair",
-    )
-  }
-  const existing = if len(matches) == 0 {
-    nil
-  } else {
-    matches[0]
-  }
-  if existing != nil && existing.head.sha != expected_head_oid {
-    return __err(
-      "stale_head",
-      "open pull request head no longer matches expected_head_oid",
-      {expected_head_oid: expected_head_oid, observed_head_oid: existing.head.sha},
-    )
+  if is_err(existing) {
+    return existing
   }
   const result = if existing == nil {
     __github_pr_create(

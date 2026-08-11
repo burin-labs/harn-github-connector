@@ -9,6 +9,10 @@ const API = "https://github-api.test"
 
 const HEAD_OID = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
+const PREVIOUS_HEAD_OID = "cccccccccccccccccccccccccccccccccccccccc"
+
+const THIRD_PARTY_OID = "dddddddddddddddddddddddddddddddddddddddd"
+
 fn auth() {
   return {api_base_url: API, installation_token: "github-app-installation-token"}
 }
@@ -43,6 +47,14 @@ fn upsert_request() -> GithubPullRequestUpsertRequest {
     body: "body",
     expected_head_oid: HEAD_OID,
     options: auth(),
+  }
+}
+
+fn converging_upsert_request() -> GithubPullRequestUpsertRequest {
+  return upsert_request()
+    + {
+    previous_head_oid: PREVIOUS_HEAD_OID,
+    polling: {interval_ms: 0, max_attempts: 3},
   }
 }
 
@@ -120,6 +132,111 @@ pipeline test_upsert_rejects_a_stale_existing_head_without_mutation(harness: Har
   assert_eq(unwrap_err(result).expected_head_oid, HEAD_OID)
   assert_eq(unwrap_err(result).observed_head_oid, "cccccccc")
   assert_eq(len(harness.testing.http_mock_calls()), 1)
+  harness.testing.http_mock_clear()
+}
+
+pipeline test_upsert_waits_for_the_exact_published_head(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
+    "GET",
+    list_url(),
+    {
+      status: 200,
+      responses: [
+        {status: 200, body: json_stringify([pull(43, "Old title", PREVIOUS_HEAD_OID)])},
+        {status: 200, body: json_stringify([pull(43, "Old title", PREVIOUS_HEAD_OID)])},
+        {status: 200, body: json_stringify([pull(43, "Old title", HEAD_OID)])},
+      ],
+    },
+  )
+  harness.testing.http_mock(
+    "PATCH",
+    API + "/repos/octo-org/octo-repo/pulls/43",
+    {status: 200, body: json_stringify(pull(43, "Bump Harn runtime", HEAD_OID))},
+  )
+  const receipt = unwrap(github_upsert_pull_request(harness, converging_upsert_request()))
+  assert_eq(receipt.action, "updated")
+  const calls = harness.testing.http_mock_calls()
+  assert_eq(len(calls), 4, "two stale reads converge before the mutation")
+  assert_eq(calls[0].method, "GET")
+  assert_eq(calls[1].method, "GET")
+  assert_eq(calls[2].method, "GET")
+  assert_eq(calls[3].method, "PATCH")
+  harness.testing.http_mock_clear()
+}
+
+pipeline test_upsert_fails_closed_when_the_previous_head_persists(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
+    "GET",
+    list_url(),
+    {
+      status: 200,
+      responses: [
+        {status: 200, body: json_stringify([pull(43, "Old title", PREVIOUS_HEAD_OID)])},
+        {status: 200, body: json_stringify([pull(43, "Old title", PREVIOUS_HEAD_OID)])},
+        {status: 200, body: json_stringify([pull(43, "Old title", PREVIOUS_HEAD_OID)])},
+      ],
+    },
+  )
+  const result = github_upsert_pull_request(harness, converging_upsert_request())
+  assert(is_err(result))
+  assert_eq(unwrap_err(result).code, "stale_head")
+  assert_eq(unwrap_err(result).observed_head_oid, PREVIOUS_HEAD_OID)
+  assert_eq(len(harness.testing.http_mock_calls()), 3, "the consistency wait stays bounded")
+  harness.testing.http_mock_clear()
+}
+
+pipeline test_upsert_rejects_an_unrelated_head_without_retry(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
+    "GET",
+    list_url(),
+    {status: 200, body: json_stringify([pull(43, "Old title", THIRD_PARTY_OID)])},
+  )
+  const result = github_upsert_pull_request(harness, converging_upsert_request())
+  assert(is_err(result))
+  assert_eq(unwrap_err(result).code, "stale_head")
+  assert_eq(unwrap_err(result).observed_head_oid, THIRD_PARTY_OID)
+  assert_eq(len(harness.testing.http_mock_calls()), 1, "an unrelated head is not retried")
+  harness.testing.http_mock_clear()
+}
+
+pipeline test_upsert_rejects_changed_pull_identity_without_mutation(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  const wrong_identity = pull(43, "Old title", HEAD_OID)
+    + {
+    head: pull(43, "Old title", HEAD_OID).head + {ref: "third-party-branch"},
+  }
+  harness.testing.http_mock(
+    "GET",
+    list_url(),
+    {status: 200, body: json_stringify([wrong_identity])},
+  )
+  const result = github_upsert_pull_request(harness, converging_upsert_request())
+  assert(is_err(result))
+  assert_eq(unwrap_err(result).code, "stale_head")
+  assert_eq(len(harness.testing.http_mock_calls()), 1, "changed identity is not mutated")
+  harness.testing.http_mock_clear()
+}
+
+pipeline test_upsert_stops_on_provider_error_during_consistency_wait(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
+    "GET",
+    list_url(),
+    {
+      status: 200,
+      responses: [
+        {status: 200, body: json_stringify([pull(43, "Old title", PREVIOUS_HEAD_OID)])},
+        {status: 503, body: json_stringify({message: "temporarily unavailable"})},
+      ],
+    },
+  )
+  const result = github_upsert_pull_request(harness, converging_upsert_request())
+  assert(is_err(result))
+  assert_eq(unwrap_err(result).http_status, 503)
+  assert_eq(len(harness.testing.http_mock_calls()), 2, "provider failure stops the wait")
   harness.testing.http_mock_clear()
 }
 

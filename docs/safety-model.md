@@ -40,6 +40,12 @@ immediately before the write and returns a stale-state error on mismatch.
 This is optimistic concurrency control: the workflow may retry from a fresh
 read, but it may not silently apply an old decision to new state.
 
+Pull-request upsert can bridge GitHub's short branch-to-pull propagation delay
+when the caller supplies both the newly published `expected_head_oid` and the
+exact `previous_head_oid` it replaced. Only that preceding head is retryable;
+an unrelated head, a changed branch/base pair, a provider error, or a bounded
+wait that expires still fails closed without mutating the pull request.
+
 ## Absence must be proven
 
 A `404` can mean missing, private, or forbidden. Exact file and release lookups
