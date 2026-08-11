@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.3 - 2026-08-11
+
 - Let leased pull-request upserts wait through GitHub's brief branch-to-pull
   propagation lag. Callers identify the exact `previous_head_oid` that was just
   replaced; only reads of that head are retried, while third-party heads,
