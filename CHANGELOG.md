@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Retry a contended ref claim's read-back through GitHub's bounded propagation
+  window. A newly-created custom ref can return 404 briefly after its atomic
+  create has already made a competing claim fail with 422; the connector now
+  reports the holder instead of misclassifying that race as an unreadable API
+  failure.
+- Model omitted GitHub-authorship fields as optional record fields in package
+  regressions, keeping the suite valid under newer Harn strict checking.
+
 ## 0.8.2 - 2026-08-05
 
 - Stop `github_commit_worktree` closing the pull request it rewrites.
