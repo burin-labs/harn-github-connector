@@ -273,9 +273,23 @@ pub type GithubPullRequestCreateReceipt = GithubPullRequestDetails & {created: b
 /** Receipt proving whether a pull-request edit changed remote state. */
 pub type GithubPullRequestEditReceipt = GithubPullRequestDetails & {ok: bool, updated: bool}
 
-/** Closed input for creating or refreshing one exact automation pull request. */
+/**
+ * Closed input for creating or refreshing one exact automation pull request.
+ *
+ * `previous_head_oid` identifies the head that the caller just replaced with
+ * `expected_head_oid`. When present, upsert may wait through GitHub reads that
+ * still expose exactly that preceding head. Any other head fails closed.
+ */
 pub type GithubPullRequestUpsertRequest = GithubRepositoryRequest \
-  & {head: string, base: string, title: string, body: string, expected_head_oid: string}
+  & {
+  head: string,
+  base: string,
+  title: string,
+  body: string,
+  expected_head_oid: string,
+  previous_head_oid?: string?,
+  polling?: GithubPollingPolicy,
+}
 
 /** Receipt proving whether an exact automation pull request was created or updated. */
 pub type GithubPullRequestUpsertReceipt = GithubPullRequestDetails \
