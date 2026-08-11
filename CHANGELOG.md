@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Let leased pull-request upserts wait through GitHub's brief branch-to-pull
+  propagation lag. Callers identify the exact `previous_head_oid` that was just
+  replaced; only reads of that head are retried, while third-party heads,
+  changed head/base identity, provider failures, and an exhausted bounded wait
+  still fail closed without a pull-request mutation.
 - Retry a contended ref claim's read-back through GitHub's bounded propagation
   window. A newly-created custom ref can return 404 briefly after its atomic
   create has already made a competing claim fail with 422; the connector now

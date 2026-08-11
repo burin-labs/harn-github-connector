@@ -886,10 +886,21 @@ pub type GithubPullRequestUpsertReceipt = GithubPullRequestDetails \
 ### type `GithubPullRequestUpsertRequest`
 
 Closed input for creating or refreshing one exact automation pull request.
+`previous_head_oid` identifies the head that the caller just replaced with
+`expected_head_oid`. When present, upsert may wait through GitHub reads that
+still expose exactly that preceding head. Any other head fails closed.
 
 ```harn
 pub type GithubPullRequestUpsertRequest = GithubRepositoryRequest \
-  & {head: string, base: string, title: string, body: string, expected_head_oid: string}
+  & {
+  head: string,
+  base: string,
+  title: string,
+  body: string,
+  expected_head_oid: string,
+  previous_head_oid?: string?,
+  polling?: GithubPollingPolicy,
+}
 ```
 
 ### type `GithubPullRequestUser`
