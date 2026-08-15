@@ -1482,6 +1482,7 @@ pub type GithubWorkflowRun = {
   run_number: int?,
   run_attempt: int?,
   name: string,
+  display_title: string,
   event: string,
   status: string,
   conclusion: string?,

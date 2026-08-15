@@ -81,6 +81,7 @@ pub fn __typed_workflow_run(repo, run) {
       to_int(run.run_attempt)
     },
     name: to_string(run?.name ?? ""),
+    display_title: to_string(run?.display_title ?? ""),
     event: to_string(run.event),
     status: lowercase(to_string(run.status)),
     conclusion: if run?.conclusion == nil {
