@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.8.4 - 2026-08-15
+
+- Read an exact pull request's status rollup through GitHub GraphQL when an
+  installation token has Pull Requests access but not the wider Checks scope.
+  The adapter verifies the requested head SHA and projects both check runs and
+  legacy status contexts into the existing typed receipt. Other permission
+  failures still fail closed, so private repositories no longer require a
+  broader GitHub App grant just to prove a merged update is green.
+
 ## 0.8.3 - 2026-08-11
 
 - Let leased pull-request upserts wait through GitHub's brief branch-to-pull

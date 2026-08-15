@@ -36,6 +36,29 @@ pub fn __normalize_status_check_rollup(rollup) {
   return checks
 }
 
+/** Project GraphQL check contexts into the same exact-head rows as the REST adapter. */
+pub fn __graphql_pr_check_runs(rollup, head_sha: string) -> list<GithubCheckRun> {
+  let checks: list<GithubCheckRun> = []
+  for context in __normalize_status_check_rollup(rollup) {
+    const details_url = context?.detailsUrl
+    const check: GithubCheckRun = {
+      id: nil,
+      name: context?.name ?? "",
+      status: lowercase(context?.status ?? ""),
+      conclusion: lowercase(context?.conclusion ?? ""),
+      head_sha: head_sha,
+      started_at: nil,
+      completed_at: nil,
+      duration_seconds: nil,
+      details_url: details_url,
+      html_url: details_url,
+      external_id: nil,
+    }
+    checks = checks + [check]
+  }
+  return checks
+}
+
 pub fn __normalize_status_check(context) {
   if context?.__typename == "StatusContext" {
     const state = uppercase(context?.state ?? "")

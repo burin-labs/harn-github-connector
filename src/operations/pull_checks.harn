@@ -1,0 +1,63 @@
+/** Exact pull-request check reads that preserve the connector's typed rollup contract. */
+import "../client"
+import { __err } from "../errors"
+import "../pulls/normalization"
+import "./pull_graphql"
+
+pub fn __github_pr_checks_graphql_fallback(
+  harness: Harness,
+  repo,
+  number: int,
+  head_sha: string,
+  cfg,
+) {
+  const graph = __github_json(
+    harness,
+    "POST",
+    __github_api_url(cfg.api_base_url, "/graphql"),
+    {
+      query: __pull_checks_query(),
+      variables: {owner: repo.owner, repo: repo.name, number: number, checkLimit: 100},
+    },
+    cfg,
+  )
+  if is_err(graph) {
+    return graph
+  }
+  if graph?.errors != nil && len(graph.errors) > 0 {
+    return __err("graphql", "github GraphQL returned errors: " + json_stringify(graph.errors))
+  }
+  const pull = graph?.data?.repository?.pullRequest
+  if pull == nil {
+    return __err("invalid_response", "github.pr.checks GraphQL fallback omitted the pull request")
+  }
+  const observed_head = trim(to_string(pull?.headRefOid ?? ""))
+  if observed_head == "" {
+    return __err("invalid_response", "github.pr.checks GraphQL fallback omitted headRefOid")
+  }
+  if lowercase(observed_head) != lowercase(trim(head_sha)) {
+    return __err(
+      "stale_head",
+      "github.pr.checks GraphQL fallback observed a different pull-request head",
+    )
+  }
+  const checks = __graphql_pr_check_runs(pull?.statusCheckRollup, observed_head)
+  const rollup = __check_rollup(checks)
+  return {
+    repo: repo.full_name,
+    pull_number: number,
+    head_sha: observed_head,
+    state: __classify_pr_state(
+      {
+        state: lowercase(pull?.state ?? ""),
+        merged: pull?.merged ?? false,
+        mergeable: true,
+        mergeable_state: lowercase(pull?.mergeStateStatus ?? ""),
+      },
+      rollup,
+      nil,
+    ),
+    rollup: rollup,
+    checks: checks,
+  }
+}
