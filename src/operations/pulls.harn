@@ -452,7 +452,14 @@ pub fn __github_pr_checks(harness: Harness, args, cfg) {
     // change transports; every other authorization error stays fail-closed.
     const pull_number = to_int(number)
     if error?.code == "missing_scopes" && pull_number != nil {
-      return __github_pr_checks_graphql_fallback(harness, r, pull_number, to_string(head_sha), cfg)
+      return __github_pr_checks_graphql_fallback(
+        harness,
+        r,
+        pull_number,
+        to_string(head_sha),
+        pull,
+        cfg,
+      )
     }
     return envelope
   }

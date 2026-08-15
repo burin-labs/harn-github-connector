@@ -2,13 +2,125 @@
 import "../client"
 import { __err } from "../errors"
 import "../pulls/normalization"
+import "./actions"
 import "./pull_graphql"
+
+fn __graphql_checks_scope_denied(errors) {
+  for error in errors ?? [] {
+    const encoded = lowercase(json_stringify(error))
+    const names_rollup = contains(encoded, "statuscheckrollup")
+    const names_permission = contains(encoded, "resource not accessible by integration")
+      || contains(
+      encoded,
+      "forbidden",
+    )
+    if names_rollup && names_permission {
+      return true
+    }
+  }
+  return false
+}
+
+fn __same_workflow(left, right) {
+  if lowercase(to_string(left?.event ?? "")) != lowercase(to_string(right?.event ?? "")) {
+    return false
+  }
+  const left_id = to_int(left?.workflow_id)
+  const right_id = to_int(right?.workflow_id)
+  if left_id != nil && right_id != nil {
+    return left_id == right_id
+  }
+  return trim(to_string(left?.path ?? "")) == trim(to_string(right?.path ?? ""))
+}
+
+fn __latest_workflow_runs(runs) {
+  let latest = []
+  for candidate in runs ?? [] {
+    let superseded = false
+    for other in runs ?? [] {
+      if __same_workflow(candidate, other)
+        && (to_int(other?.id) ?? 0) > (to_int(candidate?.id) ?? 0) {
+        superseded = true
+      }
+    }
+    if !superseded {
+      latest = latest + [candidate]
+    }
+  }
+  return latest
+}
+
+fn __github_pr_checks_actions_fallback(
+  harness: Harness,
+  repo,
+  number: int,
+  head_sha: string,
+  pull,
+  cfg,
+) {
+  const envelope = __actions_workflow_runs_list(
+    harness,
+    {owner: repo.owner, repo: repo.name, head_sha: head_sha, per_page: 100},
+    cfg,
+  )
+  if is_err(envelope) {
+    return envelope
+  }
+  if type_of(envelope?.workflow_runs) != "list" {
+    return __err("invalid_response", "github.pr.checks Actions fallback omitted workflow_runs")
+  }
+  const total_count = to_int(envelope?.total_count)
+  if total_count == nil || total_count > len(envelope.workflow_runs) {
+    return __err(
+      "incomplete_page",
+      "github.pr.checks Actions fallback requires the complete exact-head workflow page",
+    )
+  }
+  let checks = []
+  for run in __latest_workflow_runs(envelope.workflow_runs) {
+    const observed_head = trim(to_string(run?.head_sha ?? ""))
+    if lowercase(observed_head) != lowercase(trim(head_sha)) {
+      return __err("stale_head", "github.pr.checks Actions fallback observed a different head")
+    }
+    checks = checks
+      + [
+      __typed_check_run(
+        {
+          id: run?.id,
+          name: run?.name ?? run?.path ?? "",
+          status: run?.status,
+          conclusion: run?.conclusion,
+          head_sha: observed_head,
+          started_at: run?.run_started_at,
+          completed_at: if lowercase(to_string(run?.status ?? "")) == "completed" {
+            run?.updated_at
+          } else {
+            nil
+          },
+          details_url: run?.html_url,
+          html_url: run?.html_url,
+          external_id: "actions-workflow-run:" + to_string(run?.id ?? ""),
+        },
+      ),
+    ]
+  }
+  const rollup = __check_rollup(checks)
+  return {
+    repo: repo.full_name,
+    pull_number: number,
+    head_sha: head_sha,
+    state: __classify_pr_state(pull, rollup, nil),
+    rollup: rollup,
+    checks: checks,
+  }
+}
 
 pub fn __github_pr_checks_graphql_fallback(
   harness: Harness,
   repo,
   number: int,
   head_sha: string,
+  known_pull,
   cfg,
 ) {
   const graph = __github_json(
@@ -25,6 +137,16 @@ pub fn __github_pr_checks_graphql_fallback(
     return graph
   }
   if graph?.errors != nil && len(graph.errors) > 0 {
+    if __graphql_checks_scope_denied(graph.errors) {
+      return __github_pr_checks_actions_fallback(
+        harness,
+        repo,
+        number,
+        head_sha,
+        graph?.data?.repository?.pullRequest ?? known_pull,
+        cfg,
+      )
+    }
     return __err("graphql", "github GraphQL returned errors: " + json_stringify(graph.errors))
   }
   const pull = graph?.data?.repository?.pullRequest
