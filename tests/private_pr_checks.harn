@@ -152,3 +152,115 @@ pipeline test_private_pr_graphql_fallback_refuses_a_changed_head(harness: Harnes
   assert(is_err(checks))
   assert_eq(unwrap_err(checks).code, "stale_head")
 }
+
+pipeline test_private_pr_checks_use_exact_head_actions_when_checks_scope_is_hidden(
+  harness: Harness,
+  task,
+) {
+  harness.testing.http_mock_clear()
+  mock_pull(harness.testing)
+  harness.testing.http_mock(
+    "GET",
+    BASE + "/repos/octo-org/private-repo/commits/" + HEAD + "/check-runs",
+    missing_checks_scope(),
+  )
+  harness.testing.http_mock(
+    "POST",
+    BASE + "/graphql",
+    {
+      status: 200,
+      body: json_stringify(
+        {
+          data: {repository: {pullRequest: nil}},
+          errors: [
+            {
+              type: "FORBIDDEN",
+              path: ["repository", "pullRequest", "statusCheckRollup"],
+              message: "Resource not accessible by integration",
+            },
+          ],
+        },
+      ),
+    },
+  )
+  harness.testing.http_mock(
+    "GET",
+    BASE + "/repos/octo-org/private-repo/actions/runs?head_sha=" + HEAD + "&per_page=100",
+    {
+      status: 200,
+      body: json_stringify(
+        {
+          total_count: 3,
+          workflow_runs: [
+            {
+              id: 10,
+              workflow_id: 5,
+              path: ".github/workflows/ci.yml",
+              name: "CI (superseded)",
+              event: "pull_request",
+              status: "completed",
+              conclusion: "failure",
+              head_sha: HEAD,
+              html_url: "https://github.com/octo-org/private-repo/actions/runs/10",
+            },
+            {
+              id: 11,
+              workflow_id: 5,
+              path: ".github/workflows/ci.yml",
+              name: "CI",
+              event: "pull_request",
+              status: "completed",
+              conclusion: "success",
+              head_sha: HEAD,
+              run_started_at: "2026-08-15T00:00:00Z",
+              updated_at: "2026-08-15T00:01:00Z",
+              html_url: "https://github.com/octo-org/private-repo/actions/runs/11",
+            },
+            {
+              id: 12,
+              workflow_id: 6,
+              path: ".github/workflows/policy.yml",
+              name: "Repository policy",
+              event: "pull_request",
+              status: "completed",
+              conclusion: "success",
+              head_sha: HEAD,
+              html_url: "https://github.com/octo-org/private-repo/actions/runs/12",
+            },
+          ],
+        },
+      ),
+    },
+  )
+  const checks = unwrap(call(harness, "github.pr.checks", AUTH + {repo: REPO, number: 77}))
+  assert_eq(checks.state, "merged")
+  assert_eq(checks.rollup.state, "green")
+  assert_eq(checks.rollup.total, 2)
+  assert_eq(checks.checks[0].name, "CI")
+  assert_eq(checks.checks[0].external_id, "actions-workflow-run:11")
+  assert_eq(len(harness.testing.http_mock_calls()), 4)
+}
+
+pipeline test_private_pr_checks_do_not_hide_unrelated_graphql_failures(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  mock_pull(harness.testing)
+  harness.testing.http_mock(
+    "GET",
+    BASE + "/repos/octo-org/private-repo/commits/" + HEAD + "/check-runs",
+    missing_checks_scope(),
+  )
+  harness.testing.http_mock(
+    "POST",
+    BASE + "/graphql",
+    {
+      status: 200,
+      body: json_stringify(
+        {errors: [{type: "FORBIDDEN", path: ["repository"], message: "Forbidden"}]},
+      ),
+    },
+  )
+  const checks = call(harness, "github.pr.checks", AUTH + {repo: REPO, number: 77})
+  assert(is_err(checks))
+  assert_eq(unwrap_err(checks).code, "graphql")
+  assert_eq(len(harness.testing.http_mock_calls()), 3)
+}

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.8.5 - 2026-08-15
+
+- Prove an exact pull request head through GitHub Actions when an installation
+  token cannot read the Checks rollup through either REST or GraphQL. The
+  connector keeps only the newest run for each workflow and event, rejects
+  incomplete pages or changed heads, and feeds the result through the same
+  typed check evaluator. Unrelated authorization failures still fail closed.
+
 ## 0.8.4 - 2026-08-15
 
 - Read an exact pull request's status rollup through GitHub GraphQL when an

@@ -1,6 +1,6 @@
 [package]
 name = "harn-github-connector"
-version = "0.8.4"
+version = "0.8.5"
 description = "Pure-Harn GitHub App connector: webhooks, installation token rotation, REST/GraphQL dispatch."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/burin-labs/harn-github-connector"
