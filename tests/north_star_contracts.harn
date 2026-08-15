@@ -545,6 +545,7 @@ pipeline test_exact_workflow_run_and_jobs_are_normalized(harness: Harness, task)
           run_number: 7,
           run_attempt: 1,
           name: "CI",
+          display_title: "CI for exact head",
           event: "workflow_dispatch",
           status: "completed",
           conclusion: "success",
@@ -563,6 +564,7 @@ pipeline test_exact_workflow_run_and_jobs_are_normalized(harness: Harness, task)
     call(harness, "github.actions.run", auth() + {repo: "octo-org/octo-repo", run_id: 321}),
   )
   assert_eq(run.id, 321, "exact run id is retained")
+  assert_eq(run.display_title, "CI for exact head", "run correlation title is retained")
   assert_eq(run.conclusion, "success", "run conclusion is normalized")
   harness.testing.http_mock(
     "GET",
