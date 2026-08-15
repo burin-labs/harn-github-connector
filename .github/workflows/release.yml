@@ -134,3 +134,15 @@ jobs:
               --notes-file release-notes.md \
               --verify-tag
           fi
+
+  register-in-index:
+    name: Register in the package index
+    # A release that never reaches the index is invisible to the resolver:
+    # this repository shipped through v0.8.3 while `harn add` resolved 0.3.0,
+    # for three months, with all fourteen release runs green (#289). Making
+    # registration a dependent job is what stops that being possible again.
+    needs: [verify-and-publish]
+    uses: burin-labs/.github/.github/workflows/register-package-release.yml@abe19da003aa7143538c9e0ca076db9a073beca0
+    secrets:
+      RELEASE_APP_CLIENT_ID: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+      RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}

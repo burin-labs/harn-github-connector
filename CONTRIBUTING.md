@@ -68,3 +68,13 @@ scripts/check-release.sh vX.Y.Z
 After the release change lands on `main`, create and push the matching tag. The
 release workflow repeats the package gate, installs the package into a clean
 consumer, and publishes the GitHub Release.
+
+Publishing the release is not the last step. `harn add @burin/github-connector`
+resolves through the index at `packages.harnlang.com`, which is a separate
+repository, and for three months it served 0.3.0 while this repository had
+shipped through v0.8.3 (#289). The `Register in the package index` job now runs
+after publishing: it asks the reconciler in `burin-labs/harn-packages` to
+compare every indexed package against its upstream tags and open a pull request
+recording what is missing. A release whose registration fails is a failed
+release run, not a quiet success. Watch for that index pull request and merge
+it; the release is not resolvable until it lands.
