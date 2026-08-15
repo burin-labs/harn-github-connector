@@ -28,6 +28,32 @@ query HarnGithubConnectorPullsWithChecks($owner: String!, $repo: String!, $state
 """
 }
 
+/** Exact pull-request check projection used when commit check-runs need a wider App scope. */
+pub fn __pull_checks_query() {
+  return """
+query HarnGithubConnectorPullChecks($owner: String!, $repo: String!, $number: Int!, $checkLimit: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      number
+      state
+      merged
+      headRefOid
+      mergeStateStatus
+      statusCheckRollup {
+        contexts(first: $checkLimit) {
+          nodes {
+            __typename
+            ... on CheckRun { name status conclusion detailsUrl }
+            ... on StatusContext { context state targetUrl }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+}
+
 pub fn __enable_auto_merge_mutation() {
   return """
 mutation HarnGithubConnectorEnableAutoMerge($pullRequestId: ID!, $mergeMethod: PullRequestMergeMethod, $commitHeadline: String, $commitBody: String, $expectedHeadOid: GitObjectID) {
