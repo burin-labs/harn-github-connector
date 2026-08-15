@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.8.6 - 2026-08-15
+
+- Expose each GitHub Actions run's `display_title` in the typed workflow-run
+  contract. Durable orchestrators can now identify explicitly correlated
+  continuation runs without guessing from timestamps or run numbers.
+
 ## 0.8.5 - 2026-08-15
 
 - Prove an exact pull request head through GitHub Actions when an installation
