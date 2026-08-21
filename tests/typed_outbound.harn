@@ -244,6 +244,13 @@ pipeline test_typed_outbound(harness: Harness, task) {
   assert_eq(viewed.head.sha, "green-sha", "view includes head sha")
   assert(viewed.branch_protection.protected, "view includes branch protection")
   assert_eq(viewed.branch_protection.required_checks[0], "Harn CI", "required checks summarized")
+  assert(viewed.queue_membership.available, "view includes GraphQL queue evidence")
+  assert_eq(viewed.queue_membership.queued, false, "view retains the GraphQL queue result")
+  const view_reads = harness.testing.http_mock_calls().filter(
+    { call -> call.method == "GET" && call.url == base + "/repos/octo-org/octo-repo/pulls/101" },
+  )
+    .to_list()
+  assert_eq(len(view_reads), 1, "view reuses its normalized pull for queue enrichment")
   harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/commits/green-sha/check-runs",

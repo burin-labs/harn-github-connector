@@ -149,7 +149,7 @@ pub fn __github_pr_view(harness: Harness, args, cfg) {
   }
   const membership = __github_merge_queue_membership(
     harness,
-    args + {owner: r.owner, repo: r.name, pull_number: number},
+    args + {owner: r.owner, repo: r.name, pull_number: number, pull: pull},
     cfg,
   )
   const queue_evidence = if is_err(membership) {
