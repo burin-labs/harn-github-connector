@@ -64,12 +64,7 @@ pipeline test_call_with_app_token_smoke(harness: Harness, task) {
       harness,
       "issues.update",
       config(harness.fs, 1700000000)
-        + {
-        owner: "octo",
-        repo: "demo",
-        issue_number: 123,
-        state: "closed",
-      },
+        + {owner: "octo", repo: "demo", issue_number: 123, state: "closed"},
     ),
   )
   assert_eq(issue.state, "closed", "issues.update state")
@@ -84,15 +79,15 @@ pipeline test_call_with_app_token_smoke(harness: Harness, task) {
       "pulls.create_review_comment",
       config(harness.fs, 1700000000)
         + {
-        owner: "octo",
-        repo: "demo",
-        pull_number: 5,
-        body: "nit",
-        commit_id: "abc",
-        path: "src/lib.harn",
-        line: 1,
-        side: "RIGHT",
-      },
+          owner: "octo",
+          repo: "demo",
+          pull_number: 5,
+          body: "nit",
+          commit_id: "abc",
+          path: "src/lib.harn",
+          line: 1,
+          side: "RIGHT",
+        },
     ),
   )
   assert_eq(review_comment.id, 55, "review comment id")
@@ -154,13 +149,7 @@ pipeline test_call_with_app_token_smoke(harness: Harness, task) {
       harness,
       "check_runs.create",
       config(harness.fs, 1700000000)
-        + {
-        owner: "octo",
-        repo: "demo",
-        name: "ci",
-        head_sha: "abc",
-        status: "queued",
-      },
+        + {owner: "octo", repo: "demo", name: "ci", head_sha: "abc", status: "queued"},
     ),
   )
   assert_eq(check_run.id, 10, "check_runs.create id")
@@ -178,12 +167,7 @@ pipeline test_call_with_app_token_smoke(harness: Harness, task) {
       harness,
       "check_runs.update",
       config(harness.fs, 1700000000)
-        + {
-        owner: "octo",
-        repo: "demo",
-        check_run_id: 10,
-        status: "completed",
-      },
+        + {owner: "octo", repo: "demo", check_run_id: 10, status: "completed"},
     ),
   )
   assert_eq(updated_check.status, "completed", "check_runs.update status")

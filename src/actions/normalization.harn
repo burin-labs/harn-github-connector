@@ -13,13 +13,11 @@ pub fn __typed_workflow_dispatch(
   resolved,
 ) -> GithubConnectorResult<GithubWorkflowDispatchReceipt> {
   if resolved?.run_id == nil || trim(to_string(resolved?.head_sha ?? "")) == ""
-    || trim(
-    to_string(resolved?.event ?? ""),
-  )
-    == ""
+    || trim(to_string(resolved?.event ?? ""))
+      == ""
     || trim(to_string(resolved?.workflow_path ?? "")) == ""
     || trim(to_string(resolved?.run_url ?? ""))
-    == "" {
+      == "" {
     return __err(
       "invalid_response",
       "github.actions.workflow_dispatch could not prove an exact run identity",
@@ -53,10 +51,8 @@ pub fn __typed_workflow_dispatch(
 pub fn __typed_workflow_run(repo, run) {
   const id = __actions_run_id(run?.id)
   if type_of(run) != "dict" || id == nil || trim(to_string(run?.status ?? "")) == ""
-    || trim(
-    to_string(run?.event ?? ""),
-  )
-    == ""
+    || trim(to_string(run?.event ?? ""))
+      == ""
     || trim(to_string(run?.path ?? "")) == ""
     || trim(to_string(run?.head_sha ?? "")) == "" {
     return __err("invalid_response", "github.actions.run response omitted exact run evidence")
@@ -113,10 +109,8 @@ pub fn __typed_workflow_run(repo, run) {
 
 pub fn __typed_workflow_job(job) -> GithubConnectorResult<GithubWorkflowJob> {
   if type_of(job) != "dict" || job?.id == nil || job?.run_id == nil
-    || trim(
-    to_string(job?.name ?? ""),
-  )
-    == ""
+    || trim(to_string(job?.name ?? ""))
+      == ""
     || trim(to_string(job?.status ?? "")) == ""
     || type_of(job?.steps ?? []) != "list" {
     return __err("invalid_response", "github.actions.run_jobs response contained a malformed job")
@@ -124,10 +118,8 @@ pub fn __typed_workflow_job(job) -> GithubConnectorResult<GithubWorkflowJob> {
   let steps: list<GithubWorkflowStep> = []
   for step in job?.steps ?? [] {
     if step?.number == nil || trim(to_string(step?.name ?? "")) == ""
-      || trim(
-      to_string(step?.status ?? ""),
-    )
-      == "" {
+      || trim(to_string(step?.status ?? ""))
+        == "" {
       return __err(
         "invalid_response",
         "github.actions.run_jobs response contained a malformed step",
@@ -135,19 +127,19 @@ pub fn __typed_workflow_job(job) -> GithubConnectorResult<GithubWorkflowJob> {
     }
     steps = steps
       + [
-      {
-        number: to_int(step.number),
-        name: to_string(step.name),
-        status: lowercase(to_string(step.status)),
-        conclusion: if step?.conclusion == nil {
-          nil
-        } else {
-          lowercase(to_string(step.conclusion))
+        {
+          number: to_int(step.number),
+          name: to_string(step.name),
+          status: lowercase(to_string(step.status)),
+          conclusion: if step?.conclusion == nil {
+            nil
+          } else {
+            lowercase(to_string(step.conclusion))
+          },
+          started_at: step?.started_at,
+          completed_at: step?.completed_at,
         },
-        started_at: step?.started_at,
-        completed_at: step?.completed_at,
-      },
-    ]
+      ]
   }
   return Ok(
     {

@@ -52,10 +52,7 @@ fn upsert_request() -> GithubPullRequestUpsertRequest {
 
 fn converging_upsert_request() -> GithubPullRequestUpsertRequest {
   return upsert_request()
-    + {
-    previous_head_oid: PREVIOUS_HEAD_OID,
-    polling: {interval_ms: 0, max_attempts: 3},
-  }
+    + {previous_head_oid: PREVIOUS_HEAD_OID, polling: {interval_ms: 0, max_attempts: 3}}
 }
 
 fn list_url() -> string {
@@ -205,9 +202,7 @@ pipeline test_upsert_rejects_an_unrelated_head_without_retry(harness: Harness, t
 pipeline test_upsert_rejects_changed_pull_identity_without_mutation(harness: Harness, task) {
   harness.testing.http_mock_clear()
   const wrong_identity = pull(43, "Old title", HEAD_OID)
-    + {
-    head: pull(43, "Old title", HEAD_OID).head + {ref: "third-party-branch"},
-  }
+    + {head: pull(43, "Old title", HEAD_OID).head + {ref: "third-party-branch"}}
   harness.testing.http_mock(
     "GET",
     list_url(),

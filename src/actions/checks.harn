@@ -124,9 +124,7 @@ fn __finalize_checks_payload(harness: Harness, owner, repo, payload, attempts, s
   const envelope = __checks_envelope_from_payload(true, state, payload, attempts, false)
   if state == "failing" && (opts?.include_logs ?? false) {
     return envelope
-      + {
-      logs: __failing_check_logs(harness, owner, repo, envelope.failing_checks, opts, auth),
-    }
+      + {logs: __failing_check_logs(harness, owner, repo, envelope.failing_checks, opts, auth)}
   }
   return envelope
 }

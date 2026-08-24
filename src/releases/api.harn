@@ -49,10 +49,10 @@ pub fn github_release_edit_body(
 ) -> GithubConnectorResult<GithubReleaseEditReceipt> {
   const args = __request_args(request).removing("lease")
     + {
-    expected_release_id: request.lease.release_id,
-    expected_tag_ref_oid: request.lease.tag_ref_oid,
-    expected_tag_target_oid: request.lease.tag_target_oid,
-  }
+      expected_release_id: request.lease.release_id,
+      expected_tag_ref_oid: request.lease.tag_ref_oid,
+      expected_tag_target_oid: request.lease.tag_target_oid,
+    }
   return call_typed(harness, "github.release.edit_body", args, GithubReleaseEditReceipt)
 }
 

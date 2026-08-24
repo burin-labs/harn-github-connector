@@ -10,10 +10,7 @@ fn __graphql_checks_scope_denied(errors) {
     const encoded = lowercase(json_stringify(error))
     const names_rollup = contains(encoded, "statuscheckrollup")
     const names_permission = contains(encoded, "resource not accessible by integration")
-      || contains(
-      encoded,
-      "forbidden",
-    )
+      || contains(encoded, "forbidden")
     if names_rollup && names_permission {
       return true
     }
@@ -84,25 +81,25 @@ fn __github_pr_checks_actions_fallback(
     }
     checks = checks
       + [
-      __typed_check_run(
-        {
-          id: run?.id,
-          name: run?.name ?? run?.path ?? "",
-          status: run?.status,
-          conclusion: run?.conclusion,
-          head_sha: observed_head,
-          started_at: run?.run_started_at,
-          completed_at: if lowercase(to_string(run?.status ?? "")) == "completed" {
-            run?.updated_at
-          } else {
-            nil
+        __typed_check_run(
+          {
+            id: run?.id,
+            name: run?.name ?? run?.path ?? "",
+            status: run?.status,
+            conclusion: run?.conclusion,
+            head_sha: observed_head,
+            started_at: run?.run_started_at,
+            completed_at: if lowercase(to_string(run?.status ?? "")) == "completed" {
+              run?.updated_at
+            } else {
+              nil
+            },
+            details_url: run?.html_url,
+            html_url: run?.html_url,
+            external_id: "actions-workflow-run:" + to_string(run?.id ?? ""),
           },
-          details_url: run?.html_url,
-          html_url: run?.html_url,
-          external_id: "actions-workflow-run:" + to_string(run?.id ?? ""),
-        },
-      ),
-    ]
+        ),
+      ]
   }
   const rollup = __check_rollup(checks)
   return {

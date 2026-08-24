@@ -50,11 +50,11 @@ pub fn github_close_pr(
     "issues.update",
     auth
       + {
-      owner: request.owner,
-      repo: request.repo,
-      issue_number: request.pull_number,
-      state: "closed",
-    },
+        owner: request.owner,
+        repo: request.repo,
+        issue_number: request.pull_number,
+        state: "closed",
+      },
   )
   if is_err(updated) {
     return __close_pr_envelope(false, request.pull_number, comment_posted, nil, unwrap_err(updated))

@@ -7,7 +7,7 @@ pub fn __typed_commit_signature(repo, commit, surface) {
   const verification = commit?.commit?.verification
   if type_of(commit) != "dict" || trim(to_string(commit?.sha ?? "")) == ""
     || type_of(verification)
-    != "dict"
+      != "dict"
     || type_of(verification?.verified) != "bool"
     || trim(to_string(verification?.reason ?? "")) == "" {
     return __err("invalid_response", surface + " response omitted verification evidence")
@@ -28,7 +28,7 @@ pub fn __typed_commit_signature(repo, commit, surface) {
 pub fn __typed_pull_request_commit(repo, commit) {
   if type_of(commit) != "dict" || trim(to_string(commit?.sha ?? "")) == ""
     || commit?.commit?.message
-    == nil {
+      == nil {
     return __err("invalid_response", "github.pr.commits response omitted commit sha or message")
   }
   const signature = __typed_commit_signature(repo, commit, "github.pr.commits")

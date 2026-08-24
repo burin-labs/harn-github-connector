@@ -59,14 +59,14 @@ pub fn pr_edit_result(
 ) -> GithubPullRequestEditReceipt {
   const receipt: GithubPullRequestEditReceipt = summary
     + {
-    ok: true,
-    updated: true,
-    body: pull?.body ?? "",
-    user: __pr_edit_user(pull?.user),
-    created_at: pull?.created_at,
-    updated_at: pull?.updated_at,
-    closed_at: pull?.closed_at,
-    merged_at: pull?.merged_at,
-  }
+      ok: true,
+      updated: true,
+      body: pull?.body ?? "",
+      user: __pr_edit_user(pull?.user),
+      created_at: pull?.created_at,
+      updated_at: pull?.updated_at,
+      closed_at: pull?.closed_at,
+      merged_at: pull?.merged_at,
+    }
   return receipt
 }

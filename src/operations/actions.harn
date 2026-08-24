@@ -40,9 +40,7 @@ pub fn __actions_workflow_dispatch(harness: Harness, args, cfg) {
     __github_api_url(
       cfg.api_base_url,
       "/repos/" + args.owner + "/" + args.repo + "/actions/workflows/"
-        + url_encode(
-        to_string(workflow_id),
-      )
+        + url_encode(to_string(workflow_id))
         + "/dispatches",
     ),
     body,
@@ -56,9 +54,7 @@ pub fn __actions_workflow_runs_list(harness: Harness, args, cfg) {
     "/repos/" + args.owner + "/" + args.repo + "/actions/runs"
   } else {
     "/repos/" + args.owner + "/" + args.repo + "/actions/workflows/"
-      + url_encode(
-      to_string(workflow_id),
-    )
+      + url_encode(to_string(workflow_id))
       + "/runs"
   }
   return __github_json(
@@ -114,9 +110,7 @@ pub fn __actions_workflow_run_jobs(harness: Harness, args, cfg) {
     __github_api_url(
       cfg.api_base_url,
       "/repos/" + args.owner + "/" + args.repo + "/actions/runs/" + to_string(run_id) + "/jobs"
-        + __workflow_run_jobs_query(
-        args,
-      ),
+        + __workflow_run_jobs_query(args),
     ),
     nil,
     cfg,
@@ -179,10 +173,8 @@ fn __runner_scope_prefix(args) {
     return Ok("/orgs/" + url_encode(to_string(org)))
   }
   if args?.owner != nil && trim(to_string(args.owner)) != "" && args?.repo != nil
-    && trim(
-    to_string(args.repo),
-  )
-    != "" {
+    && trim(to_string(args.repo))
+      != "" {
     return Ok("/repos/" + to_string(args.owner) + "/" + to_string(args.repo))
   }
   return __err("schema_drift", "self-hosted runner methods require `org`, or `owner` + `repo`")
@@ -221,7 +213,7 @@ pub fn __actions_runners_dispatch(harness: Harness, method, args, cfg) {
   }
   if method == "actions.runner_groups.get" || method == "actions.runner_groups.update"
     || method
-    == "actions.runner_groups.delete" {
+      == "actions.runner_groups.delete" {
     const org = args?.org
     const group_id = args?.runner_group_id ?? args?.group_id ?? args?.id
     if org == nil || trim(to_string(org)) == "" || group_id == nil {

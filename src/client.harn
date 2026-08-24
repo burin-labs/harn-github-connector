@@ -98,10 +98,7 @@ pub fn invalidate_installation_token(runtime: HarnessRuntime, installation_id) {
 
 pub fn __outbound_config(harness: Harness, args) {
   const api_base_url = args?.api_base_url
-    ?? harness.env.get_or(
-    "GITHUB_API_BASE_URL",
-    GITHUB_API_BASE_URL,
-  )
+    ?? harness.env.get_or("GITHUB_API_BASE_URL", GITHUB_API_BASE_URL)
   const base_check = __validate_api_base_url(api_base_url)
   if is_err(base_check) {
     return base_check
@@ -113,10 +110,8 @@ pub fn __outbound_config(harness: Harness, args) {
   const direct_token = configured_installation_token ?? args?.token
   if direct_token != nil && trim(to_string(direct_token)) != "" {
     const auth_identity = if configured_installation_token != nil
-      && trim(
-      to_string(configured_installation_token),
-    )
-      != "" {
+      && trim(to_string(configured_installation_token))
+        != "" {
       "github_app"
     } else {
       "unknown"
@@ -139,10 +134,8 @@ pub fn __outbound_config(harness: Harness, args) {
   const app_id = args?.app_id ?? harness.env.get("GITHUB_APP_ID")
   const installation_id = args?.installation_id ?? harness.env.get("GITHUB_INSTALLATION_ID")
   if app_id == nil || trim(to_string(app_id)) == "" || installation_id == nil
-    || trim(
-    to_string(installation_id),
-  )
-    == "" {
+    || trim(to_string(installation_id))
+      == "" {
     if __allow_gh_auth_fallback(harness.env, args) {
       const gh_token = __gh_auth_token(harness.env, harness.process, args)
       if is_err(gh_token) {
@@ -192,10 +185,10 @@ pub fn __outbound_config(harness: Harness, args) {
   return Ok(
     resolved
       + {
-      installation_token: to_string(token_result),
-      token_mode: "jwt",
-      auth_identity: "github_app",
-    },
+        installation_token: to_string(token_result),
+        token_mode: "jwt",
+        auth_identity: "github_app",
+      },
   )
 }
 
@@ -326,10 +319,7 @@ pub fn __is_disallowed_host(host_lc) {
     return true
   }
   if ends_with(host_lc, ".localhost") || ends_with(host_lc, ".local")
-    || ends_with(
-    host_lc,
-    ".internal",
-  ) {
+    || ends_with(host_lc, ".internal") {
     return true
   }
   if host_lc == "::1" || host_lc == "0:0:0:0:0:0:0:1" {
@@ -543,9 +533,7 @@ pub fn __author_mode_requires_identity(mode, cfg, required, surface) {
   return __err(
     "author_mode",
     surface + " with author_mode=" + mode + " requires `" + required + "` authentication, got `"
-      + to_string(
-      cfg?.auth_identity ?? cfg?.token_mode ?? "unknown",
-    )
+      + to_string(cfg?.auth_identity ?? cfg?.token_mode ?? "unknown")
       + "`",
   )
 }
@@ -687,15 +675,15 @@ pub fn __api_call_author_mode_body(args, method, path, cfg) {
 pub fn __pulls_update_body(args) {
   const context_fields = __request_context_keys()
     + [
-    "owner",
-    "repo",
-    "repository",
-    "repo_ref",
-    "repo_full_name",
-    "number",
-    "pr_number",
-    "pull_number",
-  ]
+      "owner",
+      "repo",
+      "repository",
+      "repo_ref",
+      "repo_full_name",
+      "number",
+      "pr_number",
+      "pull_number",
+    ]
   return pr_edit_body(args, context_fields)
 }
 
@@ -1016,10 +1004,7 @@ pub fn __github_request_error(clock: HarnessClock, response) {
     const lowered = lowercase(message)
     if contains(lowered, "author") || contains(lowered, "committer")
       || (contains(lowered, "commit")
-      && contains(
-      lowered,
-      "email",
-    )) {
+        && contains(lowered, "email")) {
       return __err(
         "restricted_commit_author",
         "GitHub rejected the configured commit author/committer: " + message,
@@ -1050,10 +1035,7 @@ pub fn __github_error_code(clock: HarnessClock, response) {
     }
     const message = lowercase(__github_error_message(response))
     if contains(message, "resource not accessible by integration") || contains(message, "scope")
-      || contains(
-      message,
-      "permission",
-    ) {
+      || contains(message, "permission") {
       return "missing_scopes"
     }
     return "permission"

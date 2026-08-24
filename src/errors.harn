@@ -12,7 +12,7 @@ pub fn __err(code, message, details = nil) {
 fn __error_category(code) {
   if code == "auth" || code == "unauthorized" || code == "missing_credentials"
     || code
-    == "missing_private_key"
+      == "missing_private_key"
     || code == "missing_app_id" {
     return "auth"
   }

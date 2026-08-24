@@ -134,11 +134,7 @@ pipeline test_pr_commits_reads_every_page_on_one_stable_head(harness: Harness, t
     github_pr_commits(
       harness,
       auth() + {per_page: 2, expected_head_oid: head_sha}
-        + {
-        owner: "octo-org",
-        repo: "octo-repo",
-        pull_number: 42,
-      },
+        + {owner: "octo-org", repo: "octo-repo", pull_number: 42},
     ),
   )
   assert_eq(result.pull_number, 42, "receipt is bound to the exact pull request")
@@ -379,13 +375,13 @@ pipeline test_actions_runs_returns_closed_typed_envelope(harness: Harness, task)
       "github.actions.runs",
       auth()
         + {
-        repo: "octo-org/octo-repo",
-        workflow_id: "ci.yml",
-        branch: "main",
-        event: "merge_group",
-        per_page: 25,
-        page: 2,
-      },
+          repo: "octo-org/octo-repo",
+          workflow_id: "ci.yml",
+          branch: "main",
+          event: "merge_group",
+          per_page: 25,
+          page: 2,
+        },
     ),
   )
   assert_eq(result.repo, "octo-org/octo-repo", "run list is repository-bound")
@@ -404,13 +400,13 @@ pipeline test_actions_runs_returns_closed_typed_envelope(harness: Harness, task)
     "github.actions.runs",
     auth()
       + {
-      repo: "octo-org/octo-repo",
-      workflow_id: "ci.yml",
-      branch: "main",
-      event: "merge_group",
-      per_page: 25,
-      page: 2,
-    },
+        repo: "octo-org/octo-repo",
+        workflow_id: "ci.yml",
+        branch: "main",
+        event: "merge_group",
+        per_page: 25,
+        page: 2,
+      },
   )
   assert(is_err(malformed), "malformed run evidence fails closed")
   assert_eq(unwrap_err(malformed).code, "invalid_response", "run shape is validated once")

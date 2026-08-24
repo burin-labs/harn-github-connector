@@ -141,10 +141,7 @@ pipeline test_create_signed_commit_rejects_overlapping_changes_before_network(
   ]
   const deletions: list<GithubCommitFileDeletion> = [{path: "VERSION"}]
   const overlapping: GithubSignedCommitRequest = request("https://api.github.test")
-    + {
-    additions: additions,
-    deletions: deletions,
-  }
+    + {additions: additions, deletions: deletions}
   const result = github_create_signed_commit(harness, overlapping)
   assert(is_err(result), "overlapping change rejected")
   assert_eq(unwrap_err(result).code, "schema_drift", "overlap error code")

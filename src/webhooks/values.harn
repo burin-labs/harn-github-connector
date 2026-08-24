@@ -101,42 +101,35 @@ pub fn __occurred_at(event_kind, payload, raw) {
   }
   if event_kind == "pull_request_review" {
     return payload?.review?.submitted_at ?? payload?.review?.updated_at
-      ?? payload?.pull_request
-      ?.updated_at
+      ?? payload?.pull_request?.updated_at
       ?? payload?.pull_request?.created_at
   }
   if event_kind == "workflow_run" {
     return payload?.workflow_run?.updated_at ?? payload?.workflow_run?.created_at
-      ?? payload
-      ?.workflow_run?.run_started_at
+      ?? payload?.workflow_run?.run_started_at
   }
   if event_kind == "check_suite" {
     return payload?.check_suite?.updated_at ?? payload?.check_suite?.created_at
   }
   if event_kind == "deployment_status" {
     return payload?.deployment_status?.created_at ?? payload?.deployment_status?.updated_at
-      ?? payload
-      ?.deployment?.created_at
+      ?? payload?.deployment?.created_at
   }
   if event_kind == "status" {
     return payload?.updated_at ?? payload?.created_at
   }
   if event_kind == "merge_group" {
     return payload?.merge_group?.updated_at ?? payload?.merge_group?.created_at
-      ?? payload?.merge_group
-      ?.head_commit?.timestamp
+      ?? payload?.merge_group?.head_commit?.timestamp
   }
   if event_kind == "installation" || event_kind == "installation_repositories" {
     return payload?.installation?.updated_at ?? payload?.installation?.created_at
-      ?? payload
-      ?.installation?.suspended_at
+      ?? payload?.installation?.suspended_at
   }
   if event_kind == "release" {
     return payload?.release?.published_at ?? payload?.release?.updated_at
-      ?? payload?.release
-      ?.created_at
+      ?? payload?.release?.created_at
   }
   return payload?.check_run?.completed_at ?? payload?.check_run?.started_at
-    ?? payload?.check_run
-    ?.created_at
+    ?? payload?.check_run?.created_at
 }

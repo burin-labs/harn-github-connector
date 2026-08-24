@@ -97,13 +97,13 @@ pub fn payload_schema() {
 pub fn init(_harness: Harness, ctx = nil) {
   const next = __state()
     + {
-    initialized: true,
-    ctx: if type_of(ctx) == "dict" {
-      ctx
-    } else {
-      {}
-    },
-  }
+      initialized: true,
+      ctx: if type_of(ctx) == "dict" {
+        ctx
+      } else {
+        {}
+      },
+    }
   __set_state(next)
   return next
 }
@@ -212,7 +212,7 @@ fn __reject_err(err) {
   const message = err?.message ?? "request rejected"
   const status = if code == "missing_signature" || code == "invalid_signature"
     || code
-    == "missing_secret" {
+      == "missing_secret" {
     401
   } else {
     400
@@ -245,8 +245,7 @@ fn __signing_secret(secrets: HarnessSecrets, raw) {
   if binding_id != nil {
     const binding = bindings.get(binding_id)
     const binding_secret = binding?.signing_secret ?? binding?.secrets?.signing_secret
-      ?? binding
-      ?.config?.signing_secret
+      ?? binding?.config?.signing_secret
     if binding_secret != nil && trim(to_string(binding_secret)) != "" {
       return to_string(binding_secret)
     }
@@ -277,8 +276,7 @@ fn __signing_secret_id(raw) {
 
 fn __binding_signing_secret_id(binding) {
   const id = binding?.signing_secret_id ?? binding?.signing_secret_secret
-    ?? binding?.secrets
-    ?.signing_secret_id
+    ?? binding?.secrets?.signing_secret_id
     ?? binding?.config?.signing_secret_id
     ?? binding?.config?.signing_secret_secret
     ?? binding?.config?.secret_ids?.signing_secret
@@ -380,8 +378,7 @@ fn __dedupe_key(event_kind, payload, repo, delivery_id) {
   const action = payload?.action ?? ""
   const resource_id = to_string(
     payload?.pull_request?.id ?? payload?.issue?.id ?? payload?.comment?.id ?? payload?.review?.id
-      ?? payload
-      ?.workflow_run?.id
+      ?? payload?.workflow_run?.id
       ?? payload?.deployment_status?.id
       ?? payload?.check_run?.id
       ?? payload?.check_suite?.id
