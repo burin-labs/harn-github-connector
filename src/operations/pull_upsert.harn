@@ -184,10 +184,6 @@ pub fn __github_pr_upsert(harness: Harness, args, cfg) {
     "updated"
   }
   const receipt: GithubPullRequestUpsertReceipt = pull
-    + {
-    action: action,
-    created: action == "created",
-    updated: action == "updated",
-  }
+    + {action: action, created: action == "created", updated: action == "updated"}
   return receipt
 }

@@ -24,13 +24,13 @@ pub fn __github_actions_workflow_dispatch(harness: Harness, args, cfg) {
     harness,
     args
       + {
-      owner: r.owner,
-      repo: r.name,
-      workflow_id: workflow_id,
-      ref: ref,
-      inputs: args?.inputs ?? {},
-      options: cfg,
-    },
+        owner: r.owner,
+        repo: r.name,
+        workflow_id: workflow_id,
+        ref: ref,
+        inputs: args?.inputs ?? {},
+        options: cfg,
+      },
   )
   if !resolved.ok {
     return Err(
@@ -72,7 +72,7 @@ pub fn __github_actions_runs(harness: Harness, args, cfg) {
   }
   if type_of(response) != "dict" || response?.total_count == nil
     || type_of(response?.workflow_runs)
-    != "list" {
+      != "list" {
     return __err("invalid_response", "github.actions.runs expected total_count and workflow_runs")
   }
   const total_count = __nonnegative_decimal(response.total_count)
@@ -250,9 +250,7 @@ pub fn __github_actions_logs(harness: Harness, args, cfg) {
     __github_api_url(
       cfg.api_base_url,
       "/repos/" + r.owner + "/" + r.name + "/actions/runs/" + to_string(run_id) + "/logs"
-        + __pagination_query(
-        args,
-      ),
+        + __pagination_query(args),
     ),
     cfg,
     args?.accept ?? "application/vnd.github+json",

@@ -78,13 +78,13 @@ pipeline test_shared_http_policy_smoke(harness: Harness, task) {
       "issues.create_comment",
       auth
         + {
-        owner: "octo-org",
-        repo: "octo-repo",
-        issue_number: 9,
-        body: "hello",
-        retry: retry_opts,
-        idempotency_key: "comment-9",
-      },
+          owner: "octo-org",
+          repo: "octo-repo",
+          issue_number: 9,
+          body: "hello",
+          retry: retry_opts,
+          idempotency_key: "comment-9",
+        },
     ),
   )
   const idempotent_calls = harness.testing.http_mock_calls({include_sensitive: true})

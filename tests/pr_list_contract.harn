@@ -41,9 +41,9 @@ pipeline test_pr_list_qualifies_bare_head_to_repository_owner(harness: Harness, 
       "github.pr.list",
       auth(base)
         + {
-        repo: "octo-org/octo-repo",
-        filters: {state: "open", head: "automation/bump", base: "main", per_page: 10},
-      },
+          repo: "octo-org/octo-repo",
+          filters: {state: "open", head: "automation/bump", base: "main", per_page: 10},
+        },
     ),
   )
   assert_eq(len(pulls), 1, "qualified head returns the intended PR")
@@ -68,10 +68,7 @@ pipeline test_pr_list_preserves_explicit_fork_owner(harness: Harness, task) {
       harness,
       "github.pr.list",
       auth(base)
-        + {
-        repo: "octo-org/octo-repo",
-        filters: {state: "open", head: "fork-user:feature/safe"},
-      },
+        + {repo: "octo-org/octo-repo", filters: {state: "open", head: "fork-user:feature/safe"}},
     ),
   )
   assert_eq(pulls.map({ pull -> pull.number }), [10], "explicit fork owner is preserved")
@@ -100,10 +97,7 @@ pipeline test_pr_list_merged_maps_to_closed_and_filters_unmerged_prs(harness: Ha
       harness,
       "github.pr.list",
       auth(base)
-        + {
-        repo: "octo-org/octo-repo",
-        filters: {state: "merged", base: "main", per_page: 30},
-      },
+        + {repo: "octo-org/octo-repo", filters: {state: "merged", base: "main", per_page: 30}},
     ),
   )
   assert_eq(pulls.map({ pull -> pull.number }), [8], "only actually merged PRs survive")

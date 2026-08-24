@@ -416,9 +416,7 @@ pub fn __call_raw(harness: Harness, method, args = {}) {
       __github_api_url(
         cfg.api_base_url,
         "/repos/" + args.owner + "/" + args.repo + "/contents/"
-          + __trim_leading_slash(
-          args.path ?? "",
-        )
+          + __trim_leading_slash(args.path ?? "")
           + __ref_query(args),
       ),
       nil,

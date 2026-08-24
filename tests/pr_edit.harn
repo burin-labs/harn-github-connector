@@ -65,12 +65,12 @@ pipeline test_pr_edit(harness: Harness, task) {
       "github.pr.edit",
       auth
         + {
-        repo: "octo-org/octo-repo",
-        number: 42,
-        title: "Release title",
-        body: "Release body",
-        maintainer_can_modify: false,
-      },
+          repo: "octo-org/octo-repo",
+          number: 42,
+          title: "Release title",
+          body: "Release body",
+          maintainer_can_modify: false,
+        },
     ),
   )
   assert_eq(edited.number, 42, "typed edit keeps PR number")

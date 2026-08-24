@@ -23,13 +23,13 @@ pub fn github_dispatch_workflow_and_resolve_run(
     "actions.workflow_dispatch",
     auth
       + {
-      owner: request.owner,
-      repo: request.repo,
-      workflow_id: workflow_id,
-      ref: request.ref ?? "main",
-      inputs: request.inputs ?? {},
-      return_run_details: true,
-    },
+        owner: request.owner,
+        repo: request.repo,
+        workflow_id: workflow_id,
+        ref: request.ref ?? "main",
+        inputs: request.inputs ?? {},
+        return_run_details: true,
+      },
   )
   if is_err(dispatch) {
     return __workflow_wait_envelope(
@@ -343,10 +343,10 @@ fn __workflow_wait_envelope(
     run_id: run_id,
     candidate_run_ids: candidate_run_ids
       ?? if run_id == nil {
-      []
-    } else {
-      [run_id]
-    },
+        []
+      } else {
+        [run_id]
+      },
     run_url: nil,
     workflow_id: workflow_id,
     workflow_path: nil,

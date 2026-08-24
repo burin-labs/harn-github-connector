@@ -34,9 +34,7 @@ fn run_ok(process: HarnessProcess, spec: dict) -> dict {
   const result = process.run(spec)
   if !result.success {
     throw "fixture command failed with exit " + to_string(result.exit_code) + ": "
-      + to_string(
-      result.stderr,
-    )
+      + to_string(result.stderr)
   }
   return result
 }

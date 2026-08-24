@@ -69,10 +69,8 @@ pub fn __github_pr_create(harness: Harness, args, cfg) {
   }
   const r = unwrap(repo)
   if trim(to_string(args?.title ?? "")) == "" || trim(to_string(args?.head ?? "")) == ""
-    || trim(
-    to_string(args?.base ?? ""),
-  )
-    == "" {
+    || trim(to_string(args?.base ?? ""))
+      == "" {
     return __err("schema_drift", "github.pr.create requires non-empty title, head, and base")
   }
   let request = {
@@ -203,9 +201,7 @@ pub fn __github_pr_files(harness: Harness, args, cfg) {
     __github_api_url(
       cfg.api_base_url,
       "/repos/" + r.owner + "/" + r.name + "/pulls/" + to_string(number) + "/files"
-        + __pagination_query(
-        args,
-      ),
+        + __pagination_query(args),
     ),
     nil,
     cfg,
@@ -437,9 +433,7 @@ pub fn __github_pr_checks(harness: Harness, args, cfg) {
     __github_api_url(
       cfg.api_base_url,
       "/repos/" + r.owner + "/" + r.name + "/commits/" + to_string(head_sha) + "/check-runs"
-        + __pagination_query(
-        args,
-      ),
+        + __pagination_query(args),
     ),
     nil,
     cfg,
@@ -888,28 +882,28 @@ pub fn __issues_create_with_template(harness: Harness, args, cfg) {
   }
   const labels = args?.labels
     ?? if type_of(template) == "dict" {
-    template?.labels
-  } else {
-    nil
-  }
+      template?.labels
+    } else {
+      nil
+    }
   if labels != nil {
     body["labels"] = labels
   }
   const assignees = args?.assignees
     ?? if type_of(template) == "dict" {
-    template?.assignees
-  } else {
-    nil
-  }
+      template?.assignees
+    } else {
+      nil
+    }
   if assignees != nil {
     body["assignees"] = assignees
   }
   const milestone = args?.milestone
     ?? if type_of(template) == "dict" {
-    template?.milestone
-  } else {
-    nil
-  }
+      template?.milestone
+    } else {
+      nil
+    }
   if milestone != nil {
     body["milestone"] = milestone
   }
@@ -1319,7 +1313,7 @@ fn __pulls_disable_auto_merge(harness: Harness, args, cfg) {
   }
   if post_head_oid != expected_head_oid || post_base_branch != base_branch
     || post_base_oid
-    != expected_base_oid {
+      != expected_base_oid {
     const compensated = __reenable_after_lost_disable(
       harness,
       cfg,
@@ -1369,9 +1363,7 @@ pub fn __repos_commit_pulls(harness: Harness, args, cfg) {
     __github_api_url(
       cfg.api_base_url,
       "/repos/" + r.owner + "/" + r.name + "/commits/" + url_encode(to_string(sha)) + "/pulls"
-        + __pagination_query(
-        args,
-      ),
+        + __pagination_query(args),
     ),
     nil,
     cfg,
@@ -1477,9 +1469,6 @@ fn __render_template(template, vars) {
 fn __graphql_errors_indicate_stale_head(errors) {
   const message = lowercase(json_stringify(errors ?? []))
   return contains(message, "expected head") || contains(message, "expectedheadoid")
-    || contains(
-    message,
-    "head oid",
-  )
+    || contains(message, "head oid")
     || contains(message, "head sha")
 }

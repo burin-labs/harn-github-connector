@@ -27,13 +27,13 @@ pipeline test_author_mode(harness: Harness, task) {
     "repos.create_or_update_file",
     app_auth
       + {
-      owner: "octo-org",
-      repo: "octo-repo",
-      path: "README.md",
-      message: "Fix identity",
-      content: base64_encode("hello\n"),
-      github_author_choice: human_choice,
-    },
+        owner: "octo-org",
+        repo: "octo-repo",
+        path: "README.md",
+        message: "Fix identity",
+        content: base64_encode("hello\n"),
+        github_author_choice: human_choice,
+      },
   )
   harness.testing.http_mock(
     "PUT",
@@ -49,26 +49,26 @@ pipeline test_author_mode(harness: Harness, task) {
     "repos.create_or_update_file",
     app_auth
       + {
-      owner: "octo-org",
-      repo: "octo-repo",
-      path: "BOT.md",
-      message: "Bot-authored update",
-      content: base64_encode("bot\n"),
-      github_author_choice: bot_choice,
-    },
+        owner: "octo-org",
+        repo: "octo-repo",
+        path: "BOT.md",
+        message: "Bot-authored update",
+        content: base64_encode("bot\n"),
+        github_author_choice: bot_choice,
+      },
   )
   const human_pr_with_app = call(
     harness,
     "pulls.create",
     app_auth
       + {
-      owner: "octo-org",
-      repo: "octo-repo",
-      title: "Human PR",
-      head: "feature/human",
-      base: "main",
-      github_author_choice: human_choice,
-    },
+        owner: "octo-org",
+        repo: "octo-repo",
+        title: "Human PR",
+        head: "feature/human",
+        base: "main",
+        github_author_choice: human_choice,
+      },
   )
   assert(is_err(human_pr_with_app), "human PR creation must reject app auth")
   assert_eq(unwrap_err(human_pr_with_app).code, "author_mode", "human PR app-auth error code")
@@ -77,13 +77,13 @@ pipeline test_author_mode(harness: Harness, task) {
     "pulls.create",
     user_auth
       + {
-      owner: "octo-org",
-      repo: "octo-repo",
-      title: "Bot PR",
-      head: "feature/bot",
-      base: "main",
-      github_author_choice: bot_choice,
-    },
+        owner: "octo-org",
+        repo: "octo-repo",
+        title: "Bot PR",
+        head: "feature/bot",
+        base: "main",
+        github_author_choice: bot_choice,
+      },
   )
   assert(is_err(bot_pr_with_user), "bot PR creation must reject user auth")
   assert_eq(unwrap_err(bot_pr_with_user).code, "author_mode", "bot PR user-auth error code")
@@ -101,14 +101,14 @@ pipeline test_author_mode(harness: Harness, task) {
     "pulls.create",
     user_auth
       + {
-      owner: "octo-org",
-      repo: "octo-repo",
-      title: "Human PR",
-      head: "feature/human",
-      base: "main",
-      body: "Open the change.",
-      github_author_choice: human_choice,
-    },
+        owner: "octo-org",
+        repo: "octo-repo",
+        title: "Human PR",
+        head: "feature/human",
+        base: "main",
+        body: "Open the change.",
+        github_author_choice: human_choice,
+      },
   )
   harness.testing.http_mock(
     "PUT",
@@ -124,13 +124,13 @@ pipeline test_author_mode(harness: Harness, task) {
     "repos.create_or_update_file",
     app_auth
       + {
-      owner: "octo-org",
-      repo: "octo-repo",
-      path: "restricted.txt",
-      message: "Restricted author",
-      content: base64_encode("restricted\n"),
-      github_author_choice: human_choice,
-    },
+        owner: "octo-org",
+        repo: "octo-repo",
+        path: "restricted.txt",
+        message: "Restricted author",
+        content: base64_encode("restricted\n"),
+        github_author_choice: human_choice,
+      },
   )
   assert(is_err(restricted), "restricted author response must fail")
   assert_eq(unwrap_err(restricted).code, "restricted_commit_author", "restricted author error code")

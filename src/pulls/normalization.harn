@@ -127,12 +127,12 @@ pub fn __typed_pr_summary(pull) -> GithubPullRequestSummary {
 pub fn __typed_pr_details(pull) -> GithubPullRequestDetails {
   const details: GithubPullRequestDetails = __typed_pr_summary(pull)
     + {
-    body: pull?.body ?? "",
-    user: __typed_user(pull?.user),
-    created_at: pull?.created_at,
-    updated_at: pull?.updated_at,
-    closed_at: pull?.closed_at,
-  }
+      body: pull?.body ?? "",
+      user: __typed_user(pull?.user),
+      created_at: pull?.created_at,
+      updated_at: pull?.updated_at,
+      closed_at: pull?.closed_at,
+    }
   return details
 }
 
@@ -155,10 +155,7 @@ pub fn __typed_pr_view(pull, protection, queue) -> GithubPullRequestView {
     },
   )
   const view: GithubPullRequestView = summary
-    + {
-    branch_protection: protection,
-    queue_membership: queue,
-  }
+    + {branch_protection: protection, queue_membership: queue}
   return view
 }
 
@@ -186,10 +183,8 @@ pub fn __typed_user(user) -> GithubPullRequestUser? {
 
 pub fn __validate_pull_response(pull, surface) {
   if type_of(pull) != "dict" || pull?.number == nil || trim(to_string(pull?.title ?? "")) == ""
-    || trim(
-    to_string(pull?.state ?? ""),
-  )
-    == ""
+    || trim(to_string(pull?.state ?? ""))
+      == ""
     || trim(to_string(pull?.base?.ref ?? "")) == ""
     || trim(to_string(pull?.head?.ref ?? "")) == ""
     || trim(to_string(pull?.head?.sha ?? "")) == "" {
@@ -198,9 +193,9 @@ pub fn __validate_pull_response(pull, surface) {
   const merge_commit_oid = __pull_merge_commit_oid(pull)
   if __pull_is_merged(pull)
     && (type_of(pull?.merged_at) != "string"
-    || trim(pull.merged_at) == ""
-    || merge_commit_oid == nil
-    || len(regex_captures("^[0-9a-fA-F]{40}$", merge_commit_oid)) == 0) {
+      || trim(pull.merged_at) == ""
+      || merge_commit_oid == nil
+      || len(regex_captures("^[0-9a-fA-F]{40}$", merge_commit_oid)) == 0) {
     return __err(
       "invalid_response",
       surface + " response omitted required merged pull-request evidence",
@@ -234,10 +229,8 @@ pub fn __validate_pull_identity(pull, surface) {
 
 pub fn __typed_pr_file(file) {
   if type_of(file) != "dict" || trim(to_string(file?.sha ?? "")) == ""
-    || trim(
-    to_string(file?.filename ?? ""),
-  )
-    == ""
+    || trim(to_string(file?.filename ?? ""))
+      == ""
     || trim(to_string(file?.status ?? "")) == ""
     || file?.additions == nil
     || file?.deletions == nil
@@ -428,7 +421,7 @@ pub fn __classify_pr_state(pull, rollup, queue) {
 pub fn __typed_merge_queue_entry(entry) {
   if type_of(entry) != "dict" || trim(to_string(entry?.id ?? "")) == ""
     || entry?.pullRequest?.number
-    == nil
+      == nil
     || entry?.position == nil
     || trim(to_string(entry?.state ?? "")) == "" {
     return __err("invalid_response", "github merge queue entry omitted required evidence")

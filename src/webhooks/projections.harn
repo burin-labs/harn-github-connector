@@ -497,11 +497,7 @@ pub fn __push_source_ref(payload) {
     return nil
   }
   const url = payload?.raw?.compare
-    ?? __branch_or_commit_url(
-    payload,
-    payload?.ref_name,
-    payload?.after,
-  )
+    ?? __branch_or_commit_url(payload, payload?.ref_name, payload?.after)
   return __source_ref(
     "github.push",
     id,
@@ -671,10 +667,7 @@ pub fn __triage_event(event_kind, payload, source, source_refs, dedupe_key, occu
     privacy: __privacy(payload),
     privacy_flags: __privacy_flags(payload),
     action_intents: __read_action_intents(source, source_refs)
-      + __host_task_action_intents(
-      source,
-      source_refs,
-    )
+      + __host_task_action_intents(source, source_refs)
       + __triage_write_action_intents(event_kind, payload),
   }
 }
@@ -725,10 +718,7 @@ pub fn __job_event(event_kind, payload, source, source_refs, dedupe_key, occurre
     privacy: __privacy(payload),
     privacy_flags: __privacy_flags(payload),
     action_intents: __read_action_intents(source, source_refs)
-      + __host_task_action_intents(
-      source,
-      source_refs,
-    )
+      + __host_task_action_intents(source, source_refs)
       + __job_write_action_intents(event_kind, payload),
   }
 }
@@ -938,31 +928,23 @@ pub fn __privacy_flags(payload) {
 pub fn __triage_summary(event_kind, payload) {
   if event_kind == "issues" {
     return "Issue #" + to_string(payload?.issue?.number ?? "") + " "
-      + to_string(
-      payload?.action ?? "updated",
-    )
+      + to_string(payload?.action ?? "updated")
       + ": "
       + to_string(payload?.issue?.title ?? "")
   }
   if event_kind == "issue_comment" {
     return "Comment on issue #" + to_string(payload?.issue?.number ?? "") + ": "
-      + __truncate_summary(
-      payload?.comment?.body,
-    )
+      + __truncate_summary(payload?.comment?.body)
   }
   if event_kind == "pull_request" {
     return "PR #" + to_string(payload?.pull_request_number ?? "") + " "
-      + to_string(
-      payload?.action ?? "updated",
-    )
+      + to_string(payload?.action ?? "updated")
       + ": "
       + to_string(payload?.pull_request?.title ?? "")
   }
   if event_kind == "pull_request_review" {
     return "PR #" + to_string(payload?.pull_request_number ?? "") + " review "
-      + to_string(
-      payload?.action ?? "updated",
-    )
+      + to_string(payload?.action ?? "updated")
       + ": "
       + to_string(payload?.review?.state ?? "")
   }
@@ -1004,7 +986,7 @@ pub fn __triage_proposed_action(event_kind, payload) {
 pub fn __triage_urgency(event_kind, payload) {
   if event_kind == "pull_request_review"
     && lowercase(to_string(payload?.review?.state ?? ""))
-    == "changes_requested" {
+      == "changes_requested" {
     return "high"
   }
   if event_kind == "issues"
@@ -1034,53 +1016,39 @@ pub fn __labels_include(labels, wanted) {
 pub fn __job_summary(event_kind, payload) {
   if event_kind == "workflow_run" {
     return "Workflow " + to_string(payload?.name ?? payload?.workflow_id ?? "") + " "
-      + to_string(
-      payload?.status ?? "updated",
-    )
+      + to_string(payload?.status ?? "updated")
       + ": "
       + to_string(payload?.conclusion ?? "pending")
   }
   if event_kind == "check_run" {
     return "Check " + to_string(payload?.name ?? payload?.check_id ?? "") + " "
-      + to_string(
-      payload?.status ?? "updated",
-    )
+      + to_string(payload?.status ?? "updated")
       + ": "
       + to_string(payload?.conclusion ?? "pending")
   }
   if event_kind == "check_suite" {
     return "Check suite " + to_string(payload?.status ?? "updated") + ": "
-      + to_string(
-      payload?.conclusion ?? "pending",
-    )
+      + to_string(payload?.conclusion ?? "pending")
   }
   if event_kind == "status" {
     return "Status " + to_string(payload?.context ?? "") + ": " + to_string(payload?.state ?? "")
   }
   if event_kind == "deployment_status" {
     return "Deployment " + to_string(payload?.deployment?.environment ?? "") + ": "
-      + to_string(
-      payload?.deployment_status?.state ?? "",
-    )
+      + to_string(payload?.deployment_status?.state ?? "")
   }
   if event_kind == "merge_group" {
     return "Merge queue group " + to_string(payload?.merge_group_id ?? "") + " for "
-      + to_string(
-      payload?.base_ref ?? "",
-    )
+      + to_string(payload?.base_ref ?? "")
   }
   if event_kind == "push" {
     return "Push to " + to_string(payload?.ref_name ?? payload?.ref ?? "") + ": "
-      + to_string(
-      payload?.distinct_size ?? len(payload?.commits ?? []),
-    )
+      + to_string(payload?.distinct_size ?? len(payload?.commits ?? []))
       + " commit(s)"
   }
   if event_kind == "release" {
     return "Release " + to_string(payload?.tag_name ?? payload?.name ?? "") + " "
-      + to_string(
-      payload?.action ?? "updated",
-    )
+      + to_string(payload?.action ?? "updated")
   }
   return "GitHub job updated"
 }

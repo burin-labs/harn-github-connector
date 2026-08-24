@@ -359,16 +359,16 @@ fn __wc_parse_raw(raw: string) {
     }
     entries = entries
       + [
-      {
-        src_mode: to_string(fields[0] ?? ""),
-        dst_mode: to_string(fields[1] ?? ""),
-        src_oid: lowercase(to_string(fields[2] ?? "")),
-        dst_oid: lowercase(to_string(fields[3] ?? "")),
-        status: status,
-        src_path: to_string(tokens[cursor + 1] ?? ""),
-        dst_path: to_string(tokens[cursor + paths] ?? ""),
-      },
-    ]
+        {
+          src_mode: to_string(fields[0] ?? ""),
+          dst_mode: to_string(fields[1] ?? ""),
+          src_oid: lowercase(to_string(fields[2] ?? "")),
+          dst_oid: lowercase(to_string(fields[3] ?? "")),
+          status: status,
+          src_path: to_string(tokens[cursor + 1] ?? ""),
+          dst_path: to_string(tokens[cursor + paths] ?? ""),
+        },
+      ]
     cursor = cursor + 1 + paths
   }
   return Ok(entries)
@@ -597,9 +597,7 @@ fn __wc_payload(changes: list<GithubWorktreeChange>, contents: dict) {
       continue
     }
     additions = additions
-      + [
-      {path: change.path, contents_base64: to_string(contents.get(change.path) ?? "")},
-    ]
+      + [{path: change.path, contents_base64: to_string(contents.get(change.path) ?? "")}]
   }
   return {additions: additions, deletions: deletions}
 }

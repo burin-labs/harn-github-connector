@@ -239,11 +239,7 @@ pipeline test_merge_captain_methods(harness: Harness, task) {
     pulls_merge_safe(
       harness,
       auth + {merge_method: "squash", admin_override: true, delete_branch: true}
-        + {
-        owner: "octo-org",
-        repo: "octo-repo",
-        pull_number: 101,
-      },
+        + {owner: "octo-org", repo: "octo-repo", pull_number: 101},
     ),
   )
   assert(merged.protected, "merge_safe detected protected branch")

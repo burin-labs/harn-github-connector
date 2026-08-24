@@ -67,13 +67,13 @@ pipeline test_pr_create_files_and_comment_are_closed_records(harness: Harness, t
       "github.pr.create",
       auth()
         + {
-        repo: "octo-org/octo-repo",
-        title: "PR 41",
-        head: "feature/41",
-        base: "main",
-        body: "body",
-        draft: true,
-      },
+          repo: "octo-org/octo-repo",
+          title: "PR 41",
+          head: "feature/41",
+          base: "main",
+          body: "body",
+          draft: true,
+        },
     ),
   )
   assert_eq(created.number, 41, "created PR is normalized")
@@ -655,11 +655,11 @@ pipeline test_workflow_dispatch_returns_exact_accepted_run_identity(harness: Har
       "github.actions.workflow_dispatch",
       auth()
         + {
-        repo: "octo-org/octo-repo",
-        workflow_id: "release.yml",
-        ref: "main",
-        inputs: {version: "v1.2.3"},
-      },
+          repo: "octo-org/octo-repo",
+          workflow_id: "release.yml",
+          ref: "main",
+          inputs: {version: "v1.2.3"},
+        },
     ),
   )
   assert_eq(dispatched.accepted, true, "dispatch acceptance is explicit")
