@@ -41,6 +41,8 @@ query HarnGithubConnectorPullChecks($owner: String!, $repo: String!, $number: In
       mergeStateStatus
       statusCheckRollup {
         contexts(first: $checkLimit) {
+          totalCount
+          pageInfo { hasNextPage endCursor }
           nodes {
             __typename
             ... on CheckRun { name status conclusion detailsUrl }

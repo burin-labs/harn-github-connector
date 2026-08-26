@@ -1,0 +1,558 @@
+import {
+  __github_api_url,
+  __github_authenticated_redirect_url,
+  __github_json,
+  __outbound_config,
+} from "../client"
+import {
+  GithubConnectorResult,
+  GithubWorkflowJsonArtifactReceipt,
+  GithubWorkflowJsonArtifactRequest,
+} from "../contracts"
+import { __err } from "../errors"
+import { __actions_workflow_run_get } from "../operations/actions"
+import { __request_args } from "../request_options"
+
+const DEFAULT_MAX_ARCHIVE_BYTES = 16777216
+
+const DEFAULT_MAX_MEMBER_BYTES = 8388608
+
+const ARTIFACT_PAGE_SIZE = 100
+
+const MAX_ARTIFACT_PAGES = 100
+
+pub type WorkflowJsonArtifactFileRequest = {
+  scratch: string,
+  archive_path: string,
+  member_name: string,
+  provider_archive_sha256: string,
+  expected_archive_sha256: string?,
+  expected_member_sha256: string?,
+  max_archive_bytes: int,
+  max_member_bytes: int,
+}
+
+fn __bounded_size(value: unknown, fallback: int, field: string) {
+  const parsed = to_int(value ?? fallback)
+  if parsed == nil || parsed <= 0 {
+    return __err("schema_drift", field + " must be a positive integer")
+  }
+  return Ok(parsed)
+}
+
+fn __unsafe_zip_member(path: string) {
+  const normalized = trim(path)
+  if normalized == "" || starts_with(normalized, "/") || contains(normalized, "\\") {
+    return true
+  }
+  if regex_match("^[A-Za-z]:", normalized) != nil {
+    return true
+  }
+  for segment in split(normalized, "/") {
+    if segment == "" || segment == "." || segment == ".." {
+      return true
+    }
+  }
+  return false
+}
+
+/** Pure archive and schema boundary used by the network reader and mutation tests. */
+pub fn __decode_workflow_json_artifact<T>(
+  archive: bytes,
+  member_name: string,
+  schema: Schema<T>,
+  provider_archive_sha256: string,
+  expected_archive_sha256: string? = nil,
+  expected_member_sha256: string? = nil,
+  max_archive_bytes: int = DEFAULT_MAX_ARCHIVE_BYTES,
+  max_member_bytes: int = DEFAULT_MAX_MEMBER_BYTES,
+) {
+  const archive_size = bytes_len(archive)
+  if archive_size > max_archive_bytes {
+    return __err(
+      "artifact_oversized",
+      "GitHub workflow artifact archive exceeded its configured byte limit",
+      {observed_size_bytes: archive_size, maximum_size_bytes: max_archive_bytes},
+    )
+  }
+  const archive_digest = sha256(archive)
+  if lowercase(trim(provider_archive_sha256)) != lowercase(archive_digest) {
+    return __err(
+      "digest_mismatch",
+      "GitHub workflow artifact archive SHA-256 did not match GitHub's digest",
+      {expected_sha256: provider_archive_sha256, observed_sha256: archive_digest},
+    )
+  }
+  if expected_archive_sha256 != nil
+    && lowercase(trim(expected_archive_sha256)) != lowercase(archive_digest) {
+    return __err(
+      "digest_mismatch",
+      "GitHub workflow artifact archive SHA-256 did not match",
+      {expected_sha256: expected_archive_sha256, observed_sha256: archive_digest},
+    )
+  }
+  const extracted = try {
+    zip_extract(archive, {max_decompressed_bytes: max_member_bytes})
+  }
+  if !is_ok(extracted) {
+    if contains(lowercase(to_string(unwrap_err(extracted))), "max_decompressed_bytes") {
+      return __err(
+        "artifact_oversized",
+        "GitHub workflow artifact decompressed beyond its configured member byte limit",
+        {maximum_size_bytes: max_member_bytes},
+      )
+    }
+    return __err("invalid_archive", "GitHub workflow artifact was not a bounded ZIP archive")
+  }
+  const entries = unwrap(extracted)
+  for entry in entries {
+    if __unsafe_zip_member(to_string(entry?.path ?? "")) {
+      return __err(
+        "unsafe_archive_member",
+        "GitHub workflow artifact ZIP contained an unsafe member path",
+        {member_name: to_string(entry?.path ?? "")},
+      )
+    }
+  }
+  if len(entries) != 1 {
+    return __err(
+      "ambiguous_archive_member",
+      "GitHub workflow JSON artifact must contain exactly one file",
+      {expected_count: 1, observed_count: len(entries), member_name: member_name},
+    )
+  }
+  const entry = entries[0]
+  if to_string(entry.path) != member_name {
+    return __err(
+      "artifact_member_mismatch",
+      "GitHub workflow artifact member name did not match exactly",
+      {member_name: to_string(entry.path)},
+    )
+  }
+  const member_size = bytes_len(entry.content)
+  if member_size > max_member_bytes {
+    return __err(
+      "artifact_oversized",
+      "GitHub workflow artifact member exceeded its configured byte limit",
+      {observed_size_bytes: member_size, maximum_size_bytes: max_member_bytes},
+    )
+  }
+  const member_digest = sha256(entry.content)
+  if expected_member_sha256 != nil
+    && lowercase(trim(expected_member_sha256)) != lowercase(member_digest) {
+    return __err(
+      "digest_mismatch",
+      "GitHub workflow artifact member SHA-256 did not match",
+      {expected_sha256: expected_member_sha256, observed_sha256: member_digest},
+    )
+  }
+  const text = try {
+    bytes_to_string(entry.content)
+  }
+  if !is_ok(text) {
+    return __err("invalid_json", "GitHub workflow artifact member was not UTF-8 JSON")
+  }
+  const parsed = try {
+    json_parse(unwrap(text))
+  }
+  if !is_ok(parsed) {
+    return __err("invalid_json", "GitHub workflow artifact member contained malformed JSON")
+  }
+  const checked = schema_check(unwrap(parsed), schema)
+  if is_err(checked) {
+    return __err("schema_drift", "GitHub workflow artifact JSON did not match its declared schema")
+  }
+  return Ok(
+    {
+      archive_size_bytes: archive_size,
+      archive_sha256: archive_digest,
+      member_name: member_name,
+      member_size_bytes: member_size,
+      member_sha256: member_digest,
+      data: unwrap(checked),
+    },
+  )
+}
+
+/** File-backed decode boundary; always removes the caller-owned scratch directory. */
+pub fn __decode_workflow_json_artifact_file<T>(
+  fs: HarnessFs,
+  request: WorkflowJsonArtifactFileRequest,
+  schema: Schema<T>,
+) {
+  defer {
+    if fs.exists(request.scratch) {
+      fs.delete(request.scratch)
+    }
+  }
+  if !fs.exists(request.archive_path) {
+    return __err("artifact_download_failed", "GitHub workflow artifact archive was not written")
+  }
+  return __decode_workflow_json_artifact(
+    fs.read_bytes(request.archive_path),
+    request.member_name,
+    schema,
+    request.provider_archive_sha256,
+    request.expected_archive_sha256,
+    request.expected_member_sha256,
+    request.max_archive_bytes,
+    request.max_member_bytes,
+  )
+}
+
+/** Assemble the closed receipt only after every producer and content proof succeeded. */
+pub fn __workflow_json_artifact_receipt<T>(
+  request: GithubWorkflowJsonArtifactRequest,
+  run: dict,
+  artifact: dict,
+  artifact_total_count: int,
+  artifact_pages_fetched: int,
+  evidence: dict,
+) -> GithubWorkflowJsonArtifactReceipt<T> {
+  const receipt: GithubWorkflowJsonArtifactReceipt<T> = {
+    repo: request.owner + "/" + request.repo,
+    run_id: request.run_id,
+    run_name: to_string(run.name),
+    run_head_sha: to_string(run.head_sha),
+    workflow_id: to_int(run.workflow_id),
+    run_attempt: to_int(run.run_attempt),
+    run_event: to_string(run.event),
+    run_status: to_string(run.status),
+    run_conclusion: if run.conclusion == nil {
+      nil
+    } else {
+      to_string(run.conclusion)
+    },
+    artifact_id: to_int(artifact.id),
+    artifact_name: to_string(artifact.name),
+    artifact_total_count: artifact_total_count,
+    artifact_pages_fetched: artifact_pages_fetched,
+    artifact_expires_at: to_string(artifact.expires_at),
+    artifact_digest: to_string(artifact.digest),
+    archive_size_bytes: evidence.archive_size_bytes,
+    archive_sha256: evidence.archive_sha256,
+    member_name: evidence.member_name,
+    member_size_bytes: evidence.member_size_bytes,
+    member_sha256: evidence.member_sha256,
+    data: evidence.data,
+  }
+  return receipt
+}
+
+fn __list_exact_run_artifacts(
+  harness: Harness,
+  owner: string,
+  repo: string,
+  run_id: int,
+  cfg: dict,
+) {
+  let page = 1
+  let total = nil
+  let artifacts = []
+  while page <= MAX_ARTIFACT_PAGES {
+    const envelope = __github_json(
+      harness,
+      "GET",
+      __github_api_url(
+        cfg.api_base_url,
+        "/repos/" + owner + "/" + repo + "/actions/runs/" + to_string(run_id)
+          + "/artifacts?per_page="
+          + to_string(ARTIFACT_PAGE_SIZE)
+          + "&page="
+          + to_string(page),
+      ),
+      nil,
+      cfg,
+    )
+    if is_err(envelope) {
+      return envelope
+    }
+    if type_of(envelope?.artifacts) != "list" || to_int(envelope?.total_count) == nil {
+      return __err(
+        "invalid_response",
+        "GitHub workflow artifact listing omitted its total count or page",
+      )
+    }
+    const observed_total = to_int(envelope.total_count)
+    if observed_total < 0 || (total != nil && observed_total != total) {
+      return __err("incomplete_page", "GitHub workflow artifact listing changed its total count")
+    }
+    total = observed_total
+    artifacts = artifacts + envelope.artifacts
+    if len(artifacts) >= total {
+      if len(artifacts) != total {
+        return __err("incomplete_page", "GitHub workflow artifact listing exceeded its total count")
+      }
+      return Ok({artifacts: artifacts, total_count: total, pages_fetched: page})
+    }
+    if len(envelope.artifacts) != ARTIFACT_PAGE_SIZE {
+      return __err(
+        "incomplete_page",
+        "GitHub workflow artifact listing ended before its total count",
+      )
+    }
+    page = page + 1
+  }
+  return __err("incomplete_page", "GitHub workflow artifact listing exceeded its page limit")
+}
+
+fn __validated_workflow_run(run, run_id: int, expected_run_name: string, evidence_mode: string) {
+  const observed_run_id = to_int(run?.id)
+  const observed_run_name = to_string(run?.name ?? "")
+  const observed_run_head = trim(to_string(run?.head_sha ?? ""))
+  if observed_run_id != run_id || observed_run_name != expected_run_name {
+    return __err(
+      "workflow_run_mismatch",
+      "GitHub workflow run identity did not match exactly",
+      {
+        run_id: observed_run_id,
+        expected_run_name: expected_run_name,
+        observed_run_name: observed_run_name,
+      },
+    )
+  }
+  const workflow_id = to_int(run?.workflow_id)
+  const run_attempt = to_int(run?.run_attempt)
+  const event = trim(to_string(run?.event ?? ""))
+  const status = lowercase(trim(to_string(run?.status ?? "")))
+  const conclusion = if run?.conclusion == nil {
+    nil
+  } else {
+    lowercase(trim(to_string(run.conclusion)))
+  }
+  const valid_statuses = ["queued", "in_progress", "completed", "requested", "waiting", "pending"]
+  const valid_conclusions = [
+    "success",
+    "failure",
+    "neutral",
+    "cancelled",
+    "skipped",
+    "timed_out",
+    "action_required",
+    "stale",
+    "startup_failure",
+  ]
+  if observed_run_head == "" || workflow_id == nil || workflow_id <= 0 || run_attempt == nil
+    || run_attempt
+      <= 0
+    || event
+      == ""
+    || !contains(valid_statuses, status)
+    || (status == "completed" && (conclusion == nil || !contains(valid_conclusions, conclusion)))
+    || (status != "completed" && conclusion != nil) {
+    return __err("invalid_response", "GitHub workflow run metadata was incomplete or invalid")
+  }
+  if evidence_mode == "terminal_success" && (status != "completed" || conclusion != "success") {
+    return __err(
+      "workflow_run_not_successful",
+      "GitHub workflow run was not terminal and successful",
+      {run_id: observed_run_id},
+    )
+  }
+  return Ok(run)
+}
+
+fn __validated_artifact_producer(artifact, run_id: int, run_head_sha: string) {
+  if type_of(artifact?.workflow_run) != "dict" {
+    return __err("invalid_response", "GitHub workflow artifact omitted its producer identity")
+  }
+  const producer_run_id = to_int(artifact.workflow_run?.id)
+  const producer_head = trim(to_string(artifact.workflow_run?.head_sha ?? ""))
+  if producer_run_id != run_id {
+    return __err(
+      "workflow_run_mismatch",
+      "GitHub workflow artifact belonged to a different workflow run",
+      {run_id: producer_run_id},
+    )
+  }
+  if producer_head == "" || lowercase(producer_head) != lowercase(trim(run_head_sha)) {
+    return __err(
+      "stale_head",
+      "GitHub workflow artifact belonged to a different workflow head",
+      {expected_head_oid: run_head_sha, observed_head_oid: producer_head},
+    )
+  }
+  const digest = trim(to_string(artifact?.digest ?? ""))
+  if regex_match("^sha256:[0-9a-fA-F]{64}$", digest) == nil {
+    return __err("invalid_response", "GitHub workflow artifact omitted a valid SHA-256 digest")
+  }
+  return Ok(substring(digest, 7))
+}
+
+/**
+ * Read one schema-checked JSON artifact bound to an exact workflow run and name.
+ * Authentication is used only to resolve GitHub's redirect; the signed object
+ * URL is downloaded without forwarding GitHub credentials.
+ */
+@complexity(allow)
+pub fn actions_workflow_run_json_artifact<T>(
+  harness: Harness,
+  request: GithubWorkflowJsonArtifactRequest,
+  schema: Schema<T>,
+) -> GithubConnectorResult<GithubWorkflowJsonArtifactReceipt<T>> {
+  const args = __request_args(request)
+  const cfg_result = __outbound_config(harness, args)
+  if is_err(cfg_result) {
+    return cfg_result
+  }
+  const cfg = unwrap(cfg_result)
+  const run_id = to_int(request.run_id)
+  if run_id == nil || run_id <= 0 {
+    return __err("schema_drift", "workflow JSON artifact reader requires a positive run_id")
+  }
+  const expected_run_name = request.run_name
+  const evidence_mode = request.evidence_mode ?? "terminal_success"
+  const artifact_name = request.artifact_name
+  const member_name = request.member_name
+  if trim(expected_run_name) == "" || trim(artifact_name) == "" || trim(member_name) == "" {
+    return __err(
+      "schema_drift",
+      "workflow JSON artifact run, artifact, and member names must be non-empty",
+    )
+  }
+  if evidence_mode != "terminal_success" && evidence_mode != "diagnostic" {
+    return __err("schema_drift", "workflow JSON artifact evidence_mode was invalid")
+  }
+  if __unsafe_zip_member(member_name) {
+    return __err("schema_drift", "workflow JSON artifact member_name must be a safe relative path")
+  }
+  const archive_limit = __bounded_size(
+    request.max_archive_bytes,
+    DEFAULT_MAX_ARCHIVE_BYTES,
+    "max_archive_bytes",
+  )
+  const member_limit = __bounded_size(
+    request.max_member_bytes,
+    DEFAULT_MAX_MEMBER_BYTES,
+    "max_member_bytes",
+  )
+  if is_err(archive_limit) {
+    return archive_limit
+  }
+  if is_err(member_limit) {
+    return member_limit
+  }
+  const run = __actions_workflow_run_get(harness, args, cfg)
+  if is_err(run) {
+    return run
+  }
+  const validated_run = __validated_workflow_run(run, run_id, expected_run_name, evidence_mode)
+  if is_err(validated_run) {
+    return validated_run
+  }
+  const observed_run_head = trim(to_string(run.head_sha))
+  const listing = __list_exact_run_artifacts(harness, request.owner, request.repo, run_id, cfg)
+  if is_err(listing) {
+    return listing
+  }
+  let matches = []
+  for artifact in unwrap(listing).artifacts {
+    if to_string(artifact?.name ?? "") == artifact_name {
+      matches = matches + [artifact]
+    }
+  }
+  if len(matches) != 1 {
+    return __err(
+      "artifact_name_ambiguity",
+      "GitHub workflow run did not contain exactly one artifact with the requested name",
+      {artifact_name: artifact_name, expected_count: 1, observed_count: len(matches)},
+    )
+  }
+  const artifact = matches[0]
+  const provider_digest = __validated_artifact_producer(artifact, run_id, observed_run_head)
+  if is_err(provider_digest) {
+    return provider_digest
+  }
+  const artifact_id = to_int(artifact?.id)
+  const archive_size = to_int(artifact?.size_in_bytes)
+  const expires_at = trim(to_string(artifact?.expires_at ?? ""))
+  const download_url = trim(to_string(artifact?.archive_download_url ?? ""))
+  if artifact_id == nil || archive_size == nil || archive_size < 0 || expires_at == ""
+    || download_url
+      == "" {
+    return __err("invalid_response", "GitHub workflow artifact metadata was incomplete")
+  }
+  const expiry = try {
+    date_parse(expires_at)
+  }
+  if regex_match(
+    "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$",
+    expires_at,
+  )
+    == nil
+    || !is_ok(expiry) {
+    return __err(
+      "invalid_response",
+      "GitHub workflow artifact expiry was not an RFC 3339 timestamp",
+    )
+  }
+  if artifact?.expired == true || unwrap(expiry) <= harness.clock.now().timestamp {
+    return __err(
+      "artifact_expired",
+      "GitHub workflow artifact has expired",
+      {artifact_id: artifact_id},
+    )
+  }
+  if archive_size > unwrap(archive_limit) {
+    return __err(
+      "artifact_oversized",
+      "GitHub workflow artifact metadata exceeded its configured archive byte limit",
+      {
+        artifact_id: artifact_id,
+        observed_size_bytes: archive_size,
+        maximum_size_bytes: unwrap(archive_limit),
+      },
+    )
+  }
+  const redirect = __github_authenticated_redirect_url(harness, download_url, cfg)
+  if is_err(redirect) {
+    return redirect
+  }
+  const scratch = harness.fs.mkdtemp_in_workspace("github-workflow-artifact-")
+  defer {
+    if harness.fs.exists(scratch) {
+      harness.fs.delete(scratch)
+    }
+  }
+  const archive_path = path_join(scratch, "artifact.zip")
+  const downloaded = harness.net.download(
+    unwrap(redirect),
+    archive_path,
+    {max_response_bytes: unwrap(archive_limit), timeout_ms: cfg?.timeout_ms ?? 120000},
+  )
+  if !(downloaded?.ok ?? false) {
+    return __err("artifact_download_failed", "GitHub workflow artifact download failed")
+  }
+  if to_int(downloaded?.bytes_written) != archive_size {
+    return __err(
+      "artifact_size_mismatch",
+      "GitHub workflow artifact download size did not match its metadata",
+      {observed_size_bytes: to_int(downloaded?.bytes_written), maximum_size_bytes: archive_size},
+    )
+  }
+  const file_request: WorkflowJsonArtifactFileRequest = {
+    scratch: scratch,
+    archive_path: archive_path,
+    member_name: member_name,
+    provider_archive_sha256: to_string(unwrap(provider_digest)),
+    expected_archive_sha256: request.expected_archive_sha256,
+    expected_member_sha256: request.expected_member_sha256,
+    max_archive_bytes: to_int(unwrap(archive_limit)),
+    max_member_bytes: to_int(unwrap(member_limit)),
+  }
+  const decoded = __decode_workflow_json_artifact_file(harness.fs, file_request, schema)
+  if is_err(decoded) {
+    return decoded
+  }
+  const evidence = unwrap(decoded)
+  return Ok(
+    __workflow_json_artifact_receipt(
+      request,
+      run,
+      artifact,
+      unwrap(listing).total_count,
+      unwrap(listing).pages_fetched,
+      evidence,
+    ),
+  )
+}

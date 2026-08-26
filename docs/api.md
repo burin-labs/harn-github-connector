@@ -390,6 +390,18 @@ pub type GithubConnectorError = {
   observed_tag_target_oid?: string,
   tag?: string,
   candidate_run_ids?: list<int>,
+  run_id?: int,
+  expected_run_name?: string,
+  observed_run_name?: string,
+  artifact_id?: int,
+  artifact_name?: string,
+  member_name?: string,
+  expected_count?: int,
+  observed_count?: int,
+  expected_sha256?: string,
+  observed_sha256?: string,
+  observed_size_bytes?: int,
+  maximum_size_bytes?: int,
   path?: string,
   file_mode?: string,
   base_file_mode?: string,
@@ -679,6 +691,12 @@ pub type GithubPullRequestChecks = {
   state: string,
   rollup: GithubCheckRollup,
   checks: list<GithubCheckRun>,
+  check_run_total: int,
+  status_context_total: int,
+  workflow_run_total: int,
+  check_run_pages_fetched: int,
+  status_context_pages_fetched: int,
+  workflow_run_pages_fetched: int,
 }
 ```
 
@@ -1448,6 +1466,54 @@ pub type GithubWorkflowJobsRequest = GithubWorkflowRunRequest \
   & {filter?: "latest" | "all", per_page?: int, page?: int}
 ```
 
+### type `GithubWorkflowJsonArtifactReceipt`
+
+Verified JSON payload plus durable evidence binding it to one exact workflow run.
+
+```harn
+pub type GithubWorkflowJsonArtifactReceipt<T> = {
+  repo: string,
+  run_id: int,
+  run_name: string,
+  run_head_sha: string,
+  workflow_id: int,
+  run_attempt: int,
+  run_event: string,
+  run_status: string,
+  run_conclusion: string?,
+  artifact_id: int,
+  artifact_name: string,
+  artifact_total_count: int,
+  artifact_pages_fetched: int,
+  artifact_expires_at: string,
+  artifact_digest: string,
+  archive_size_bytes: int,
+  archive_sha256: string,
+  member_name: string,
+  member_size_bytes: int,
+  member_sha256: string,
+  data: T,
+}
+```
+
+### type `GithubWorkflowJsonArtifactRequest`
+
+Exact producer identity and bounded archive policy for one JSON workflow artifact.
+
+```harn
+pub type GithubWorkflowJsonArtifactRequest = GithubWorkflowRunRequest \
+  & {
+  run_name: string,
+  evidence_mode?: "terminal_success" | "diagnostic",
+  artifact_name: string,
+  member_name: string,
+  expected_archive_sha256?: string,
+  expected_member_sha256?: string,
+  max_archive_bytes?: int,
+  max_member_bytes?: int,
+}
+```
+
 ### type `GithubWorkflowRerunReceipt`
 
 Receipt proving GitHub accepted a rerun of an exact workflow run.
@@ -1826,6 +1892,21 @@ pub fn actions_workflow_run_jobs(
   harness: Harness,
   request: GithubWorkflowJobsRequest,
 ) -> GithubConnectorResult<GithubWorkflowJobs> {
+}
+```
+
+### fn `actions_workflow_run_json_artifact`
+
+Read one schema-checked JSON artifact bound to an exact workflow run and name.
+Authentication is used only to resolve GitHub's redirect; the signed object
+URL is downloaded without forwarding GitHub credentials.
+
+```harn
+pub fn actions_workflow_run_json_artifact<T>(
+  harness: Harness,
+  request: GithubWorkflowJsonArtifactRequest,
+  schema: Schema<T>,
+) -> GithubConnectorResult<GithubWorkflowJsonArtifactReceipt<T>> {
 }
 ```
 
@@ -2609,6 +2690,18 @@ pub type GithubConnectorError = {
   observed_tag_target_oid?: string,
   tag?: string,
   candidate_run_ids?: list<int>,
+  run_id?: int,
+  expected_run_name?: string,
+  observed_run_name?: string,
+  artifact_id?: int,
+  artifact_name?: string,
+  member_name?: string,
+  expected_count?: int,
+  observed_count?: int,
+  expected_sha256?: string,
+  observed_sha256?: string,
+  observed_size_bytes?: int,
+  maximum_size_bytes?: int,
   path?: string,
   file_mode?: string,
   base_file_mode?: string,

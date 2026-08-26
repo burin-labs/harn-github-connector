@@ -966,6 +966,44 @@ pub fn __github_policy_request_options(body, cfg, current_token, accept) {
   return options
 }
 
+/**
+ * Resolve one GitHub-authenticated download redirect without forwarding the
+ * installation token to the provider-selected object-storage host.
+ */
+pub fn __github_authenticated_redirect_url(harness: Harness, url: string, cfg) {
+  let current_token = cfg.installation_token
+  let retried_auth = false
+  while true {
+    let options = __github_policy_request_options(
+      nil,
+      cfg,
+      current_token,
+      "application/vnd.github+json",
+    )
+    options["follow_redirects"] = false
+    options["max_redirects"] = 0
+    const response = harness.net.get(url, options)
+    if response.status == 401 && cfg.token_mode == "jwt" && !retried_auth {
+      retried_auth = true
+      invalidate_installation_token(harness.runtime, cfg.installation_id)
+      const refreshed = installation_token(harness, cfg)
+      if is_err(refreshed) {
+        return refreshed
+      }
+      current_token = to_string(refreshed)
+      continue
+    }
+    if response.status < 300 || response.status > 399 {
+      return __github_request_error(harness.clock, response)
+    }
+    const location = trim(to_string(response?.headers?.location ?? ""))
+    if location == "" {
+      return __err("invalid_response", "GitHub artifact download redirect omitted Location")
+    }
+    return Ok(location)
+  }
+}
+
 pub fn __github_retry_policy(cfg) {
   const source = cfg?.retry ?? {}
   let policy = {}

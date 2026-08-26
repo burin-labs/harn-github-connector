@@ -41,7 +41,8 @@ pipeline test_private_pr_checks_fall_back_to_exact_graphql_rollup(harness: Harne
   mock_pull(harness.testing)
   harness.testing.http_mock(
     "GET",
-    BASE + "/repos/octo-org/private-repo/commits/" + HEAD + "/check-runs",
+    BASE + "/repos/octo-org/private-repo/commits/" + HEAD
+      + "/check-runs?filter=latest&per_page=100&page=1",
     missing_checks_scope(),
   )
   harness.testing.http_mock(
@@ -61,6 +62,8 @@ pipeline test_private_pr_checks_fall_back_to_exact_graphql_rollup(harness: Harne
                 mergeStateStatus: "UNKNOWN",
                 statusCheckRollup: {
                   contexts: {
+                    totalCount: 2,
+                    pageInfo: {hasNextPage: false, endCursor: nil},
                     nodes: [
                       {
                         __typename: "CheckRun",
@@ -93,6 +96,8 @@ pipeline test_private_pr_checks_fall_back_to_exact_graphql_rollup(harness: Harne
   assert_eq(checks.state, "merged")
   assert_eq(checks.rollup.state, "green")
   assert_eq(checks.rollup.successful, 2)
+  assert_eq(checks.check_run_total, 1)
+  assert_eq(checks.status_context_total, 1)
   assert_eq(checks.checks[0].head_sha, HEAD)
   assert_eq(checks.checks[1].conclusion, "success")
   assert_eq(len(harness.testing.http_mock_calls()), 3)
@@ -103,7 +108,8 @@ pipeline test_unrelated_private_pr_permission_failure_does_not_fall_back(harness
   mock_pull(harness.testing)
   harness.testing.http_mock(
     "GET",
-    BASE + "/repos/octo-org/private-repo/commits/" + HEAD + "/check-runs",
+    BASE + "/repos/octo-org/private-repo/commits/" + HEAD
+      + "/check-runs?filter=latest&per_page=100&page=1",
     {
       status: 403,
       body: json_stringify({message: "Forbidden"}),
@@ -121,7 +127,8 @@ pipeline test_private_pr_graphql_fallback_refuses_a_changed_head(harness: Harnes
   mock_pull(harness.testing)
   harness.testing.http_mock(
     "GET",
-    BASE + "/repos/octo-org/private-repo/commits/" + HEAD + "/check-runs",
+    BASE + "/repos/octo-org/private-repo/commits/" + HEAD
+      + "/check-runs?filter=latest&per_page=100&page=1",
     missing_checks_scope(),
   )
   harness.testing.http_mock(
@@ -161,7 +168,8 @@ pipeline test_private_pr_checks_use_exact_head_actions_when_checks_scope_is_hidd
   mock_pull(harness.testing)
   harness.testing.http_mock(
     "GET",
-    BASE + "/repos/octo-org/private-repo/commits/" + HEAD + "/check-runs",
+    BASE + "/repos/octo-org/private-repo/commits/" + HEAD
+      + "/check-runs?filter=latest&per_page=100&page=1",
     missing_checks_scope(),
   )
   harness.testing.http_mock(
@@ -238,6 +246,7 @@ pipeline test_private_pr_checks_use_exact_head_actions_when_checks_scope_is_hidd
   assert_eq(checks.rollup.total, 2)
   assert_eq(checks.checks[0].name, "CI")
   assert_eq(checks.checks[0].external_id, "actions-workflow-run:11")
+  assert_eq(checks.workflow_run_total, 3)
   assert_eq(len(harness.testing.http_mock_calls()), 4)
 }
 
@@ -246,7 +255,8 @@ pipeline test_private_pr_checks_do_not_hide_unrelated_graphql_failures(harness: 
   mock_pull(harness.testing)
   harness.testing.http_mock(
     "GET",
-    BASE + "/repos/octo-org/private-repo/commits/" + HEAD + "/check-runs",
+    BASE + "/repos/octo-org/private-repo/commits/" + HEAD
+      + "/check-runs?filter=latest&per_page=100&page=1",
     missing_checks_scope(),
   )
   harness.testing.http_mock(
@@ -263,4 +273,47 @@ pipeline test_private_pr_checks_do_not_hide_unrelated_graphql_failures(harness: 
   assert(is_err(checks))
   assert_eq(unwrap_err(checks).code, "graphql")
   assert_eq(len(harness.testing.http_mock_calls()), 3)
+}
+
+pipeline test_private_pr_checks_reject_truncated_graphql_contexts(harness: Harness, task) {
+  harness.testing.http_mock_clear()
+  mock_pull(harness.testing)
+  harness.testing.http_mock(
+    "GET",
+    BASE + "/repos/octo-org/private-repo/commits/" + HEAD
+      + "/check-runs?filter=latest&per_page=100&page=1",
+    missing_checks_scope(),
+  )
+  harness.testing.http_mock(
+    "POST",
+    BASE + "/graphql",
+    {
+      status: 200,
+      body: json_stringify(
+        {
+          data: {
+            repository: {
+              pullRequest: {
+                number: 77,
+                state: "OPEN",
+                merged: false,
+                headRefOid: HEAD,
+                mergeStateStatus: "CLEAN",
+                statusCheckRollup: {
+                  contexts: {
+                    totalCount: 101,
+                    pageInfo: {hasNextPage: true, endCursor: "opaque"},
+                    nodes: [],
+                  },
+                },
+              },
+            },
+          },
+        },
+      ),
+    },
+  )
+  const checks = call(harness, "github.pr.checks", AUTH + {repo: REPO, number: 77})
+  assert(is_err(checks))
+  assert_eq(unwrap_err(checks).code, "incomplete_page")
 }

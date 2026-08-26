@@ -20,6 +20,18 @@ pub type GithubConnectorError = {
   observed_tag_target_oid?: string,
   tag?: string,
   candidate_run_ids?: list<int>,
+  run_id?: int,
+  expected_run_name?: string,
+  observed_run_name?: string,
+  artifact_id?: int,
+  artifact_name?: string,
+  member_name?: string,
+  expected_count?: int,
+  observed_count?: int,
+  expected_sha256?: string,
+  observed_sha256?: string,
+  observed_size_bytes?: int,
+  maximum_size_bytes?: int,
   path?: string,
   file_mode?: string,
   base_file_mode?: string,
@@ -549,6 +561,12 @@ pub type GithubPullRequestChecks = {
   state: string,
   rollup: GithubCheckRollup,
   checks: list<GithubCheckRun>,
+  check_run_total: int,
+  status_context_total: int,
+  workflow_run_total: int,
+  check_run_pages_fetched: int,
+  status_context_pages_fetched: int,
+  workflow_run_pages_fetched: int,
 }
 
 /** Receipt identifying the workflow run accepted for a dispatch. */
@@ -677,6 +695,44 @@ pub type GithubWorkflowRunRequest = {
   repo: string,
   run_id: int,
   options?: GithubClientOptions,
+}
+
+/** Exact producer identity and bounded archive policy for one JSON workflow artifact. */
+pub type GithubWorkflowJsonArtifactRequest = GithubWorkflowRunRequest \
+  & {
+  run_name: string,
+  evidence_mode?: "terminal_success" | "diagnostic",
+  artifact_name: string,
+  member_name: string,
+  expected_archive_sha256?: string,
+  expected_member_sha256?: string,
+  max_archive_bytes?: int,
+  max_member_bytes?: int,
+}
+
+/** Verified JSON payload plus durable evidence binding it to one exact workflow run. */
+pub type GithubWorkflowJsonArtifactReceipt<T> = {
+  repo: string,
+  run_id: int,
+  run_name: string,
+  run_head_sha: string,
+  workflow_id: int,
+  run_attempt: int,
+  run_event: string,
+  run_status: string,
+  run_conclusion: string?,
+  artifact_id: int,
+  artifact_name: string,
+  artifact_total_count: int,
+  artifact_pages_fetched: int,
+  artifact_expires_at: string,
+  artifact_digest: string,
+  archive_size_bytes: int,
+  archive_sha256: string,
+  member_name: string,
+  member_size_bytes: int,
+  member_sha256: string,
+  data: T,
 }
 
 /** Request for the jobs and steps of one exact workflow run. */
