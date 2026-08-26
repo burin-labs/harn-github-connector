@@ -6,7 +6,7 @@ import "../pulls/normalization"
 import { __positive_int, __request_context_keys } from "../request_options"
 import "./branches"
 import { __typed_pull_request_commit } from "./commits"
-import { __github_pr_checks_graphql_fallback } from "./pull_checks"
+import { __github_pr_checks_graphql_fallback, __github_pr_checks_rest } from "./pull_checks"
 import "./pull_graphql"
 import "./shared"
 
@@ -427,19 +427,9 @@ pub fn __github_pr_checks(harness: Harness, args, cfg) {
       "github.pr.checks requires pr_number, number, pull_number, head_sha, or sha",
     )
   }
-  const envelope = __github_json(
-    harness,
-    "GET",
-    __github_api_url(
-      cfg.api_base_url,
-      "/repos/" + r.owner + "/" + r.name + "/commits/" + to_string(head_sha) + "/check-runs"
-        + __pagination_query(args),
-    ),
-    nil,
-    cfg,
-  )
-  if is_err(envelope) {
-    const error = unwrap_err(envelope)
+  const evidence = __github_pr_checks_rest(harness, r, number, to_string(head_sha), pull, cfg)
+  if is_err(evidence) {
+    const error = unwrap_err(evidence)
     // Installation tokens often have Pull Requests access without the wider
     // Checks permission. GitHub exposes the same exact-PR rollup through
     // GraphQL under that existing authority. Only that named scope failure may
@@ -455,18 +445,9 @@ pub fn __github_pr_checks(harness: Harness, args, cfg) {
         cfg,
       )
     }
-    return envelope
+    return evidence
   }
-  const checks = __typed_check_runs(envelope?.check_runs ?? [])
-  const rollup = __check_rollup(checks)
-  return {
-    repo: r.full_name,
-    pull_number: number,
-    head_sha: to_string(head_sha),
-    state: __classify_pr_state(pull, rollup, nil),
-    rollup: rollup,
-    checks: checks,
-  }
+  return evidence
 }
 
 pub fn __github_pr_merge(harness: Harness, args, cfg) {

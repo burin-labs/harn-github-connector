@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add typed, bounded JSON artifact evidence for exact GitHub Actions workflow runs and complete exact-head check evidence across Checks and legacy status contexts.
+
 ## 0.8.6 - 2026-08-15
 
 - Expose each GitHub Actions run's `display_title` in the typed workflow-run

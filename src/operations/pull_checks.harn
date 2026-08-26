@@ -5,6 +5,175 @@ import "../pulls/normalization"
 import "./actions"
 import "./pull_graphql"
 
+const CHECK_EVIDENCE_PAGE_SIZE = 100
+
+const MAX_CHECK_EVIDENCE_PAGES = 100
+
+fn __complete_check_evidence_page(
+  harness: Harness,
+  url_prefix: string,
+  list_key: string,
+  cfg: dict,
+) {
+  let page = 1
+  let total = nil
+  let values = []
+  while page <= MAX_CHECK_EVIDENCE_PAGES {
+    const envelope = __github_json(
+      harness,
+      "GET",
+      url_prefix
+        + if contains(url_prefix, "?") {
+          "&"
+        } else {
+          "?"
+        }
+        + "per_page="
+        + to_string(CHECK_EVIDENCE_PAGE_SIZE)
+        + "&page="
+        + to_string(page),
+      nil,
+      cfg,
+    )
+    if is_err(envelope) {
+      return envelope
+    }
+    const page_values = envelope?.get(list_key)
+    const observed_total = to_int(envelope?.total_count)
+    if type_of(page_values) != "list" || observed_total == nil || observed_total < 0 {
+      return __err(
+        "invalid_response",
+        "github.pr.checks exact-head evidence omitted a non-negative total count or page",
+      )
+    }
+    if total != nil && observed_total != total {
+      return __err("incomplete_page", "github.pr.checks exact-head total changed during pagination")
+    }
+    total = observed_total
+    values = values + page_values
+    if len(values) >= total {
+      if len(values) != total {
+        return __err("incomplete_page", "github.pr.checks exact-head page exceeded its total")
+      }
+      return Ok({values: values, total_count: total, pages_fetched: page})
+    }
+    if len(page_values) != CHECK_EVIDENCE_PAGE_SIZE {
+      return __err("incomplete_page", "github.pr.checks exact-head page ended before its total")
+    }
+    page = page + 1
+  }
+  return __err("incomplete_page", "github.pr.checks exact-head evidence exceeded its page limit")
+}
+
+fn __legacy_status_check(status, head_sha: string) {
+  const state = lowercase(trim(to_string(status?.state ?? "")))
+  if state != "pending" && state != "expected" && state != "success" && state != "failure"
+    && state
+      != "error" {
+    return __err("invalid_response", "github.pr.checks observed an unknown legacy status state")
+  }
+  return Ok(
+    __typed_check_run(
+      {
+        id: status?.id,
+        name: status?.context,
+        status: if state == "pending" || state == "expected" {
+          "in_progress"
+        } else {
+          "completed"
+        },
+        conclusion: if state == "success" {
+          "success"
+        } else if state == "failure" || state == "error" {
+          "failure"
+        } else {
+          ""
+        },
+        head_sha: head_sha,
+        started_at: status?.created_at,
+        completed_at: if state == "pending" || state == "expected" {
+          nil
+        } else {
+          status?.updated_at
+        },
+        details_url: status?.target_url,
+        html_url: status?.target_url,
+        external_id: "legacy-status:" + to_string(status?.id ?? ""),
+      },
+    ),
+  )
+}
+
+fn __validate_exact_check_set(checks, head_sha: string) {
+  let names = []
+  for check in checks {
+    const name = trim(to_string(check?.name ?? ""))
+    if name == "" {
+      return __err("ambiguous_check_context", "github.pr.checks observed an unnamed context")
+    }
+    if contains(names, name) {
+      return __err("ambiguous_check_context", "github.pr.checks observed duplicate context names")
+    }
+    names = names + [name]
+    const observed_head = trim(to_string(check?.head_sha ?? ""))
+    if observed_head == "" || lowercase(observed_head) != lowercase(trim(head_sha)) {
+      return __err(
+        "stale_head",
+        "github.pr.checks observed a check bound to a different head",
+        {expected_head_oid: head_sha, observed_head_oid: observed_head},
+      )
+    }
+  }
+  return Ok(checks)
+}
+
+pub fn __github_pr_checks_rest(harness: Harness, repo, number, head_sha: string, pull, cfg: dict) {
+  const root = __github_api_url(
+    cfg.api_base_url,
+    "/repos/" + repo.owner + "/" + repo.name + "/commits/" + head_sha,
+  )
+  const runs = __complete_check_evidence_page(
+    harness,
+    root + "/check-runs?filter=latest",
+    "check_runs",
+    cfg,
+  )
+  if is_err(runs) {
+    return runs
+  }
+  const statuses = __complete_check_evidence_page(harness, root + "/status", "statuses", cfg)
+  if is_err(statuses) {
+    return statuses
+  }
+  let checks = __typed_check_runs(unwrap(runs).values)
+  for status in unwrap(statuses).values {
+    const typed = __legacy_status_check(status, head_sha)
+    if is_err(typed) {
+      return typed
+    }
+    checks = checks + [unwrap(typed)]
+  }
+  const validated = __validate_exact_check_set(checks, head_sha)
+  if is_err(validated) {
+    return validated
+  }
+  const rollup = __check_rollup(checks)
+  return {
+    repo: repo.full_name,
+    pull_number: number,
+    head_sha: head_sha,
+    state: __classify_pr_state(pull, rollup, nil),
+    rollup: rollup,
+    checks: checks,
+    check_run_total: unwrap(runs).total_count,
+    status_context_total: unwrap(statuses).total_count,
+    workflow_run_total: 0,
+    check_run_pages_fetched: unwrap(runs).pages_fetched,
+    status_context_pages_fetched: unwrap(statuses).pages_fetched,
+    workflow_run_pages_fetched: 0,
+  }
+}
+
 fn __graphql_checks_scope_denied(errors) {
   for error in errors ?? [] {
     const encoded = lowercase(json_stringify(error))
@@ -67,7 +236,7 @@ fn __github_pr_checks_actions_fallback(
     return __err("invalid_response", "github.pr.checks Actions fallback omitted workflow_runs")
   }
   const total_count = to_int(envelope?.total_count)
-  if total_count == nil || total_count > len(envelope.workflow_runs) {
+  if total_count == nil || total_count != len(envelope.workflow_runs) {
     return __err(
       "incomplete_page",
       "github.pr.checks Actions fallback requires the complete exact-head workflow page",
@@ -102,6 +271,10 @@ fn __github_pr_checks_actions_fallback(
       ]
   }
   const rollup = __check_rollup(checks)
+  const validated = __validate_exact_check_set(checks, head_sha)
+  if is_err(validated) {
+    return validated
+  }
   return {
     repo: repo.full_name,
     pull_number: number,
@@ -109,6 +282,12 @@ fn __github_pr_checks_actions_fallback(
     state: __classify_pr_state(pull, rollup, nil),
     rollup: rollup,
     checks: checks,
+    check_run_total: 0,
+    status_context_total: 0,
+    workflow_run_total: total_count,
+    check_run_pages_fetched: 0,
+    status_context_pages_fetched: 0,
+    workflow_run_pages_fetched: 1,
   }
 }
 
@@ -161,6 +340,33 @@ pub fn __github_pr_checks_graphql_fallback(
     )
   }
   const checks = __graphql_pr_check_runs(pull?.statusCheckRollup, observed_head)
+  const contexts = pull?.statusCheckRollup?.contexts
+  const context_total = to_int(contexts?.totalCount)
+  if context_total == nil || context_total < 0 || type_of(contexts?.nodes) != "list"
+    || contexts?.pageInfo?.hasNextPage
+      != false
+    || context_total
+      != len(contexts.nodes) {
+    return __err(
+      "incomplete_page",
+      "github.pr.checks GraphQL fallback requires a complete status-context connection",
+    )
+  }
+  const validated = __validate_exact_check_set(checks, observed_head)
+  if is_err(validated) {
+    return validated
+  }
+  let check_run_total = 0
+  let status_context_total = 0
+  for node in contexts.nodes {
+    if node?.__typename == "CheckRun" {
+      check_run_total = check_run_total + 1
+    } else if node?.__typename == "StatusContext" {
+      status_context_total = status_context_total + 1
+    } else {
+      return __err("invalid_response", "github.pr.checks GraphQL returned an unknown context type")
+    }
+  }
   const rollup = __check_rollup(checks)
   return {
     repo: repo.full_name,
@@ -178,5 +384,11 @@ pub fn __github_pr_checks_graphql_fallback(
     ),
     rollup: rollup,
     checks: checks,
+    check_run_total: check_run_total,
+    status_context_total: status_context_total,
+    workflow_run_total: 0,
+    check_run_pages_fetched: 1,
+    status_context_pages_fetched: 1,
+    workflow_run_pages_fetched: 0,
   }
 }

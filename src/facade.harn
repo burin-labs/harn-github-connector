@@ -16,6 +16,7 @@ pub import {
   actions_workflow_run_rerun,
   actions_workflow_runs,
 } from "./actions/api"
+pub import { actions_workflow_run_json_artifact } from "./actions/artifacts"
 pub import {
   github_dispatch_workflow_and_resolve_run,
   github_dispatch_workflow_and_wait,

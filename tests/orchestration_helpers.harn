@@ -637,11 +637,20 @@ pipeline test_ensure_auto_merge_failed(harness: Harness, task) {
   harness.testing.http_mock_clear()
 }
 
+fn mock_empty_statuses(testing: HarnessTesting, head_sha: string) {
+  testing.http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/commits/" + head_sha + "/status?per_page=100&page=1",
+    {status: 200, body: json_stringify({total_count: 0, statuses: []})},
+  )
+}
+
 pipeline test_wait_for_pr_checks_green(harness: Harness, task) {
   harness.testing.http_mock_clear()
   harness.testing.http_mock(
     "GET",
-    BASE + "/repos/octo-org/octo-repo/commits/green-sha/check-runs",
+    BASE
+      + "/repos/octo-org/octo-repo/commits/green-sha/check-runs?filter=latest&per_page=100&page=1",
     {
       status: 200,
       body: json_stringify(
@@ -664,6 +673,7 @@ pipeline test_wait_for_pr_checks_green(harness: Harness, task) {
       headers: {"x-ratelimit-remaining": "20"},
     },
   )
+  mock_empty_statuses(harness.testing, "green-sha")
   const result = github_wait_for_pr_checks(
     harness,
     {owner: "octo-org", repo: "octo-repo", head_sha: "green-sha", options: auth()},
@@ -679,7 +689,7 @@ pipeline test_wait_for_pr_checks_pending_then_failing_with_logs(harness: Harness
   harness.testing.http_mock_clear()
   harness.testing.http_mock(
     "GET",
-    BASE + "/repos/octo-org/octo-repo/commits/sha-1/check-runs",
+    BASE + "/repos/octo-org/octo-repo/commits/sha-1/check-runs?filter=latest&per_page=100&page=1",
     {
       responses: [
         {
@@ -687,7 +697,9 @@ pipeline test_wait_for_pr_checks_pending_then_failing_with_logs(harness: Harness
           body: json_stringify(
             {
               total_count: 1,
-              check_runs: [{id: 51, name: "ci", status: "in_progress", conclusion: nil}],
+              check_runs: [
+                {id: 51, name: "ci", status: "in_progress", conclusion: nil, head_sha: "sha-1"},
+              ],
             },
           ),
           headers: {"x-ratelimit-remaining": "16"},
@@ -714,6 +726,7 @@ pipeline test_wait_for_pr_checks_pending_then_failing_with_logs(harness: Harness
       ],
     },
   )
+  mock_empty_statuses(harness.testing, "sha-1")
   const huge_log = "step output line\n".repeat(600)
   harness.testing.http_mock(
     "GET",
@@ -747,15 +760,28 @@ pipeline test_wait_for_pr_checks_times_out(harness: Harness, task) {
   harness.testing.http_mock_clear()
   harness.testing.http_mock(
     "GET",
-    BASE + "/repos/octo-org/octo-repo/commits/pending-forever/check-runs",
+    BASE
+      + "/repos/octo-org/octo-repo/commits/pending-forever/check-runs?filter=latest&per_page=100&page=1",
     {
       status: 200,
       body: json_stringify(
-        {check_runs: [{id: 1, name: "slow", status: "in_progress", conclusion: nil}]},
+        {
+          total_count: 1,
+          check_runs: [
+            {
+              id: 1,
+              name: "slow",
+              status: "in_progress",
+              conclusion: nil,
+              head_sha: "pending-forever",
+            },
+          ],
+        },
       ),
       headers: {"x-ratelimit-remaining": "10"},
     },
   )
+  mock_empty_statuses(harness.testing, "pending-forever")
   const result = github_wait_for_pr_checks(
     harness,
     {
@@ -777,17 +803,19 @@ pipeline test_wait_for_pr_checks_log_summary_handles_non_actions_url(harness: Ha
   harness.testing.http_mock_clear()
   harness.testing.http_mock(
     "GET",
-    BASE + "/repos/octo-org/octo-repo/commits/sha-2/check-runs",
+    BASE + "/repos/octo-org/octo-repo/commits/sha-2/check-runs?filter=latest&per_page=100&page=1",
     {
       status: 200,
       body: json_stringify(
         {
+          total_count: 1,
           check_runs: [
             {
               id: 90,
               name: "vendor-ci",
               status: "completed",
               conclusion: "failure",
+              head_sha: "sha-2",
               details_url: "https://example.com/builds/90",
             },
           ],
@@ -796,6 +824,7 @@ pipeline test_wait_for_pr_checks_log_summary_handles_non_actions_url(harness: Ha
       headers: {"x-ratelimit-remaining": "9"},
     },
   )
+  mock_empty_statuses(harness.testing, "sha-2")
   const result = github_wait_for_pr_checks(
     harness,
     {owner: "octo-org", repo: "octo-repo", head_sha: "sha-2", include_logs: true, options: auth()},

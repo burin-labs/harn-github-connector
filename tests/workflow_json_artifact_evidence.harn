@@ -1,0 +1,288 @@
+import {
+  __decode_workflow_json_artifact,
+  __decode_workflow_json_artifact_file,
+  __workflow_json_artifact_receipt,
+} from "../src/actions/artifacts"
+import { actions_workflow_run_json_artifact } from "../src/facade"
+
+type Evidence = {
+  schema_version: 1,
+  run_id: int,
+  artifact_name: string,
+  decision: "ready" | "blocked",
+}
+
+const BASE = "https://github-api.test"
+
+const DOWNLOAD = BASE + "/repos/octo-org/octo-repo/actions/artifacts/91/zip"
+
+const SIGNED = "https://objects.example.test/signed/artifact.zip"
+
+fn fixture() -> Evidence {
+  return {schema_version: 1, run_id: 42, artifact_name: "release-evidence", decision: "ready"}
+}
+
+fn archive(value: unknown, path: string = "evidence.json") {
+  return zip_create([{path: path, content: json_stringify(value)}])
+}
+
+fn assert_code(result, code: string) {
+  require is_err(result), "single-field mutation must fail"
+  require unwrap_err(result).code == code, "single-field mutation returned the wrong error code"
+}
+
+fn artifact_temp_count(fs: HarnessFs) {
+  let count = 0
+  for name in fs.list_dir(fs.workspace_temp_dir()) {
+    if starts_with(name, "github-workflow-artifact-") {
+      count = count + 1
+    }
+  }
+  return count
+}
+
+pipeline test_valid_artifact_then_single_field_mutations(harness: Harness, task: unknown) {
+  const valid_archive = archive(fixture())
+  const valid = unwrap(
+    __decode_workflow_json_artifact(
+      valid_archive,
+      "evidence.json",
+      schema_of(Evidence),
+      sha256(valid_archive),
+      sha256(bytes_from_string(json_stringify(fixture()))),
+    ),
+  )
+  assert_eq(valid.data, fixture(), "valid fixture reaches typed decode")
+  assert_eq(valid.archive_size_bytes, bytes_len(valid_archive), "archive byte count is measured")
+  assert_eq(valid.member_name, "evidence.json", "exact member is retained")
+  assert_code(
+    __decode_workflow_json_artifact(
+      valid_archive,
+      "evidence.json",
+      schema_of(Evidence),
+      "0".repeat(64),
+    ),
+    "digest_mismatch",
+  )
+  assert_code(
+    __decode_workflow_json_artifact(
+      valid_archive,
+      "evidence.json",
+      schema_of(Evidence),
+      nil,
+      "0".repeat(64),
+    ),
+    "digest_mismatch",
+  )
+  assert_code(
+    __decode_workflow_json_artifact(
+      valid_archive,
+      "evidence.json",
+      schema_of(Evidence),
+      nil,
+      nil,
+      bytes_len(valid_archive) - 1,
+    ),
+    "artifact_oversized",
+  )
+  assert_code(
+    __decode_workflow_json_artifact(
+      zip_create([{path: "../evidence.json", content: json_stringify(fixture())}]),
+      "evidence.json",
+      schema_of(Evidence),
+    ),
+    "unsafe_archive_member",
+  )
+  assert_code(
+    __decode_workflow_json_artifact(
+      zip_create(
+        [
+          {path: "evidence.json", content: json_stringify(fixture())},
+          {path: "extra.json", content: "{}"},
+        ],
+      ),
+      "evidence.json",
+      schema_of(Evidence),
+    ),
+    "ambiguous_archive_member",
+  )
+  assert_code(
+    __decode_workflow_json_artifact(
+      archive(fixture(), "wrong.json"),
+      "evidence.json",
+      schema_of(Evidence),
+    ),
+    "artifact_member_mismatch",
+  )
+  assert_code(
+    __decode_workflow_json_artifact(
+      zip_create([{path: "evidence.json", content: "{"}]),
+      "evidence.json",
+      schema_of(Evidence),
+    ),
+    "invalid_json",
+  )
+  assert_code(
+    __decode_workflow_json_artifact(
+      archive(fixture() + {run_id: "42"}),
+      "evidence.json",
+      schema_of(Evidence),
+    ),
+    "schema_drift",
+  )
+  assert_code(
+    __decode_workflow_json_artifact(
+      valid_archive,
+      "evidence.json",
+      schema_of(Evidence),
+      nil,
+      nil,
+      16777216,
+      1,
+    ),
+    "artifact_oversized",
+  )
+}
+
+pipeline test_file_backed_artifact_decode_cleans_success(harness: Harness, task: unknown) {
+  const scratch = harness.fs.mkdtemp_in_workspace("github-workflow-artifact-")
+  const path = path_join(scratch, "artifact.zip")
+  harness.fs.write_bytes(path, archive(fixture()))
+  const result = __decode_workflow_json_artifact_file(
+    harness.fs,
+    scratch,
+    path,
+    "evidence.json",
+    schema_of(Evidence),
+  )
+  assert(is_ok(result), "file-backed valid artifact decodes")
+  assert(!harness.fs.exists(scratch), "temporary archive is removed on success")
+  const receipt = __workflow_json_artifact_receipt(
+    request(),
+    {id: 42, name: "Release producer", head_sha: "exact-head"},
+    artifact_meta(),
+    1,
+    1,
+    unwrap(result),
+  )
+  assert_eq(receipt.data.decision, "ready")
+  assert_eq(receipt.run_id, 42)
+  assert_eq(receipt.artifact_id, 91)
+}
+
+fn mock_run(testing: HarnessTesting, id: int = 42, name: string = "Release producer") {
+  testing.http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/actions/runs/42",
+    {
+      status: 200,
+      body: json_stringify({id: id, name: name, head_sha: "exact-head"}),
+      headers: {"x-ratelimit-remaining": "20"},
+    },
+  )
+}
+
+fn mock_artifacts(testing: HarnessTesting, artifacts, total_count: int? = nil) {
+  testing.http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/actions/runs/42/artifacts?per_page=100&page=1",
+    {
+      status: 200,
+      body: json_stringify({total_count: total_count ?? len(artifacts), artifacts: artifacts}),
+      headers: {"x-ratelimit-remaining": "19"},
+    },
+  )
+}
+
+fn artifact_meta(overrides = {}) {
+  return {
+    id: 91,
+    name: "release-evidence",
+    size_in_bytes: 7,
+    expired: false,
+    expires_at: "2099-01-01T00:00:00Z",
+    archive_download_url: DOWNLOAD,
+  }
+    + overrides
+}
+
+fn request() {
+  return {
+    owner: "octo-org",
+    repo: "octo-repo",
+    run_id: 42,
+    run_name: "Release producer",
+    artifact_name: "release-evidence",
+    member_name: "evidence.json",
+    options: {api_base_url: BASE, installation_token: "fixture-token"},
+  }
+}
+
+pipeline test_exact_run_artifact_listing_fails_closed(harness: Harness, task: unknown) {
+  harness.testing.http_mock_clear()
+  mock_run(harness.testing)
+  mock_artifacts(harness.testing, [])
+  assert_code(
+    actions_workflow_run_json_artifact(harness, request(), schema_of(Evidence)),
+    "artifact_name_ambiguity",
+  )
+  harness.testing.http_mock_clear()
+  mock_run(harness.testing)
+  mock_artifacts(harness.testing, [artifact_meta(), artifact_meta({id: 92})])
+  assert_code(
+    actions_workflow_run_json_artifact(harness, request(), schema_of(Evidence)),
+    "artifact_name_ambiguity",
+  )
+  harness.testing.http_mock_clear()
+  mock_run(harness.testing)
+  mock_artifacts(harness.testing, [artifact_meta({expired: true})])
+  assert_code(
+    actions_workflow_run_json_artifact(harness, request(), schema_of(Evidence)),
+    "artifact_expired",
+  )
+  harness.testing.http_mock_clear()
+  mock_run(harness.testing)
+  mock_artifacts(harness.testing, [artifact_meta({size_in_bytes: 8})])
+  assert_code(
+    actions_workflow_run_json_artifact(
+      harness,
+      request() + {max_archive_bytes: 7},
+      schema_of(Evidence),
+    ),
+    "artifact_oversized",
+  )
+  harness.testing.http_mock_clear()
+  mock_run(harness.testing, 42, "Different producer")
+  assert_code(
+    actions_workflow_run_json_artifact(harness, request(), schema_of(Evidence)),
+    "workflow_run_mismatch",
+  )
+  harness.testing.http_mock_clear()
+  mock_run(harness.testing, 43, "Release producer")
+  assert_code(
+    actions_workflow_run_json_artifact(harness, request(), schema_of(Evidence)),
+    "workflow_run_mismatch",
+  )
+}
+
+pipeline test_authenticated_redirect_does_not_forward_token_and_cleans_failure(
+  harness: Harness,
+  task: unknown,
+) {
+  harness.testing.http_mock_clear()
+  const before = artifact_temp_count(harness.fs)
+  mock_run(harness.testing)
+  mock_artifacts(harness.testing, [artifact_meta()])
+  harness.testing.http_mock("GET", DOWNLOAD, {status: 302, body: "", headers: {location: SIGNED}})
+  harness.testing.http_mock("GET", SIGNED, {status: 200, body: "not zip", headers: {}})
+  const result = actions_workflow_run_json_artifact(harness, request(), schema_of(Evidence))
+  assert_code(result, "invalid_archive")
+  assert_eq(artifact_temp_count(harness.fs), before, "temporary archive is removed on failure")
+  const calls = harness.testing.http_mock_calls()
+  assert_eq(
+    calls[2].headers.authorization,
+    "[redacted]",
+    "GitHub redirect request is authenticated",
+  )
+  assert_eq(calls[3].headers?.authorization, nil, "signed object download receives no GitHub token")
+}

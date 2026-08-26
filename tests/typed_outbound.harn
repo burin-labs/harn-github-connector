@@ -253,7 +253,8 @@ pipeline test_typed_outbound(harness: Harness, task) {
   assert_eq(len(view_reads), 1, "view reuses its normalized pull for queue enrichment")
   harness.testing.http_mock(
     "GET",
-    base + "/repos/octo-org/octo-repo/commits/green-sha/check-runs",
+    base
+      + "/repos/octo-org/octo-repo/commits/green-sha/check-runs?filter=latest&per_page=100&page=1",
     {
       status: 200,
       body: json_stringify(
@@ -276,6 +277,11 @@ pipeline test_typed_outbound(harness: Harness, task) {
       headers: {"x-ratelimit-remaining": "17"},
     },
   )
+  harness.testing.http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/commits/green-sha/status?per_page=100&page=1",
+    {status: 200, body: json_stringify({total_count: 0, statuses: []})},
+  )
   const green_checks = unwrap(
     call(harness, "github.pr.checks", auth + {repo: "octo-org/octo-repo", head_sha: "green-sha"}),
   )
@@ -284,14 +290,31 @@ pipeline test_typed_outbound(harness: Harness, task) {
   assert_eq(green_checks.checks[0].duration_seconds, 180, "check duration")
   harness.testing.http_mock(
     "GET",
-    base + "/repos/octo-org/octo-repo/commits/pending-sha/check-runs",
+    base
+      + "/repos/octo-org/octo-repo/commits/pending-sha/check-runs?filter=latest&per_page=100&page=1",
     {
       status: 200,
       body: json_stringify(
-        {check_runs: [{id: 8002, name: "Harn CI", status: "in_progress", conclusion: nil}]},
+        {
+          total_count: 1,
+          check_runs: [
+            {
+              id: 8002,
+              name: "Harn CI",
+              status: "in_progress",
+              conclusion: nil,
+              head_sha: "pending-sha",
+            },
+          ],
+        },
       ),
       headers: {"x-ratelimit-remaining": "16"},
     },
+  )
+  harness.testing.http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/commits/pending-sha/status?per_page=100&page=1",
+    {status: 200, body: json_stringify({total_count: 0, statuses: []})},
   )
   assert_eq(
     unwrap(
@@ -306,14 +329,31 @@ pipeline test_typed_outbound(harness: Harness, task) {
   )
   harness.testing.http_mock(
     "GET",
-    base + "/repos/octo-org/octo-repo/commits/failing-sha/check-runs",
+    base
+      + "/repos/octo-org/octo-repo/commits/failing-sha/check-runs?filter=latest&per_page=100&page=1",
     {
       status: 200,
       body: json_stringify(
-        {check_runs: [{id: 8003, name: "Harn CI", status: "completed", conclusion: "failure"}]},
+        {
+          total_count: 1,
+          check_runs: [
+            {
+              id: 8003,
+              name: "Harn CI",
+              status: "completed",
+              conclusion: "failure",
+              head_sha: "failing-sha",
+            },
+          ],
+        },
       ),
       headers: {"x-ratelimit-remaining": "15"},
     },
+  )
+  harness.testing.http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/commits/failing-sha/status?per_page=100&page=1",
+    {status: 200, body: json_stringify({total_count: 0, statuses: []})},
   )
   assert_eq(
     unwrap(
