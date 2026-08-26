@@ -45,14 +45,21 @@ fn mock_checks(testing: HarnessTesting, runs, total: int? = nil) {
   )
 }
 
-fn mock_statuses(testing: HarnessTesting, statuses, total: int? = nil) {
+fn mock_statuses(
+  testing: HarnessTesting,
+  statuses,
+  total: int? = nil,
+  envelope_sha: string = HEAD,
+) {
   testing.http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/commits/" + HEAD
       + "/status?per_page=100&page=1",
     {
       status: 200,
-      body: json_stringify({total_count: total ?? len(statuses), statuses: statuses}),
+      body: json_stringify(
+        {sha: envelope_sha, total_count: total ?? len(statuses), statuses: statuses},
+      ),
       headers: {"x-ratelimit-remaining": "19"},
     },
   )
@@ -118,6 +125,10 @@ pipeline test_exact_head_check_mutations_fail_closed(harness: Harness, task: unk
   harness.testing.http_mock_clear()
   mock_checks(harness.testing, [check_run({head_sha: "replacement-head"})])
   mock_statuses(harness.testing, [])
+  assert_code(read(harness), "stale_head")
+  harness.testing.http_mock_clear()
+  mock_checks(harness.testing, [check_run()])
+  mock_statuses(harness.testing, [status_context()], nil, "replacement-head")
   assert_code(read(harness), "stale_head")
   harness.testing.http_mock_clear()
   mock_checks(harness.testing, [check_run({name: ""})])

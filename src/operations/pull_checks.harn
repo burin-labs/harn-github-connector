@@ -14,6 +14,7 @@ fn __complete_check_evidence_page(
   url_prefix: string,
   list_key: string,
   cfg: dict,
+  expected_envelope_sha: string? = nil,
 ) {
   let page = 1
   let total = nil
@@ -37,6 +38,18 @@ fn __complete_check_evidence_page(
     )
     if is_err(envelope) {
       return envelope
+    }
+    if expected_envelope_sha != nil {
+      const observed_envelope_sha = trim(to_string(envelope?.sha ?? ""))
+      if observed_envelope_sha == ""
+        || lowercase(observed_envelope_sha)
+          != lowercase(trim(expected_envelope_sha)) {
+        return __err(
+          "stale_head",
+          "github.pr.checks legacy status envelope belonged to a different head",
+          {expected_head_oid: expected_envelope_sha, observed_head_oid: observed_envelope_sha},
+        )
+      }
     }
     const page_values = envelope?.get(list_key)
     const observed_total = to_int(envelope?.total_count)
@@ -141,7 +154,13 @@ pub fn __github_pr_checks_rest(harness: Harness, repo, number, head_sha: string,
   if is_err(runs) {
     return runs
   }
-  const statuses = __complete_check_evidence_page(harness, root + "/status", "statuses", cfg)
+  const statuses = __complete_check_evidence_page(
+    harness,
+    root + "/status",
+    "statuses",
+    cfg,
+    head_sha,
+  )
   if is_err(statuses) {
     return statuses
   }

@@ -641,7 +641,7 @@ fn mock_empty_statuses(testing: HarnessTesting, head_sha: string) {
   testing.http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/commits/" + head_sha + "/status?per_page=100&page=1",
-    {status: 200, body: json_stringify({total_count: 0, statuses: []})},
+    {status: 200, body: json_stringify({sha: head_sha, total_count: 0, statuses: []})},
   )
 }
 

@@ -280,7 +280,7 @@ pipeline test_typed_outbound(harness: Harness, task) {
   harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/commits/green-sha/status?per_page=100&page=1",
-    {status: 200, body: json_stringify({total_count: 0, statuses: []})},
+    {status: 200, body: json_stringify({sha: "green-sha", total_count: 0, statuses: []})},
   )
   const green_checks = unwrap(
     call(harness, "github.pr.checks", auth + {repo: "octo-org/octo-repo", head_sha: "green-sha"}),
@@ -314,7 +314,7 @@ pipeline test_typed_outbound(harness: Harness, task) {
   harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/commits/pending-sha/status?per_page=100&page=1",
-    {status: 200, body: json_stringify({total_count: 0, statuses: []})},
+    {status: 200, body: json_stringify({sha: "pending-sha", total_count: 0, statuses: []})},
   )
   assert_eq(
     unwrap(
@@ -353,7 +353,7 @@ pipeline test_typed_outbound(harness: Harness, task) {
   harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/commits/failing-sha/status?per_page=100&page=1",
-    {status: 200, body: json_stringify({total_count: 0, statuses: []})},
+    {status: 200, body: json_stringify({sha: "failing-sha", total_count: 0, statuses: []})},
   )
   assert_eq(
     unwrap(
