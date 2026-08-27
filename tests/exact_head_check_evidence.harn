@@ -6,7 +6,7 @@ const HEAD = "exact-head"
 
 const AUTH = {api_base_url: BASE, installation_token: "fixture-token"}
 
-fn check_run(overrides = {}) {
+fn check_run(overrides: any = {}) {
   return {
     id: 11,
     name: "CI",
@@ -20,7 +20,7 @@ fn check_run(overrides = {}) {
     + overrides
 }
 
-fn status_context(overrides = {}) {
+fn status_context(overrides: any = {}) {
   return {
     id: 21,
     context: "legacy/policy",
@@ -32,7 +32,7 @@ fn status_context(overrides = {}) {
     + overrides
 }
 
-fn mock_checks(testing: HarnessTesting, runs, total: int? = nil) {
+fn mock_checks(testing: HarnessTesting, runs: any, total: int? = nil) {
   testing.http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/commits/" + HEAD
@@ -47,7 +47,7 @@ fn mock_checks(testing: HarnessTesting, runs, total: int? = nil) {
 
 fn mock_statuses(
   testing: HarnessTesting,
-  statuses,
+  statuses: any,
   total: int? = nil,
   envelope_sha: string = HEAD,
 ) {
@@ -73,7 +73,7 @@ fn read(harness: Harness) {
   )
 }
 
-fn assert_code(result, code: string) {
+fn assert_code(result: any, code: string) {
   require is_err(result), "mutated evidence fails closed"
   require unwrap_err(result).code == code, "mutated evidence returned the wrong error code"
 }

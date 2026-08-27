@@ -29,7 +29,7 @@ fn parse_error(args: list<string>) -> string {
   return to_string(unwrap_err(result))
 }
 
-pipeline test_publish_args_split_the_repository_slug(task) {
+pipeline test_publish_args_split_the_repository_slug(task: any) {
   const values = parsed(MINIMAL)
   assert_eq(values.get("owner"), "octo-org")
   assert_eq(values.get("repo"), "octo-repo")
@@ -37,7 +37,7 @@ pipeline test_publish_args_split_the_repository_slug(task) {
   assert_eq(values.get("headline"), "Update")
 }
 
-pipeline test_publish_args_reject_unusable_input(task) {
+pipeline test_publish_args_reject_unusable_input(task: any) {
   // Each case pairs an argument list with a fragment its rejection must name,
   // so a parser that fails for the wrong reason still fails the test.
   const cases = [
@@ -68,7 +68,7 @@ pipeline test_publish_args_reject_unusable_input(task) {
   }
 }
 
-pipeline test_publish_request_leaves_adapter_defaults_alone(task) {
+pipeline test_publish_request_leaves_adapter_defaults_alone(task: any) {
   const request = publish_request(parsed(MINIMAL))
   assert_eq(request.owner, "octo-org")
   assert_eq(request.repo, "octo-repo")
@@ -87,7 +87,7 @@ pipeline test_publish_request_leaves_adapter_defaults_alone(task) {
   assert_eq(request.reset_branch, true)
 }
 
-pipeline test_publish_request_carries_every_optional_flag(task) {
+pipeline test_publish_request_carries_every_optional_flag(task: any) {
   const optional = [
     "--body",
     "Published by automation: https://example.test/r/1",
@@ -103,7 +103,7 @@ pipeline test_publish_request_carries_every_optional_flag(task) {
   assert_eq(request.reset_branch, true)
 }
 
-pipeline test_no_reset_opts_out_of_force_moving_the_branch(task) {
+pipeline test_no_reset_opts_out_of_force_moving_the_branch(task: any) {
   const request = publish_request(parsed(MINIMAL + ["--no-reset"]))
   assert_eq(request.reset_branch, false)
   // Creating a missing branch is still allowed: --no-reset is about refusing to
@@ -111,7 +111,7 @@ pipeline test_no_reset_opts_out_of_force_moving_the_branch(task) {
   assert_eq(request.create_branch, true)
 }
 
-pipeline test_summary_names_the_commit_and_every_changed_path(task) {
+pipeline test_summary_names_the_commit_and_every_changed_path(task: any) {
   const change: GithubWorktreeChange = {
     path: "Formula/burin.rb",
     status: "modified",

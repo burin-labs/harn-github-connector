@@ -16,7 +16,7 @@ import {
   repos_list_release_assets,
 } from "../src/facade"
 
-fn request_to(calls, method, url) {
+fn request_to(calls: any, method: any, url: any) {
   for call in calls {
     if call.method == method && call.url == url {
       return call
@@ -48,7 +48,7 @@ fn release_payload() -> dict {
 
 pipeline test_typed_repository_file_helper_validates_the_normalized_contract(
   harness: Harness,
-  task,
+  task: any,
 ) {
   harness.testing.http_mock_clear()
   harness.testing.http_mock(
@@ -83,7 +83,10 @@ pipeline test_typed_repository_file_helper_validates_the_normalized_contract(
   assert_eq(result.file?.text, "0.6.6\n")
 }
 
-pipeline test_typed_latest_release_helper_distinguishes_accessible_absence(harness: Harness, task) {
+pipeline test_typed_latest_release_helper_distinguishes_accessible_absence(
+  harness: Harness,
+  task: any,
+) {
   harness.testing.http_mock_clear()
   harness.testing.http_mock(
     "GET",
@@ -120,7 +123,7 @@ pipeline test_typed_latest_release_helper_distinguishes_accessible_absence(harne
   assert_eq(unwrap_err(masked).code, "inaccessible_resource")
 }
 
-pipeline test_repo_automation_methods(harness: Harness, task) {
+pipeline test_repo_automation_methods(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const base = "https://github-api.test"
   const token = "github-installation-token"

@@ -34,7 +34,7 @@ const CLAIM_READ_BACK_DELAY_MS = 100
  * meant something else and stays an error. The status only decides whether the
  * read-back is worth a round trip.
  */
-pub fn __github_ref_claim(harness: Harness, args, cfg) {
+pub fn __github_ref_claim(harness: Harness, args: any, cfg: any) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -94,7 +94,7 @@ pub fn __github_ref_claim(harness: Harness, args, cfg) {
  * retry, and the caller preserves the original create refusal if no holder
  * becomes visible.
  */
-fn __github_ref_after_contention(harness: Harness, repo, ref: string, cfg) {
+fn __github_ref_after_contention(harness: Harness, repo: any, ref: string, cfg: any) {
   let observed = nil
   for attempt in range(0, CLAIM_READ_BACK_MAX_ATTEMPTS) {
     observed = __github_ref_object(harness, repo, ref, cfg)
@@ -110,7 +110,7 @@ fn __github_ref_after_contention(harness: Harness, repo, ref: string, cfg) {
   return observed
 }
 
-fn __github_ref_object(harness: Harness, repo, ref: string, cfg) {
+fn __github_ref_object(harness: Harness, repo: any, ref: string, cfg: any) {
   const value = __github_json(
     harness,
     "GET",
@@ -137,7 +137,7 @@ fn __github_ref_object(harness: Harness, repo, ref: string, cfg) {
  * A missing headline never fails the claim: `claimed` is the answer the caller
  * acted on, and a lock whose payload has been garbage collected is still held.
  */
-fn __github_commit_headline(harness: Harness, repo, holder, cfg) -> string {
+fn __github_commit_headline(harness: Harness, repo: any, holder: any, cfg: any) -> string {
   if holder.type != "commit" {
     return ""
   }
@@ -163,7 +163,7 @@ fn __github_commit_headline(harness: Harness, repo, holder, cfg) -> string {
  * Exactly one of `oid` and `payload` is meaningful. A caller with neither is
  * asking for a ref to nothing, which is the schema error it looks like.
  */
-fn __github_claim_object(harness: Harness, repo, args, cfg) {
+fn __github_claim_object(harness: Harness, repo: any, args: any, cfg: any) {
   const oid = trim(to_string(args?.oid ?? args?.sha ?? ""))
   if oid != "" {
     return Ok(oid)
@@ -205,7 +205,7 @@ fn __github_claim_object(harness: Harness, repo, args, cfg) {
   return Ok(minted)
 }
 
-fn __github_commit_tree(harness: Harness, repo, oid: string, cfg) {
+fn __github_commit_tree(harness: Harness, repo: any, oid: string, cfg: any) {
   const value = __github_json(
     harness,
     "GET",
@@ -234,7 +234,7 @@ fn __github_commit_tree(harness: Harness, repo, oid: string, cfg) {
  * failure: a release that retries after a partial failure should be able to
  * finish.
  */
-pub fn __github_ref_release(harness: Harness, args, cfg) {
+pub fn __github_ref_release(harness: Harness, args: any, cfg: any) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo

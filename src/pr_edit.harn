@@ -9,7 +9,7 @@ fn __schema_error(message: string) {
   return Err({code: "schema_drift", category: "schema_drift", message: message})
 }
 
-fn __pr_edit_user(user) {
+fn __pr_edit_user(user: any) {
   if user == nil {
     return nil
   }

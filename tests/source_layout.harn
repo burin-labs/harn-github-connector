@@ -1,13 +1,13 @@
 import { logical_line_count, source_length_violations } from "../scripts/check-source-layout"
 
-pipeline test_logical_line_counting_handles_final_newlines(harness: Harness, task) {
+pipeline test_logical_line_counting_handles_final_newlines(harness: Harness, task: any) {
   assert_eq(logical_line_count(""), 0)
   assert_eq(logical_line_count("one"), 1)
   assert_eq(logical_line_count("one\n"), 1)
   assert_eq(logical_line_count("one\ntwo"), 2)
 }
 
-pipeline test_source_policy_reports_only_oversized_matching_files(harness: Harness, task) {
+pipeline test_source_policy_reports_only_oversized_matching_files(harness: Harness, task: any) {
   const root = path_join(harness.fs.workspace_temp_dir(), "source-layout-" + harness.random.uuid())
   harness.fs.mkdir(root)
   harness.fs.mkdir(path_join(root, "nested"))

@@ -78,7 +78,7 @@ fn __complete_check_evidence_page(
   return __err("incomplete_page", "github.pr.checks exact-head evidence exceeded its page limit")
 }
 
-fn __legacy_status_check(status, head_sha: string) {
+fn __legacy_status_check(status: any, head_sha: string) {
   const state = lowercase(trim(to_string(status?.state ?? "")))
   if state != "pending" && state != "expected" && state != "success" && state != "failure"
     && state
@@ -117,7 +117,7 @@ fn __legacy_status_check(status, head_sha: string) {
   )
 }
 
-fn __validate_exact_check_set(checks, head_sha: string) {
+fn __validate_exact_check_set(checks: any, head_sha: string) {
   let names = []
   for check in checks {
     const name = trim(to_string(check?.name ?? ""))
@@ -140,7 +140,14 @@ fn __validate_exact_check_set(checks, head_sha: string) {
   return Ok(checks)
 }
 
-pub fn __github_pr_checks_rest(harness: Harness, repo, number, head_sha: string, pull, cfg: dict) {
+pub fn __github_pr_checks_rest(
+  harness: Harness,
+  repo: any,
+  number: any,
+  head_sha: string,
+  pull: any,
+  cfg: dict,
+) {
   const root = __github_api_url(
     cfg.api_base_url,
     "/repos/" + repo.owner + "/" + repo.name + "/commits/" + head_sha,
@@ -193,7 +200,7 @@ pub fn __github_pr_checks_rest(harness: Harness, repo, number, head_sha: string,
   }
 }
 
-fn __graphql_checks_scope_denied(errors) {
+fn __graphql_checks_scope_denied(errors: any) {
   for error in errors ?? [] {
     const encoded = lowercase(json_stringify(error))
     const names_rollup = contains(encoded, "statuscheckrollup")
@@ -206,7 +213,7 @@ fn __graphql_checks_scope_denied(errors) {
   return false
 }
 
-fn __same_workflow(left, right) {
+fn __same_workflow(left: any, right: any) {
   if lowercase(to_string(left?.event ?? "")) != lowercase(to_string(right?.event ?? "")) {
     return false
   }
@@ -218,7 +225,7 @@ fn __same_workflow(left, right) {
   return trim(to_string(left?.path ?? "")) == trim(to_string(right?.path ?? ""))
 }
 
-fn __latest_workflow_runs(runs) {
+fn __latest_workflow_runs(runs: any) {
   let latest = []
   for candidate in runs ?? [] {
     let superseded = false
@@ -237,11 +244,11 @@ fn __latest_workflow_runs(runs) {
 
 fn __github_pr_checks_actions_fallback(
   harness: Harness,
-  repo,
+  repo: any,
   number: int,
   head_sha: string,
-  pull,
-  cfg,
+  pull: any,
+  cfg: any,
 ) {
   const envelope = __actions_workflow_runs_list(
     harness,
@@ -312,11 +319,11 @@ fn __github_pr_checks_actions_fallback(
 
 pub fn __github_pr_checks_graphql_fallback(
   harness: Harness,
-  repo,
+  repo: any,
   number: int,
   head_sha: string,
-  known_pull,
-  cfg,
+  known_pull: any,
+  cfg: any,
 ) {
   const graph = __github_json(
     harness,

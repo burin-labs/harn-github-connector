@@ -1,10 +1,10 @@
 import { call } from "../src/facade"
 
-fn auth(base) {
+fn auth(base: any) {
   return {api_base_url: base, installation_token: "test-token"}
 }
 
-fn pull_fixture(number, head, merged_at = nil) {
+fn pull_fixture(number: any, head: any, merged_at: any = nil) {
   return {
     number: number,
     title: "PR " + to_string(number),
@@ -22,7 +22,7 @@ fn pull_fixture(number, head, merged_at = nil) {
   }
 }
 
-pipeline test_pr_list_qualifies_bare_head_to_repository_owner(harness: Harness, task) {
+pipeline test_pr_list_qualifies_bare_head_to_repository_owner(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const base = "https://github-api.test"
   harness.testing.http_mock(
@@ -51,7 +51,7 @@ pipeline test_pr_list_qualifies_bare_head_to_repository_owner(harness: Harness, 
   assert_eq(len(harness.testing.http_mock_calls()), 1, "one exact REST request")
 }
 
-pipeline test_pr_list_preserves_explicit_fork_owner(harness: Harness, task) {
+pipeline test_pr_list_preserves_explicit_fork_owner(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const base = "https://github-api.test"
   harness.testing.http_mock(
@@ -75,7 +75,7 @@ pipeline test_pr_list_preserves_explicit_fork_owner(harness: Harness, task) {
   assert_eq(len(harness.testing.http_mock_calls()), 1, "one exact fork-owner request")
 }
 
-pipeline test_pr_list_merged_maps_to_closed_and_filters_unmerged_prs(harness: Harness, task) {
+pipeline test_pr_list_merged_maps_to_closed_and_filters_unmerged_prs(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const base = "https://github-api.test"
   harness.testing.http_mock(
@@ -110,7 +110,7 @@ pipeline test_pr_list_merged_maps_to_closed_and_filters_unmerged_prs(harness: Ha
   assert_eq(len(harness.testing.http_mock_calls()), 1, "merged state uses one closed-PR request")
 }
 
-pipeline test_pr_list_rejects_unsupported_state_before_network(harness: Harness, task) {
+pipeline test_pr_list_rejects_unsupported_state_before_network(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const result = call(
     harness,
@@ -122,7 +122,7 @@ pipeline test_pr_list_rejects_unsupported_state_before_network(harness: Harness,
   assert_eq(len(harness.testing.http_mock_calls()), 0, "invalid state performs no network request")
 }
 
-pipeline test_graphql_promotes_protocol_errors(harness: Harness, task) {
+pipeline test_graphql_promotes_protocol_errors(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const base = "https://github-api.test"
   harness.testing.http_mock(

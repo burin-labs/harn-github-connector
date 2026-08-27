@@ -70,7 +70,7 @@ fn tree_request() -> GithubBranchTreeCompareRequest {
   }
 }
 
-pipeline test_upsert_creates_the_exact_head_base_pull(harness: Harness, task) {
+pipeline test_upsert_creates_the_exact_head_base_pull(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   harness.testing.http_mock("GET", list_url(), {status: 200, body: "[]"})
   harness.testing.http_mock(
@@ -93,7 +93,7 @@ pipeline test_upsert_creates_the_exact_head_base_pull(harness: Harness, task) {
   harness.testing.http_mock_clear()
 }
 
-pipeline test_upsert_updates_one_exact_existing_pull(harness: Harness, task) {
+pipeline test_upsert_updates_one_exact_existing_pull(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   harness.testing.http_mock(
     "GET",
@@ -116,7 +116,7 @@ pipeline test_upsert_updates_one_exact_existing_pull(harness: Harness, task) {
   harness.testing.http_mock_clear()
 }
 
-pipeline test_upsert_rejects_a_stale_existing_head_without_mutation(harness: Harness, task) {
+pipeline test_upsert_rejects_a_stale_existing_head_without_mutation(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   harness.testing.http_mock(
     "GET",
@@ -132,7 +132,7 @@ pipeline test_upsert_rejects_a_stale_existing_head_without_mutation(harness: Har
   harness.testing.http_mock_clear()
 }
 
-pipeline test_upsert_waits_for_the_exact_published_head(harness: Harness, task) {
+pipeline test_upsert_waits_for_the_exact_published_head(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   harness.testing.http_mock(
     "GET",
@@ -162,7 +162,7 @@ pipeline test_upsert_waits_for_the_exact_published_head(harness: Harness, task) 
   harness.testing.http_mock_clear()
 }
 
-pipeline test_upsert_fails_closed_when_the_previous_head_persists(harness: Harness, task) {
+pipeline test_upsert_fails_closed_when_the_previous_head_persists(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   harness.testing.http_mock(
     "GET",
@@ -184,7 +184,7 @@ pipeline test_upsert_fails_closed_when_the_previous_head_persists(harness: Harne
   harness.testing.http_mock_clear()
 }
 
-pipeline test_upsert_rejects_an_unrelated_head_without_retry(harness: Harness, task) {
+pipeline test_upsert_rejects_an_unrelated_head_without_retry(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   harness.testing.http_mock(
     "GET",
@@ -199,7 +199,7 @@ pipeline test_upsert_rejects_an_unrelated_head_without_retry(harness: Harness, t
   harness.testing.http_mock_clear()
 }
 
-pipeline test_upsert_rejects_changed_pull_identity_without_mutation(harness: Harness, task) {
+pipeline test_upsert_rejects_changed_pull_identity_without_mutation(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const wrong_identity = pull(43, "Old title", HEAD_OID)
     + {head: pull(43, "Old title", HEAD_OID).head + {ref: "third-party-branch"}}
@@ -215,7 +215,7 @@ pipeline test_upsert_rejects_changed_pull_identity_without_mutation(harness: Har
   harness.testing.http_mock_clear()
 }
 
-pipeline test_upsert_stops_on_provider_error_during_consistency_wait(harness: Harness, task) {
+pipeline test_upsert_stops_on_provider_error_during_consistency_wait(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   harness.testing.http_mock(
     "GET",
@@ -235,7 +235,7 @@ pipeline test_upsert_stops_on_provider_error_during_consistency_wait(harness: Ha
   harness.testing.http_mock_clear()
 }
 
-pipeline test_branch_tree_comparison_retains_both_exact_identities(harness: Harness, task) {
+pipeline test_branch_tree_comparison_retains_both_exact_identities(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   harness.testing.http_mock(
     "GET",

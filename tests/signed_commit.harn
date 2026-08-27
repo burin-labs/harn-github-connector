@@ -43,7 +43,7 @@ fn request(base: string) -> GithubSignedCommitRequest {
   }
 }
 
-pipeline test_create_signed_commit_uses_atomic_github_signed_mutation(harness: Harness, task) {
+pipeline test_create_signed_commit_uses_atomic_github_signed_mutation(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const base = "https://api.github.test"
   harness.testing.http_mock(
@@ -100,7 +100,10 @@ pipeline test_create_signed_commit_uses_atomic_github_signed_mutation(harness: H
   harness.testing.http_mock_clear()
 }
 
-pipeline test_create_signed_commit_fails_closed_on_unverified_signature(harness: Harness, task) {
+pipeline test_create_signed_commit_fails_closed_on_unverified_signature(
+  harness: Harness,
+  task: any,
+) {
   harness.testing.http_mock_clear()
   const base = "https://api.github.test"
   harness.testing.http_mock(
@@ -133,7 +136,7 @@ pipeline test_create_signed_commit_fails_closed_on_unverified_signature(harness:
 
 pipeline test_create_signed_commit_rejects_overlapping_changes_before_network(
   harness: Harness,
-  task,
+  task: any,
 ) {
   harness.testing.http_mock_clear()
   const additions: list<GithubCommitFileAddition> = [

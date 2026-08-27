@@ -4,7 +4,7 @@ import { __err } from "../errors"
 import { __validate_pull_response } from "../pulls/normalization"
 import { __request_context_keys } from "../request_options"
 
-pub fn __repo_parts(args) {
+pub fn __repo_parts(args: any) {
   if args?.owner != nil && args?.repo != nil && !contains(to_string(args.repo), "/") {
     return Ok(
       {
@@ -41,7 +41,7 @@ pub fn __repo_parts(args) {
   return __err("schema_drift", "github typed API requires repo as `owner/name` or owner + repo")
 }
 
-pub fn __github_branch_protection_raw(harness: Harness, repo, branch, cfg) {
+pub fn __github_branch_protection_raw(harness: Harness, repo: any, branch: any, cfg: any) {
   if branch == nil || trim(to_string(branch)) == "" {
     return Ok(nil)
   }
@@ -66,7 +66,7 @@ pub fn __github_branch_protection_raw(harness: Harness, repo, branch, cfg) {
   return Ok(protection)
 }
 
-pub fn __github_pull_identity(harness: Harness, repo, number, cfg, surface) {
+pub fn __github_pull_identity(harness: Harness, repo: any, number: any, cfg: any, surface: any) {
   const pull = __github_json(
     harness,
     "GET",
@@ -90,7 +90,7 @@ pub fn __github_pull_identity(harness: Harness, repo, number, cfg, surface) {
   return Ok(pull)
 }
 
-pub fn __stale_pr_head(expected_head_oid, observed_head_oid) {
+pub fn __stale_pr_head(expected_head_oid: any, observed_head_oid: any) {
   return __err(
     "stale_head",
     "pull request head changed while reading canonical evidence",
@@ -98,7 +98,7 @@ pub fn __stale_pr_head(expected_head_oid, observed_head_oid) {
   )
 }
 
-pub fn __graphql_merge_method(method) {
+pub fn __graphql_merge_method(method: any) {
   const normalized = uppercase(to_string(method ?? "MERGE"))
   if normalized == "MERGE" || normalized == "SQUASH" || normalized == "REBASE" {
     return Ok(normalized)
@@ -106,7 +106,7 @@ pub fn __graphql_merge_method(method) {
   return __err("schema_drift", "merge method must be MERGE, SQUASH, or REBASE")
 }
 
-pub fn __typed_release(release) -> GithubConnectorResult<GithubRelease> {
+pub fn __typed_release(release: any) -> GithubConnectorResult<GithubRelease> {
   if type_of(release) != "dict" || release?.id == nil
     || trim(to_string(release?.tag_name ?? ""))
       == "" {
@@ -148,7 +148,7 @@ pub fn __typed_release(release) -> GithubConnectorResult<GithubRelease> {
   )
 }
 
-pub fn __typed_repository_file(content, ref) {
+pub fn __typed_repository_file(content: any, ref: any) {
   if type_of(content) != "dict" || content?.type != "file" || content?.encoding != "base64"
     || trim(to_string(content?.path ?? ""))
       == ""
@@ -175,12 +175,12 @@ pub fn __typed_repository_file(content, ref) {
   )
 }
 
-pub fn __is_status_error(err, status) {
+pub fn __is_status_error(err: any, status: any) {
   return to_int(err?.http_status ?? 0) == status
     || contains(to_string(err?.message ?? ""), "status " + to_string(status))
 }
 
-pub fn __merge_body(args, pull) {
+pub fn __merge_body(args: any, pull: any) {
   let body = __body_without(
     args,
     __request_context_keys()
@@ -204,14 +204,14 @@ pub fn __merge_body(args, pull) {
   return body
 }
 
-pub fn __merge_annotation(response, args) {
+pub fn __merge_annotation(response: any, args: any) {
   if args?.admin_override ?? false {
     return response + {admin_override_requested: true}
   }
   return response
 }
 
-pub fn __delete_pull_head_branch(harness: Harness, args, pull, cfg) {
+pub fn __delete_pull_head_branch(harness: Harness, args: any, pull: any, cfg: any) {
   const head_ref = pull?.head?.ref
   if head_ref == nil || trim(to_string(head_ref)) == "" {
     return __err("missing_head_ref", "cannot delete PR branch because pull.head.ref was missing")

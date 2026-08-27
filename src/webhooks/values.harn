@@ -1,4 +1,4 @@
-pub fn __truncate_summary(value) {
+pub fn __truncate_summary(value: any) {
   const text = to_string(value ?? "")
   if len(text) <= 80 {
     return text
@@ -6,7 +6,7 @@ pub fn __truncate_summary(value) {
   return text[0:77] + "..."
 }
 
-pub fn __topic(event_kind, action) {
+pub fn __topic(event_kind: any, action: any) {
   const prefix = "github." + to_string(event_kind)
   if action == nil || trim(to_string(action)) == "" {
     return prefix
@@ -14,7 +14,7 @@ pub fn __topic(event_kind, action) {
   return prefix + "." + to_string(action)
 }
 
-pub fn __first(values) {
+pub fn __first(values: any) {
   const list = values ?? []
   if len(list) == 0 {
     return nil
@@ -22,7 +22,7 @@ pub fn __first(values) {
   return list[0]
 }
 
-pub fn __pull_request_numbers(pulls) {
+pub fn __pull_request_numbers(pulls: any) {
   let numbers = []
   for pr in pulls ?? [] {
     if pr?.number != nil {
@@ -32,7 +32,7 @@ pub fn __pull_request_numbers(pulls) {
   return numbers
 }
 
-pub fn __ref_name(ref) {
+pub fn __ref_name(ref: any) {
   if ref == nil {
     return nil
   }
@@ -46,7 +46,7 @@ pub fn __ref_name(ref) {
   return text
 }
 
-pub fn __installation_state(action) {
+pub fn __installation_state(action: any) {
   const value = to_string(action ?? "")
   if __is_suspension_action(value) {
     return "suspended"
@@ -60,17 +60,17 @@ pub fn __installation_state(action) {
   return nil
 }
 
-pub fn __is_suspension_action(action) {
+pub fn __is_suspension_action(action: any) {
   const value = to_string(action ?? "")
   return value == "suspend" || value == "suspended"
 }
 
-pub fn __is_revocation_action(action) {
+pub fn __is_revocation_action(action: any) {
   const value = to_string(action ?? "")
   return value == "deleted" || value == "removed" || value == "revoked"
 }
 
-pub fn __repo(payload) {
+pub fn __repo(payload: any) {
   const repo = payload?.repository ?? {}
   const owner = repo?.owner ?? {}
   const owner_name = owner?.login ?? owner?.name ?? ""
@@ -83,7 +83,7 @@ pub fn __repo(payload) {
   return {owner: owner_name, name: repo_name, full_name: repo?.full_name ?? fallback_full_name}
 }
 
-pub fn __occurred_at(event_kind, payload, raw) {
+pub fn __occurred_at(event_kind: any, payload: any, raw: any) {
   if raw?.occurred_at != nil {
     return raw.occurred_at
   }

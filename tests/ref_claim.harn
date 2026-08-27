@@ -31,7 +31,7 @@ fn taken(message: string, status: int = 422) {
   }
 }
 
-pipeline test_an_uncontended_ref_is_claimed(harness: Harness, task) {
+pipeline test_an_uncontended_ref_is_claimed(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   harness.testing.http_mock(
     "POST",
@@ -46,7 +46,7 @@ pipeline test_an_uncontended_ref_is_claimed(harness: Harness, task) {
   assert_eq(claim.holder_headline, "")
 }
 
-pipeline test_a_taken_ref_reports_the_holder_instead_of_failing(harness: Harness, task) {
+pipeline test_a_taken_ref_reports_the_holder_instead_of_failing(harness: Harness, task: any) {
   // The point of the primitive: losing the race is an answer a caller can act
   // on at second one, not an error it has to classify.
   harness.testing.http_mock_clear()
@@ -76,7 +76,7 @@ pipeline test_a_taken_ref_reports_the_holder_instead_of_failing(harness: Harness
   assert_eq(claim.holder_headline, "release-lock v1.2.3 run 019fc846 on hosted-runner")
 }
 
-pipeline test_a_taken_ref_waits_for_the_holder_to_become_visible(harness: Harness, task) {
+pipeline test_a_taken_ref_waits_for_the_holder_to_become_visible(harness: Harness, task: any) {
   harness.testing.clock_set(1700000000000)
   harness.testing.http_mock_clear()
   harness.testing.http_mock("POST", refs_url(), taken("Reference already exists"))
@@ -106,7 +106,7 @@ pipeline test_a_taken_ref_waits_for_the_holder_to_become_visible(harness: Harnes
   assert_eq(len(read_backs), 2)
 }
 
-pipeline test_a_taken_ref_stops_after_the_bounded_visibility_window(harness: Harness, task) {
+pipeline test_a_taken_ref_stops_after_the_bounded_visibility_window(harness: Harness, task: any) {
   harness.testing.clock_set(1700000000000)
   harness.testing.http_mock_clear()
   harness.testing.http_mock("POST", refs_url(), taken("Reference already exists"))
@@ -131,7 +131,10 @@ pipeline test_a_taken_ref_stops_after_the_bounded_visibility_window(harness: Har
   assert_eq(len(read_backs), 3)
 }
 
-pipeline test_a_holder_without_a_readable_payload_is_still_a_lost_claim(harness: Harness, task) {
+pipeline test_a_holder_without_a_readable_payload_is_still_a_lost_claim(
+  harness: Harness,
+  task: any,
+) {
   // A lock whose commit has been garbage collected is still held. Reporting the
   // headline is best effort; reporting the loss is not.
   harness.testing.http_mock_clear()
@@ -147,7 +150,7 @@ pipeline test_a_holder_without_a_readable_payload_is_still_a_lost_claim(harness:
   assert_eq(claim.holder_headline, "")
 }
 
-pipeline test_a_422_that_is_not_contention_stays_an_error(harness: Harness, task) {
+pipeline test_a_422_that_is_not_contention_stays_an_error(harness: Harness, task: any) {
   // GitHub spends one status on "taken", "no such object", and "bad ref name".
   // Reading the ref back is what tells them apart; without it a caller would
   // wait for a lock nobody holds.
@@ -160,7 +163,7 @@ pipeline test_a_422_that_is_not_contention_stays_an_error(harness: Harness, task
   assert_eq(unwrap_err(result).http_status, 422)
 }
 
-pipeline test_the_documented_conflict_status_reports_the_holder_too(harness: Harness, task) {
+pipeline test_the_documented_conflict_status_reports_the_holder_too(harness: Harness, task: any) {
   // GitHub answers a taken ref with 422 today, and documents 409 for the same
   // case on the create endpoint. A claim that reads back on only one of them
   // turns contention into an unreadable lock — a caller can wait for a holder,
@@ -183,7 +186,10 @@ pipeline test_the_documented_conflict_status_reports_the_holder_too(harness: Har
   assert_eq(claim.holder_headline, "release-lock v1.2.3 run=019f")
 }
 
-pipeline test_a_refusal_that_is_not_a_conflict_never_costs_a_read_back(harness: Harness, task) {
+pipeline test_a_refusal_that_is_not_a_conflict_never_costs_a_read_back(
+  harness: Harness,
+  task: any,
+) {
   // The read-back is only reachable from a status that could mean "already
   // there". A 500 is not evidence of a holder, and asking again would report
   // whoever happens to hold the ref as the reason this claim failed.
@@ -203,7 +209,7 @@ pipeline test_a_refusal_that_is_not_a_conflict_never_costs_a_read_back(harness: 
   )
 }
 
-pipeline test_a_partial_ref_is_refused_before_any_request(harness: Harness, task) {
+pipeline test_a_partial_ref_is_refused_before_any_request(harness: Harness, task: any) {
   // `git/refs` and `git/ref` spell the same ref differently. Requiring the
   // qualified name at the boundary is what keeps the claim and the read-back
   // describing one ref.
@@ -252,7 +258,7 @@ fn mint_mocks(testing: HarnessTesting) {
   )
 }
 
-pipeline test_a_claim_with_no_oid_mints_its_own_payload(harness: Harness, task) {
+pipeline test_a_claim_with_no_oid_mints_its_own_payload(harness: Harness, task: any) {
   // A lock has nothing to point at yet, so the connector mints the object the
   // ref will name and the caller never handles a tree.
   harness.testing.http_mock_clear()
@@ -281,7 +287,7 @@ pipeline test_a_claim_with_no_oid_mints_its_own_payload(harness: Harness, task) 
 
 pipeline test_a_minted_payload_still_reports_the_holder_when_the_claim_is_lost(
   harness: Harness,
-  task,
+  task: any,
 ) {
   harness.testing.http_mock_clear()
   mint_mocks(harness.testing)
@@ -307,7 +313,7 @@ pipeline test_a_minted_payload_still_reports_the_holder_when_the_claim_is_lost(
 
 pipeline test_a_claim_with_neither_an_oid_nor_a_payload_is_refused_before_any_request(
   harness: Harness,
-  task,
+  task: any,
 ) {
   harness.testing.http_mock_clear()
   const failure = unwrap_err(

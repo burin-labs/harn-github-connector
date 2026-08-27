@@ -1,7 +1,7 @@
 import { github_extract_mentions, init, shutdown } from "../src/facade"
 import { fixture_raw, github_normalize } from "./helpers"
 
-pipeline test_mention_extraction(harness: Harness, task) {
+pipeline test_mention_extraction(harness: Harness, task: any) {
   // 1. Pure helper: multiple mentions, command + args parsing.
   const mentions = github_extract_mentions(
     "Hey @harn-bot deploy staging now, and thanks @reviewer!",

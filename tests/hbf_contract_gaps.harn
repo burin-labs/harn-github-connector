@@ -6,7 +6,7 @@ fn auth() {
   return {api_base_url: BASE, installation_token: "test-token"}
 }
 
-fn pull(number, head_sha, merged = false, commit_count = 1) {
+fn pull(number: any, head_sha: any, merged: any = false, commit_count: any = 1) {
   return {
     number: number,
     title: "PR " + to_string(number),
@@ -38,7 +38,7 @@ fn pull(number, head_sha, merged = false, commit_count = 1) {
   }
 }
 
-fn commit(sha, message, verified, reason) {
+fn commit(sha: any, message: any, verified: any, reason: any) {
   return {
     sha: sha,
     commit: {
@@ -66,7 +66,7 @@ fn commit(sha, message, verified, reason) {
   }
 }
 
-fn workflow_run(id, head_sha) {
+fn workflow_run(id: any, head_sha: any) {
   return {
     id: id,
     workflow_id: 17,
@@ -86,7 +86,7 @@ fn workflow_run(id, head_sha) {
   }
 }
 
-pipeline test_pr_commits_reads_every_page_on_one_stable_head(harness: Harness, task) {
+pipeline test_pr_commits_reads_every_page_on_one_stable_head(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const head_sha = "cccccccccccccccccccccccccccccccccccccccc"
   harness.testing.http_mock(
@@ -152,7 +152,7 @@ pipeline test_pr_commits_reads_every_page_on_one_stable_head(harness: Harness, t
   )
 }
 
-pipeline test_pr_commits_rejects_malformed_signature_and_head_races(harness: Harness, task) {
+pipeline test_pr_commits_rejects_malformed_signature_and_head_races(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const head_sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   harness.testing.http_mock(
@@ -245,7 +245,7 @@ pipeline test_pr_commits_rejects_malformed_signature_and_head_races(harness: Har
   assert_eq(unwrap_err(raced).observed_head_oid, new_head, "final head is reported")
 }
 
-pipeline test_merged_pr_evidence_is_normalized_and_required(harness: Harness, task) {
+pipeline test_merged_pr_evidence_is_normalized_and_required(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const merged = pull(45, "head-45", true)
   harness.testing.http_mock(
@@ -342,7 +342,7 @@ pipeline test_merged_pr_evidence_is_normalized_and_required(harness: Harness, ta
   )
 }
 
-pipeline test_actions_runs_returns_closed_typed_envelope(harness: Harness, task) {
+pipeline test_actions_runs_returns_closed_typed_envelope(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const url = BASE
     + "/repos/octo-org/octo-repo/actions/workflows/ci.yml/runs?branch=main&event=merge_group&per_page=25&page=2"
@@ -412,7 +412,10 @@ pipeline test_actions_runs_returns_closed_typed_envelope(harness: Harness, task)
   assert_eq(unwrap_err(malformed).code, "invalid_response", "run shape is validated once")
 }
 
-pipeline test_canonical_contracts_distinguish_auth_and_network_failures(harness: Harness, task) {
+pipeline test_canonical_contracts_distinguish_auth_and_network_failures(
+  harness: Harness,
+  task: any,
+) {
   harness.testing.http_mock_clear()
   harness.testing.http_mock(
     "GET",

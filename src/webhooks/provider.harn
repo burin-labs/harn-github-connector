@@ -94,7 +94,7 @@ pub fn payload_schema() {
 }
 
 /** Initialize connector state with orchestrator context. */
-pub fn init(_harness: Harness, ctx = nil) {
+pub fn init(_harness: Harness, ctx: any = nil) {
   const next = __state()
     + {
       initialized: true,
@@ -109,7 +109,7 @@ pub fn init(_harness: Harness, ctx = nil) {
 }
 
 /** Activate webhook bindings and reject duplicate configured paths. */
-pub fn activate(_harness: Harness, bindings = []) {
+pub fn activate(_harness: Harness, bindings: any = []) {
   let by_id = {}
   let seen_paths = {}
   for binding in bindings ?? [] {
@@ -144,7 +144,7 @@ pub fn shutdown(_harness: Harness) {
 
 /** Verify and normalize a raw GitHub webhook request into NormalizeResult v1. */
 @complexity(allow)
-pub fn normalize_inbound(harness: Harness, raw) {
+pub fn normalize_inbound(harness: Harness, raw: any) {
   const body_text = raw?.body_text ?? raw?.body ?? ""
   if len(body_text) > MAX_BODY_BYTES {
     return __reject(413, "payload_too_large", "github webhook body exceeds 1 MiB cap")
@@ -183,7 +183,7 @@ pub fn normalize_inbound(harness: Harness, raw) {
  * `{handle, command, rest}` candidates. Mirrors the `mention.candidates`
  * surfaced on normalized issue/PR/comment payloads.
  */
-pub fn github_extract_mentions(body) {
+pub fn github_extract_mentions(body: any) {
   return __extract_mention_candidates(body)
 }
 
@@ -196,7 +196,7 @@ fn __set_state(state: GithubConnectorState) {
   return state
 }
 
-fn __reject(status, code, message) {
+fn __reject(status: any, code: any, message: any) {
   return {
     type: "reject",
     reject: {
@@ -207,7 +207,7 @@ fn __reject(status, code, message) {
   }
 }
 
-fn __reject_err(err) {
+fn __reject_err(err: any) {
   const code = err?.code ?? "rejected"
   const message = err?.message ?? "request rejected"
   const status = if code == "missing_signature" || code == "invalid_signature"
@@ -220,7 +220,7 @@ fn __reject_err(err) {
   return __reject(status, code, message)
 }
 
-fn __header(headers, name) {
+fn __header(headers: any, name: any) {
   const wanted = lowercase(name)
   for entry in (headers ?? {}).entries() {
     if lowercase(trim(to_string(entry.key))) == wanted {
@@ -230,11 +230,11 @@ fn __header(headers, name) {
   return nil
 }
 
-fn __event_kind(raw, headers) {
+fn __event_kind(raw: any, headers: any) {
   return __header(headers, "x-github-event") ?? raw?.kind ?? raw?.event
 }
 
-fn __signing_secret(secrets: HarnessSecrets, raw) {
+fn __signing_secret(secrets: HarnessSecrets, raw: any) {
   const state = __state()
   const ctx_secret = state.ctx?.signing_secret ?? state.ctx?.secrets?.signing_secret
   if ctx_secret != nil && trim(to_string(ctx_secret)) != "" {
@@ -258,7 +258,7 @@ fn __signing_secret(secrets: HarnessSecrets, raw) {
   return nil
 }
 
-fn __signing_secret_id(raw) {
+fn __signing_secret_id(raw: any) {
   const metadata = raw?.metadata ?? {}
   const id = metadata?.secret_ids?.signing_secret ?? metadata?.config?.secret_ids?.signing_secret
   const direct_id = __secret_id_candidate(id, "signing_secret")
@@ -274,7 +274,7 @@ fn __signing_secret_id(raw) {
   return nil
 }
 
-fn __binding_signing_secret_id(binding) {
+fn __binding_signing_secret_id(binding: any) {
   const id = binding?.signing_secret_id ?? binding?.signing_secret_secret
     ?? binding?.secrets?.signing_secret_id
     ?? binding?.config?.signing_secret_id
@@ -284,7 +284,7 @@ fn __binding_signing_secret_id(binding) {
   return __secret_id_candidate(id, "signing_secret")
 }
 
-fn __secret_id_candidate(value, fallback_name) {
+fn __secret_id_candidate(value: any, fallback_name: any) {
   if value == nil || trim(to_string(value)) == "" {
     return nil
   }
@@ -298,7 +298,7 @@ fn __secret_id_candidate(value, fallback_name) {
   return nil
 }
 
-fn __secret_get_optional(secrets: HarnessSecrets, secret_id) {
+fn __secret_get_optional(secrets: HarnessSecrets, secret_id: any) {
   if secret_id == nil || trim(to_string(secret_id)) == "" {
     return nil
   }
@@ -311,7 +311,7 @@ fn __secret_get_optional(secrets: HarnessSecrets, secret_id) {
   return to_string(unwrap(resolved))
 }
 
-fn __verify_github_signature(secrets: HarnessSecrets, raw, headers, body_text) {
+fn __verify_github_signature(secrets: HarnessSecrets, raw: any, headers: any, body_text: any) {
   const signature = __header(headers, "x-hub-signature-256")
   if signature == nil || signature == "" {
     return __err("missing_signature", "missing x-hub-signature-256 header")
@@ -332,7 +332,7 @@ fn __verify_github_signature(secrets: HarnessSecrets, raw, headers, body_text) {
 }
 
 @complexity(allow)
-fn __build_event(event_kind, payload, raw, headers, signature_status) {
+fn __build_event(event_kind: any, payload: any, raw: any, headers: any, signature_status: any) {
   const repo = __repo(payload)
   const occurred_at = __occurred_at(event_kind, payload, raw)
   const delivery_id = __header(headers, "x-github-delivery")
@@ -356,14 +356,14 @@ fn __build_event(event_kind, payload, raw, headers, signature_status) {
   }
 }
 
-fn __signature_status(status) {
+fn __signature_status(status: any) {
   if status == "verified" || status == "signed" {
     return {state: "verified"}
   }
   return {state: "unsigned"}
 }
 
-fn __dedupe_key(event_kind, payload, repo, delivery_id) {
+fn __dedupe_key(event_kind: any, payload: any, repo: any, delivery_id: any) {
   if delivery_id != nil && delivery_id != "" {
     return "github:delivery:" + to_string(delivery_id)
   }

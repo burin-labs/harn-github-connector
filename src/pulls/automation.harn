@@ -105,7 +105,7 @@ pub fn github_resolve_pr_for_sha(
   }
 }
 
-fn __pr_finder_query(opts) {
+fn __pr_finder_query(opts: any) {
   let query = {state: opts?.state ?? "open"}
   if opts?.head_ref != nil {
     const head = if opts?.head_owner != nil {
@@ -124,7 +124,7 @@ fn __pr_finder_query(opts) {
   return query
 }
 
-fn __filter_prs(prs, opts) {
+fn __filter_prs(prs: any, opts: any) {
   let matches = []
   for pr in prs {
     if __pr_matches(pr, opts) {
@@ -134,7 +134,7 @@ fn __filter_prs(prs, opts) {
   return matches
 }
 
-fn __find_open_pr_error_envelope(err) {
+fn __find_open_pr_error_envelope(err: any) {
   return {
     ok: false,
     found: false,
@@ -146,7 +146,7 @@ fn __find_open_pr_error_envelope(err) {
   }
 }
 
-fn __find_open_pr_envelope(matches) {
+fn __find_open_pr_envelope(matches: any) {
   const first = if len(matches) > 0 {
     matches[0]
   } else {
@@ -163,7 +163,14 @@ fn __find_open_pr_envelope(matches) {
   }
 }
 
-fn __post_close_comment_if_set(harness: Harness, owner, repo, pull_number, comment, auth) {
+fn __post_close_comment_if_set(
+  harness: Harness,
+  owner: any,
+  repo: any,
+  pull_number: any,
+  comment: any,
+  auth: any,
+) {
   if comment == nil || trim(to_string(comment)) == "" {
     return Ok(false)
   }
@@ -178,7 +185,13 @@ fn __post_close_comment_if_set(harness: Harness, owner, repo, pull_number, comme
   return Ok(true)
 }
 
-fn __close_pr_envelope(ok, pull_number, comment_posted, pull_request, error) {
+fn __close_pr_envelope(
+  ok: any,
+  pull_number: any,
+  comment_posted: any,
+  pull_request: any,
+  error: any,
+) {
   return {
     ok: ok,
     pull_number: pull_number,
@@ -193,21 +206,21 @@ fn __close_pr_envelope(ok, pull_number, comment_posted, pull_request, error) {
   }
 }
 
-fn __pr_matches(pr, opts) {
+fn __pr_matches(pr: any, opts: any) {
   if !__pr_matches_title(pr, opts?.title) {
     return false
   }
   return __pr_matches_labels(pr, opts?.labels)
 }
 
-fn __pr_matches_title(pr, title) {
+fn __pr_matches_title(pr: any, title: any) {
   if title == nil || trim(to_string(title)) == "" {
     return true
   }
   return contains(to_string(pr?.title ?? ""), to_string(title))
 }
 
-fn __pr_matches_labels(pr, labels) {
+fn __pr_matches_labels(pr: any, labels: any) {
   if labels == nil {
     return true
   }

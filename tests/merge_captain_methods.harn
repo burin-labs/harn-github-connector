@@ -5,7 +5,7 @@ import {
   pulls_merge_safe,
 } from "../src/facade"
 
-pipeline test_merge_captain_methods(harness: Harness, task) {
+pipeline test_merge_captain_methods(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const base = "https://github-api.test"
   const token = "github-installation-token"

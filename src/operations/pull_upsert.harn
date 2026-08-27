@@ -8,7 +8,7 @@ const PR_HEAD_CONSISTENCY_INTERVAL_MS = 1000
 
 const PR_HEAD_CONSISTENCY_TIMEOUT_MS = 5000
 
-fn __github_pr_upsert_stale(expected_head_oid, observed_head_oid, message) {
+fn __github_pr_upsert_stale(expected_head_oid: any, observed_head_oid: any, message: any) {
   return __err(
     "stale_head",
     message,
@@ -24,9 +24,9 @@ fn __github_pr_upsert_stale(expected_head_oid, observed_head_oid, message) {
  */
 fn __github_pr_upsert_existing(
   harness: Harness,
-  args,
-  cfg,
-  repo,
+  args: any,
+  cfg: any,
+  repo: any,
   head: string,
   base: string,
   expected_head_oid: string,
@@ -105,7 +105,7 @@ fn __github_pr_upsert_existing(
 }
 
 /** Create or refresh the sole open pull request for one exact head/base pair. */
-pub fn __github_pr_upsert(harness: Harness, args, cfg) {
+pub fn __github_pr_upsert(harness: Harness, args: any, cfg: any) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo

@@ -4,7 +4,7 @@ const BASE_OID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 const HEAD_OID = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
-pipeline test_branch_and_auto_merge_disable_are_exactly_leased(harness: Harness, task) {
+pipeline test_branch_and_auto_merge_disable_are_exactly_leased(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const base = "https://github-api.test"
   const auth = {api_base_url: base, installation_token: "github-installation-token"}
@@ -126,7 +126,7 @@ pipeline test_branch_and_auto_merge_disable_are_exactly_leased(harness: Harness,
   harness.testing.http_mock_clear()
 }
 
-pipeline test_uncertain_disable_is_compensated_before_failure(harness: Harness, task) {
+pipeline test_uncertain_disable_is_compensated_before_failure(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const base = "https://github-api.test"
   const auth = {api_base_url: base, installation_token: "github-installation-token"}

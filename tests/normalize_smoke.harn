@@ -7,7 +7,7 @@ import {
   require_github_interface,
 } from "./helpers"
 
-pipeline test_normalize_smoke(harness: Harness, task) {
+pipeline test_normalize_smoke(harness: Harness, task: any) {
   const secret = "test-signing-secret"
   require_github_interface(harness)
   init(harness, {signing_secret: secret})

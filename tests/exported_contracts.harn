@@ -107,7 +107,7 @@ fn pull_number(pull: GithubPullRequestSummary) -> int {
   return pull.number
 }
 
-pipeline test_exported_contract_imports_and_result_narrowing(harness: Harness, task) {
+pipeline test_exported_contract_imports_and_result_narrowing(harness: Harness, task: any) {
   const pull: GithubPullRequestSummary = {
     repo: "octo-org/octo-repo",
     number: 42,
@@ -135,7 +135,7 @@ pipeline test_exported_contract_imports_and_result_narrowing(harness: Harness, t
   assert_eq(error.code, "method_not_found", "Result narrowing exposes the typed error")
 }
 
-pipeline test_call_typed_validates_dynamic_escape_hatches(harness: Harness, task) {
+pipeline test_call_typed_validates_dynamic_escape_hatches(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   harness.testing.http_mock(
     "GET",

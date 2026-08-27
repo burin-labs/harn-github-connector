@@ -276,7 +276,7 @@ fn graphql_input(testing: HarnessTesting) -> dict {
   return payload.variables.input
 }
 
-fn field_paths(items) -> list<string> {
+fn field_paths(items: any) -> list<string> {
   let out = []
   for item in items {
     out = out + [to_string(item.path)]
@@ -293,7 +293,7 @@ fn addition_contents(input: dict, path: string) -> string {
   throw "the observed request carried no addition for `" + path + "`"
 }
 
-fn change_named(changes, path: string) -> dict {
+fn change_named(changes: any, path: string) -> dict {
   for change in changes {
     if to_string(change.path) == path {
       return change
@@ -302,7 +302,7 @@ fn change_named(changes, path: string) -> dict {
   throw "the receipt carried no change for `" + path + "`"
 }
 
-fn change_paths(changes) -> list<string> {
+fn change_paths(changes: any) -> list<string> {
   let out = []
   for change in changes {
     out = out + [to_string(change.path) + ":" + to_string(change.status)]
@@ -312,7 +312,7 @@ fn change_paths(changes) -> list<string> {
 
 pipeline test_worktree_commit_publishes_modified_added_deleted_and_renamed_paths(
   harness: Harness,
-  task,
+  task: any,
 ) {
   harness.testing.http_mock_clear()
   const dir = new_repo(harness.fs, harness.process)
@@ -376,7 +376,7 @@ pipeline test_worktree_commit_publishes_modified_added_deleted_and_renamed_paths
   harness.testing.http_mock_clear()
 }
 
-pipeline test_worktree_commit_preserves_exact_binary_bytes(harness: Harness, task) {
+pipeline test_worktree_commit_preserves_exact_binary_bytes(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const dir = new_repo(harness.fs, harness.process)
   harness.fs.write_bytes(
@@ -403,7 +403,7 @@ pipeline test_worktree_commit_preserves_exact_binary_bytes(harness: Harness, tas
   harness.testing.http_mock_clear()
 }
 
-pipeline test_index_selector_publishes_only_staged_changes(harness: Harness, task) {
+pipeline test_index_selector_publishes_only_staged_changes(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const dir = new_repo(harness.fs, harness.process)
   harness.fs.write_text(dir + "/keep.txt", "staged\n")
@@ -434,7 +434,7 @@ pipeline test_index_selector_publishes_only_staged_changes(harness: Harness, tas
   harness.testing.http_mock_clear()
 }
 
-pipeline test_empty_delta_is_a_clean_outcome_with_no_network_call(harness: Harness, task) {
+pipeline test_empty_delta_is_a_clean_outcome_with_no_network_call(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   mock_forbid_everything(harness.testing)
   const dir = new_repo(harness.fs, harness.process)
@@ -453,7 +453,7 @@ pipeline test_empty_delta_is_a_clean_outcome_with_no_network_call(harness: Harne
   harness.testing.http_mock_clear()
 }
 
-pipeline test_stale_branch_head_fails_closed_before_any_mutation(harness: Harness, task) {
+pipeline test_stale_branch_head_fails_closed_before_any_mutation(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const dir = new_repo(harness.fs, harness.process)
   harness.fs.write_text(dir + "/keep.txt", "changed\n")
@@ -477,7 +477,7 @@ pipeline test_stale_branch_head_fails_closed_before_any_mutation(harness: Harnes
   harness.testing.http_mock_clear()
 }
 
-pipeline test_unverified_signature_response_fails_closed(harness: Harness, task) {
+pipeline test_unverified_signature_response_fails_closed(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const dir = new_repo(harness.fs, harness.process)
   harness.fs.write_text(dir + "/keep.txt", "changed\n")
@@ -498,7 +498,7 @@ pipeline test_unverified_signature_response_fails_closed(harness: Harness, task)
  */
 pipeline test_modifying_a_tracked_executable_is_published_as_a_normal_addition(
   harness: Harness,
-  task,
+  task: any,
 ) {
   harness.testing.http_mock_clear()
   const dir = new_repo(harness.fs, harness.process)
@@ -529,7 +529,7 @@ pipeline test_modifying_a_tracked_executable_is_published_as_a_normal_addition(
 
 pipeline test_adding_a_new_executable_is_rejected_before_any_network_request(
   harness: Harness,
-  task,
+  task: any,
 ) {
   harness.testing.http_mock_clear()
   mock_forbid_everything(harness.testing)
@@ -548,7 +548,7 @@ pipeline test_adding_a_new_executable_is_rejected_before_any_network_request(
   harness.testing.http_mock_clear()
 }
 
-pipeline test_renaming_a_tracked_executable_is_rejected_as_a_new_path(harness: Harness, task) {
+pipeline test_renaming_a_tracked_executable_is_rejected_as_a_new_path(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   mock_forbid_everything(harness.testing)
   const dir = new_repo(harness.fs, harness.process)
@@ -563,7 +563,10 @@ pipeline test_renaming_a_tracked_executable_is_rejected_as_a_new_path(harness: H
   harness.testing.http_mock_clear()
 }
 
-pipeline test_a_mode_change_on_an_otherwise_unchanged_file_is_rejected(harness: Harness, task) {
+pipeline test_a_mode_change_on_an_otherwise_unchanged_file_is_rejected(
+  harness: Harness,
+  task: any,
+) {
   harness.testing.http_mock_clear()
   mock_forbid_everything(harness.testing)
   const dir = new_repo(harness.fs, harness.process)
@@ -580,7 +583,7 @@ pipeline test_a_mode_change_on_an_otherwise_unchanged_file_is_rejected(harness: 
   harness.testing.http_mock_clear()
 }
 
-pipeline test_symlink_mode_is_rejected_before_any_network_request(harness: Harness, task) {
+pipeline test_symlink_mode_is_rejected_before_any_network_request(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   mock_forbid_everything(harness.testing)
   const dir = new_repo(harness.fs, harness.process)
@@ -600,7 +603,10 @@ pipeline test_symlink_mode_is_rejected_before_any_network_request(harness: Harne
  * Writing over a tracked symlink inherits the base tree's `120000` entry, so
  * the file's bytes would be committed as a link target. Fail closed instead.
  */
-pipeline test_replacing_a_tracked_symlink_with_a_regular_file_is_rejected(harness: Harness, task) {
+pipeline test_replacing_a_tracked_symlink_with_a_regular_file_is_rejected(
+  harness: Harness,
+  task: any,
+) {
   harness.testing.http_mock_clear()
   mock_forbid_everything(harness.testing)
   const dir = new_repo(harness.fs, harness.process)
@@ -617,7 +623,7 @@ pipeline test_replacing_a_tracked_symlink_with_a_regular_file_is_rejected(harnes
   harness.testing.http_mock_clear()
 }
 
-pipeline test_submodule_mode_is_rejected_before_any_network_request(harness: Harness, task) {
+pipeline test_submodule_mode_is_rejected_before_any_network_request(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   mock_forbid_everything(harness.testing)
   const dir = new_repo(harness.fs, harness.process)
@@ -642,7 +648,7 @@ pipeline test_submodule_mode_is_rejected_before_any_network_request(harness: Har
   harness.testing.http_mock_clear()
 }
 
-pipeline test_adapter_never_mutates_the_caller_index_or_worktree(harness: Harness, task) {
+pipeline test_adapter_never_mutates_the_caller_index_or_worktree(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const dir = new_repo(harness.fs, harness.process)
   harness.fs.write_text(dir + "/keep.txt", "hello world\n")
@@ -667,7 +673,7 @@ pipeline test_adapter_never_mutates_the_caller_index_or_worktree(harness: Harnes
   harness.testing.http_mock_clear()
 }
 
-pipeline test_missing_branch_is_created_at_the_base_lease(harness: Harness, task) {
+pipeline test_missing_branch_is_created_at_the_base_lease(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const dir = new_repo(harness.fs, harness.process)
   harness.fs.write_text(dir + "/keep.txt", "changed\n")
@@ -693,7 +699,10 @@ pipeline test_missing_branch_is_created_at_the_base_lease(harness: Harness, task
   harness.testing.http_mock_clear()
 }
 
-pipeline test_a_rewrite_moves_the_target_once_and_never_through_the_base(harness: Harness, task) {
+pipeline test_a_rewrite_moves_the_target_once_and_never_through_the_base(
+  harness: Harness,
+  task: any,
+) {
   // The target may not rest at the base, even for the length of one mutation:
   // GitHub closes a pull request whose head equals its base, and reopening does
   // not bring back the checks, reviews, or auto-merge arming that dropped with
@@ -738,7 +747,7 @@ pipeline test_a_rewrite_moves_the_target_once_and_never_through_the_base(harness
   harness.testing.http_mock_clear()
 }
 
-pipeline test_delta_rejects_an_unknown_selector_source(harness: Harness, task) {
+pipeline test_delta_rejects_an_unknown_selector_source(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   mock_forbid_everything(harness.testing)
   const dir = new_repo(harness.fs, harness.process)
@@ -750,7 +759,10 @@ pipeline test_delta_rejects_an_unknown_selector_source(harness: Harness, task) {
   harness.testing.http_mock_clear()
 }
 
-pipeline test_commit_rejects_a_branch_name_that_could_escape_the_rest_path(harness: Harness, task) {
+pipeline test_commit_rejects_a_branch_name_that_could_escape_the_rest_path(
+  harness: Harness,
+  task: any,
+) {
   harness.testing.http_mock_clear()
   mock_forbid_everything(harness.testing)
   const dir = new_repo(harness.fs, harness.process)
@@ -766,7 +778,7 @@ pipeline test_commit_rejects_a_branch_name_that_could_escape_the_rest_path(harne
   harness.testing.http_mock_clear()
 }
 
-pipeline test_delta_rejects_a_base_oid_that_is_not_the_local_head(harness: Harness, task) {
+pipeline test_delta_rejects_a_base_oid_that_is_not_the_local_head(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   mock_forbid_everything(harness.testing)
   const dir = new_repo(harness.fs, harness.process)
@@ -814,7 +826,7 @@ fn request_with_branch_lease(dir: string, expected: string?) -> GithubWorktreeCo
 
 pipeline test_a_reset_refuses_a_branch_that_moved_since_the_rewrite_was_planned(
   harness: Harness,
-  task,
+  task: any,
 ) {
   // `reset_branch` is a force. A caller rewriting a pull-request head to make
   // it signable discards whatever landed on that branch in the meantime unless
@@ -844,7 +856,10 @@ pipeline test_a_reset_refuses_a_branch_that_moved_since_the_rewrite_was_planned(
   harness.testing.http_mock_clear()
 }
 
-pipeline test_a_reset_proceeds_when_the_branch_is_where_the_caller_left_it(harness: Harness, task) {
+pipeline test_a_reset_proceeds_when_the_branch_is_where_the_caller_left_it(
+  harness: Harness,
+  task: any,
+) {
   harness.testing.http_mock_clear()
   const dir = new_repo(harness.fs, harness.process)
   harness.fs.write_text(dir + "/keep.txt", "changed\n")
@@ -860,7 +875,7 @@ pipeline test_a_reset_proceeds_when_the_branch_is_where_the_caller_left_it(harne
   harness.testing.http_mock_clear()
 }
 
-pipeline test_a_branch_already_at_the_base_still_answers_to_the_lease(harness: Harness, task) {
+pipeline test_a_branch_already_at_the_base_still_answers_to_the_lease(harness: Harness, task: any) {
   // The reset this call would perform puts the branch at exactly `base_oid`, so
   // a peer that got there first leaves the branch sitting on the one value that
   // needs no write. Deciding "nothing to force" before consulting the lease
@@ -886,7 +901,7 @@ pipeline test_a_branch_already_at_the_base_still_answers_to_the_lease(harness: H
 
 pipeline test_a_deleted_branch_is_a_lease_violation_not_an_invitation_to_recreate(
   harness: Harness,
-  task,
+  task: any,
 ) {
   // `create_branch` is on by default, so without this the call would answer a
   // deleted branch by recreating it and publishing there — resurrecting a ref

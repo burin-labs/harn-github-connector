@@ -6,7 +6,7 @@ import "../operations/shared"
 import { github_dispatch_workflow_and_resolve_run } from "./automation"
 import "./normalization"
 
-pub fn __github_actions_workflow_dispatch(harness: Harness, args, cfg) {
+pub fn __github_actions_workflow_dispatch(harness: Harness, args: any, cfg: any) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -44,7 +44,7 @@ pub fn __github_actions_workflow_dispatch(harness: Harness, args, cfg) {
   return unwrap(receipt)
 }
 
-pub fn __github_actions_runs(harness: Harness, args, cfg) {
+pub fn __github_actions_runs(harness: Harness, args: any, cfg: any) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -103,7 +103,7 @@ pub fn __github_actions_runs(harness: Harness, args, cfg) {
   return result
 }
 
-pub fn __github_actions_run(harness: Harness, args, cfg) {
+pub fn __github_actions_run(harness: Harness, args: any, cfg: any) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -120,7 +120,7 @@ pub fn __github_actions_run(harness: Harness, args, cfg) {
   return unwrap(typed)
 }
 
-pub fn __github_actions_run_jobs(harness: Harness, args, cfg) {
+pub fn __github_actions_run_jobs(harness: Harness, args: any, cfg: any) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -159,7 +159,7 @@ pub fn __github_actions_run_jobs(harness: Harness, args, cfg) {
   }
 }
 
-pub fn __github_actions_run_cancel(harness: Harness, args, cfg) {
+pub fn __github_actions_run_cancel(harness: Harness, args: any, cfg: any) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -186,7 +186,7 @@ pub fn __github_actions_run_cancel(harness: Harness, args, cfg) {
   return receipt
 }
 
-pub fn __github_actions_run_rerun(harness: Harness, args, cfg) {
+pub fn __github_actions_run_rerun(harness: Harness, args: any, cfg: any) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -213,7 +213,7 @@ pub fn __github_actions_run_rerun(harness: Harness, args, cfg) {
   return receipt
 }
 
-pub fn __github_actions_logs(harness: Harness, args, cfg) {
+pub fn __github_actions_logs(harness: Harness, args: any, cfg: any) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo

@@ -1,7 +1,7 @@
 import { init, shutdown } from "../src/facade"
 import { fixture_raw, github_normalize } from "./helpers"
 
-pipeline test_normalize_events(harness: Harness, task) {
+pipeline test_normalize_events(harness: Harness, task: any) {
   const secret = "test-signing-secret"
   shutdown(harness)
   init(harness, {signing_secret: secret})

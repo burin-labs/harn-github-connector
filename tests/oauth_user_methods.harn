@@ -6,7 +6,7 @@ import {
   oauth_user_refresh,
 } from "../src/facade"
 
-pipeline test_oauth_user_methods(harness: Harness, task) {
+pipeline test_oauth_user_methods(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const oauth_base = "https://github.test"
   const client_id = "Iv1.abc123"

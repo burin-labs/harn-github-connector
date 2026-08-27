@@ -4,7 +4,13 @@ import "./values"
 const GITHUB_PROVIDER_ID = "github"
 
 @complexity(allow)
-pub fn __normalize_github_payload(event_kind, raw, delivery_id, dedupe_key, occurred_at) {
+pub fn __normalize_github_payload(
+  event_kind: any,
+  raw: any,
+  delivery_id: any,
+  dedupe_key: any,
+  occurred_at: any,
+) {
   const common = {
     provider: GITHUB_PROVIDER_ID,
     event: event_kind,

@@ -51,7 +51,7 @@ pub fn source_length_violations(
   return violations.sorted_by({ violation -> violation.path })
 }
 
-pipeline main(harness: Harness, task) {
+pipeline main(harness: Harness, task: any) {
   if !harness.fs.exists(CONFIG_PATH) {
     harness.stdio.eprintln("error: missing ${CONFIG_PATH}")
     return 1

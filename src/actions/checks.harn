@@ -27,7 +27,7 @@ pub fn github_wait_for_pr_checks(
   return __checks_wait_loop(harness, request.owner, request.repo, head_sha, request, auth)
 }
 
-fn __resolve_head_sha(harness: Harness, owner, repo, resolved, auth) {
+fn __resolve_head_sha(harness: Harness, owner: any, repo: any, resolved: any, auth: any) {
   if resolved?.head_sha != nil && trim(to_string(resolved.head_sha)) != "" {
     return Ok(resolved.head_sha)
   }
@@ -56,7 +56,14 @@ fn __resolve_head_sha(harness: Harness, owner, repo, resolved, auth) {
   return Ok(pr?.head?.sha)
 }
 
-fn __checks_wait_loop(harness: Harness, owner, repo, head_sha, opts, auth) {
+fn __checks_wait_loop(
+  harness: Harness,
+  owner: any,
+  repo: any,
+  head_sha: any,
+  opts: any,
+  auth: any,
+) {
   const polling = opts?.polling ?? {}
   const poll_interval = __positive_int(polling?.interval_ms, DEFAULT_CHECKS_POLL_INTERVAL_MS)
   const timeout_ms = __positive_int(polling?.timeout_ms, DEFAULT_CHECKS_TIMEOUT_MS)
@@ -93,7 +100,14 @@ fn __checks_wait_loop(harness: Harness, owner, repo, head_sha, opts, auth) {
   return __checks_envelope(false, "timed_out", head_sha, [], [], [], attempts, true)
 }
 
-fn __checks_probe_step(harness: Harness, owner, repo, head_sha, auth, attempt) {
+fn __checks_probe_step(
+  harness: Harness,
+  owner: any,
+  repo: any,
+  head_sha: any,
+  auth: any,
+  attempt: any,
+) {
   const probe = __call_raw(
     harness,
     "github.pr.checks",
@@ -120,7 +134,16 @@ fn __checks_probe_step(harness: Harness, owner, repo, head_sha, auth, attempt) {
   }
 }
 
-fn __finalize_checks_payload(harness: Harness, owner, repo, payload, attempts, state, opts, auth) {
+fn __finalize_checks_payload(
+  harness: Harness,
+  owner: any,
+  repo: any,
+  payload: any,
+  attempts: any,
+  state: any,
+  opts: any,
+  auth: any,
+) {
   const envelope = __checks_envelope_from_payload(true, state, payload, attempts, false)
   if state == "failing" && (opts?.include_logs ?? false) {
     return envelope
@@ -129,7 +152,7 @@ fn __finalize_checks_payload(harness: Harness, owner, repo, payload, attempts, s
   return envelope
 }
 
-fn __resolve_check_target(target, opts) {
+fn __resolve_check_target(target: any, opts: any) {
   if type_of(target) == "dict" {
     return {
       head_sha: target?.head_sha ?? target?.sha ?? opts?.head_sha,
@@ -142,7 +165,16 @@ fn __resolve_check_target(target, opts) {
   return {head_sha: opts?.head_sha, pull_number: target ?? opts?.pull_number}
 }
 
-fn __checks_envelope(ok, state, head_sha, checks, failing, pending, attempts, timed_out) {
+fn __checks_envelope(
+  ok: any,
+  state: any,
+  head_sha: any,
+  checks: any,
+  failing: any,
+  pending: any,
+  attempts: any,
+  timed_out: any,
+) {
   return {
     ok: ok,
     state: state,
@@ -155,7 +187,13 @@ fn __checks_envelope(ok, state, head_sha, checks, failing, pending, attempts, ti
   }
 }
 
-fn __checks_envelope_from_payload(ok, state, payload, attempts, timed_out) {
+fn __checks_envelope_from_payload(
+  ok: any,
+  state: any,
+  payload: any,
+  attempts: any,
+  timed_out: any,
+) {
   const buckets = __bucket_checks(payload?.checks ?? [])
   return __checks_envelope(
     ok,
@@ -169,7 +207,7 @@ fn __checks_envelope_from_payload(ok, state, payload, attempts, timed_out) {
   )
 }
 
-fn __bucket_checks(checks) {
+fn __bucket_checks(checks: any) {
   let failing = []
   let pending = []
   for c in checks {
@@ -183,7 +221,7 @@ fn __bucket_checks(checks) {
   return {all: checks, failing: failing, pending: pending}
 }
 
-fn __classify_check(check) {
+fn __classify_check(check: any) {
   const status = lowercase(to_string(check?.status ?? ""))
   if status != "completed" {
     return "pending"
@@ -196,7 +234,14 @@ fn __classify_check(check) {
   return "failing"
 }
 
-fn __failing_check_logs(harness: Harness, owner, repo, failing_checks, opts, auth) {
+fn __failing_check_logs(
+  harness: Harness,
+  owner: any,
+  repo: any,
+  failing_checks: any,
+  opts: any,
+  auth: any,
+) {
   const tail_lines = max(
     1,
     to_int(opts?.log_tail_lines ?? DEFAULT_LOG_TAIL_LINES) ?? DEFAULT_LOG_TAIL_LINES,
@@ -208,7 +253,14 @@ fn __failing_check_logs(harness: Harness, owner, repo, failing_checks, opts, aut
   return summaries
 }
 
-fn __summarize_failing_check(harness: Harness, owner, repo, check, tail_lines, auth) {
+fn __summarize_failing_check(
+  harness: Harness,
+  owner: any,
+  repo: any,
+  check: any,
+  tail_lines: any,
+  auth: any,
+) {
   const url = check?.details_url ?? check?.html_url
   const run_id = __extract_actions_run_id(url)
   if run_id == nil {
@@ -226,7 +278,7 @@ fn __summarize_failing_check(harness: Harness, owner, repo, check, tail_lines, a
   return __log_summary(check, run_id, tailed.content, tailed.lines, tailed.truncated, nil)
 }
 
-fn __tail_lines(content, tail_lines) {
+fn __tail_lines(content: any, tail_lines: any) {
   const lines = split(content, "\n")
   const total = len(lines)
   const kept = if total > tail_lines {
@@ -237,7 +289,7 @@ fn __tail_lines(content, tail_lines) {
   return {content: join(kept, "\n"), lines: len(kept), truncated: total > tail_lines}
 }
 
-fn __log_summary(check, run_id, content, lines, truncated, error) {
+fn __log_summary(check: any, run_id: any, content: any, lines: any, truncated: any, error: any) {
   return {
     check_id: check?.id,
     name: check?.name,

@@ -1,6 +1,6 @@
 import { call, pulls_update } from "../src/facade"
 
-pipeline test_pr_edit(harness: Harness, task) {
+pipeline test_pr_edit(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const base = "https://github-api.test"
   const auth = {api_base_url: base, installation_token: "github-installation-token"}

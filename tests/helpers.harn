@@ -9,7 +9,7 @@ import {
   shutdown,
 } from "../src/facade"
 
-pub fn github_headers(secret, body, event, delivery = "delivery-1") {
+pub fn github_headers(secret: any, body: any, event: any, delivery: any = "delivery-1") {
   return {
     "x-github-event": event,
     "x-github-delivery": delivery,
@@ -20,17 +20,17 @@ pub fn github_headers(secret, body, event, delivery = "delivery-1") {
 /**
  * Build a raw inbound envelope WITHOUT embedding the signing secret. Tests must seed the secret via `init(harness, {signing_secret: secret})` before calling normalize_inbound.
  */
-pub fn signed_raw(secret, body, event, extra = nil) {
+pub fn signed_raw(secret: any, body: any, event: any, extra: any = nil) {
   return (extra ?? {}) + {body_text: body, headers: github_headers(secret, body, event)}
 }
 
 /** Read a fixture JSON body from the test fixtures directory. */
-pub fn fixture_body(fs: HarnessFs, name) {
+pub fn fixture_body(fs: HarnessFs, name: any) {
   return fs.read_text(fs.source_dir() + "/fixtures/webhooks/" + name + ".json")
 }
 
 /** Build a signed raw inbound envelope from a named fixture. */
-pub fn fixture_raw(fs: HarnessFs, name, secret, event, extra = nil) {
+pub fn fixture_raw(fs: HarnessFs, name: any, secret: any, event: any, extra: any = nil) {
   return signed_raw(secret, fixture_body(fs, name), event, extra)
 }
 
@@ -48,10 +48,10 @@ pub fn require_github_interface(harness: Harness) {
   require activated.bindings == 1
 }
 
-pub fn github_call(harness: Harness, method, args) {
+pub fn github_call(harness: Harness, method: any, args: any) {
   return call(harness, method, args)
 }
 
-pub fn github_normalize(harness: Harness, raw) {
+pub fn github_normalize(harness: Harness, raw: any) {
   return normalize_inbound(harness, raw)
 }
