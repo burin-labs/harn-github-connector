@@ -35,7 +35,7 @@ fn deletes(testing: HarnessTesting) -> int {
   return len(testing.http_mock_calls().filter({ call -> call.method == "DELETE" }).to_list())
 }
 
-pipeline test_a_ref_still_holding_our_object_is_released(harness: Harness, task) {
+pipeline test_a_ref_still_holding_our_object_is_released(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   harness.testing.http_mock(
     "GET",
@@ -50,7 +50,7 @@ pipeline test_a_ref_still_holding_our_object_is_released(harness: Harness, task)
   assert_eq(deletes(harness.testing), 1)
 }
 
-pipeline test_a_ref_that_moved_on_is_left_alone(harness: Harness, task) {
+pipeline test_a_ref_that_moved_on_is_left_alone(harness: Harness, task: any) {
   // The case the read exists for. Deleting here would take a lock another
   // machine is actively holding, which is the failure this whole mechanism is
   // meant to prevent.
@@ -68,7 +68,7 @@ pipeline test_a_ref_that_moved_on_is_left_alone(harness: Harness, task) {
   assert_eq(deletes(harness.testing), 0)
 }
 
-pipeline test_an_absent_ref_is_the_intended_end_state(harness: Harness, task) {
+pipeline test_an_absent_ref_is_the_intended_end_state(harness: Harness, task: any) {
   // A release that retries after a partial failure has to be able to finish.
   harness.testing.http_mock_clear()
   harness.testing.http_mock(
@@ -83,7 +83,7 @@ pipeline test_an_absent_ref_is_the_intended_end_state(harness: Harness, task) {
   assert_eq(deletes(harness.testing), 0)
 }
 
-pipeline test_an_unreadable_ref_is_an_error_not_an_absence(harness: Harness, task) {
+pipeline test_an_unreadable_ref_is_an_error_not_an_absence(harness: Harness, task: any) {
   // A 500 is not evidence the lock is gone, and treating it as one would let a
   // release proceed against a lock it never checked.
   harness.testing.http_mock_clear()
@@ -98,7 +98,7 @@ pipeline test_an_unreadable_ref_is_an_error_not_an_absence(harness: Harness, tas
 
 pipeline test_a_release_without_an_expected_oid_is_refused_before_any_request(
   harness: Harness,
-  task,
+  task: any,
 ) {
   harness.testing.http_mock_clear()
   const failure = unwrap_err(

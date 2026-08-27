@@ -1939,7 +1939,7 @@ pub fn actions_workflow_runs(
 Activate webhook bindings and reject duplicate configured paths.
 
 ```harn
-pub fn activate(_harness: Harness, bindings = []) {
+pub fn activate(_harness: Harness, bindings: any = []) {
 }
 ```
 
@@ -2083,7 +2083,7 @@ string scanning (CPU-only, no network). Returns a list of
 surfaced on normalized issue/PR/comment payloads.
 
 ```harn
-pub fn github_extract_mentions(body) {
+pub fn github_extract_mentions(body: any) {
 }
 ```
 
@@ -2263,7 +2263,7 @@ pub fn github_wait_for_workflow_run(
 Initialize connector state with orchestrator context.
 
 ```harn
-pub fn init(_harness: Harness, ctx = nil) {
+pub fn init(_harness: Harness, ctx: any = nil) {
 }
 ```
 
@@ -2272,7 +2272,7 @@ pub fn init(_harness: Harness, ctx = nil) {
 Return a cached installation token or refresh it when stale.
 
 ```harn
-pub fn installation_token(harness: Harness, config) {
+pub fn installation_token(harness: Harness, config: any) {
 }
 ```
 
@@ -2281,7 +2281,7 @@ pub fn installation_token(harness: Harness, config) {
 Invalidate one cached installation token by installation id.
 
 ```harn
-pub fn invalidate_installation_token(runtime: HarnessRuntime, installation_id) {
+pub fn invalidate_installation_token(runtime: HarnessRuntime, installation_id: any) {
 }
 ```
 
@@ -2311,7 +2311,7 @@ pub fn kinds() {
 Mint a GitHub App JWT using Harn jwt_sign and the configured app private key.
 
 ```harn
-pub fn mint_app_jwt(clock: HarnessClock, secrets: HarnessSecrets, config) {
+pub fn mint_app_jwt(clock: HarnessClock, secrets: HarnessSecrets, config: any) {
 }
 ```
 
@@ -2320,7 +2320,7 @@ pub fn mint_app_jwt(clock: HarnessClock, secrets: HarnessSecrets, config) {
 Verify and normalize a raw GitHub webhook request into NormalizeResult v1.
 
 ```harn
-pub fn normalize_inbound(harness: Harness, raw) {
+pub fn normalize_inbound(harness: Harness, raw: any) {
 }
 ```
 

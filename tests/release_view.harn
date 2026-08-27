@@ -4,7 +4,7 @@ fn release_request(tag: string, options: GithubClientOptions) -> GithubReleaseRe
   return {owner: "octo-org", repo: "octo-repo", tag: tag, options: options}
 }
 
-fn release_fixture(tag) {
+fn release_fixture(tag: any) {
   return {
     id: 701,
     tag_name: tag,
@@ -18,7 +18,7 @@ fn release_fixture(tag) {
   }
 }
 
-pipeline test_release_view_by_tag(harness: Harness, task) {
+pipeline test_release_view_by_tag(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const base = "https://github-api.test"
   const auth = {api_base_url: base, installation_token: "token"}
@@ -60,7 +60,7 @@ pipeline test_release_view_by_tag(harness: Harness, task) {
   assert_eq(len(harness.testing.http_mock_calls()), 2, "release and tag identity are observed")
 }
 
-pipeline test_release_view_requires_exact_tag(harness: Harness, task) {
+pipeline test_release_view_requires_exact_tag(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const base = "https://github-api.test"
   const auth = {api_base_url: base, installation_token: "token"}
@@ -72,7 +72,7 @@ pipeline test_release_view_requires_exact_tag(harness: Harness, task) {
   assert_eq(len(harness.testing.http_mock_calls()), 0, "blank tag performs no request")
 }
 
-pipeline test_release_view_provider_error(harness: Harness, task) {
+pipeline test_release_view_provider_error(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const base = "https://github-api.test"
   const auth = {api_base_url: base, installation_token: "token"}

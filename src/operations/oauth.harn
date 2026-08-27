@@ -12,7 +12,7 @@ const GITHUB_OAUTH_BASE_URL = "https://github.com"
  * refresh, so callers must persist the returned `refresh_token`.
  */
 @complexity(allow)
-pub fn __oauth_user_dispatch(harness: Harness, method, args) {
+pub fn __oauth_user_dispatch(harness: Harness, method: any, args: any) {
   const client_id = args?.client_id ?? harness.env.get("GITHUB_OAUTH_CLIENT_ID")
   if client_id == nil || trim(to_string(client_id)) == "" {
     return __err("schema_drift", method + " requires `client_id`")
@@ -92,7 +92,7 @@ pub fn __oauth_user_dispatch(harness: Harness, method, args) {
   return __err("method_not_found", "unsupported oauth method `" + method + "`")
 }
 
-fn __oauth_post(clock: HarnessClock, net: HarnessNet, url, body, args) {
+fn __oauth_post(clock: HarnessClock, net: HarnessNet, url: any, body: any, args: any) {
   const response = connector_http_json(
     clock,
     net,

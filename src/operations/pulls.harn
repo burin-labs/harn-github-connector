@@ -12,7 +12,7 @@ import "./shared"
 
 const MAX_PULL_REQUEST_COMMIT_PAGES = 250
 
-pub fn __github_pr_list(harness: Harness, args, cfg) {
+pub fn __github_pr_list(harness: Harness, args: any, cfg: any) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -62,7 +62,7 @@ pub fn __github_pr_list(harness: Harness, args, cfg) {
   return typed
 }
 
-pub fn __github_pr_create(harness: Harness, args, cfg) {
+pub fn __github_pr_create(harness: Harness, args: any, cfg: any) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -106,7 +106,7 @@ pub fn __github_pr_create(harness: Harness, args, cfg) {
   return receipt
 }
 
-pub fn __github_pr_view(harness: Harness, args, cfg) {
+pub fn __github_pr_view(harness: Harness, args: any, cfg: any) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -164,7 +164,7 @@ pub fn __github_pr_view(harness: Harness, args, cfg) {
   return __typed_pr_view(pull, protection_evidence, queue_evidence)
 }
 
-pub fn __github_pr_edit(harness: Harness, args, cfg) {
+pub fn __github_pr_edit(harness: Harness, args: any, cfg: any) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -185,7 +185,7 @@ pub fn __github_pr_edit(harness: Harness, args, cfg) {
   return __typed_pr_edit(updated)
 }
 
-pub fn __github_pr_files(harness: Harness, args, cfg) {
+pub fn __github_pr_files(harness: Harness, args: any, cfg: any) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -237,7 +237,7 @@ pub fn __github_pr_files(harness: Harness, args, cfg) {
   }
 }
 
-pub fn __github_pr_commits(harness: Harness, args, cfg) {
+pub fn __github_pr_commits(harness: Harness, args: any, cfg: any) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -323,7 +323,14 @@ pub fn __github_pr_commits(harness: Harness, args, cfg) {
   return result
 }
 
-fn __github_pr_commit_pages(harness: Harness, repo, number, expected_commit_count, per_page, cfg) {
+fn __github_pr_commit_pages(
+  harness: Harness,
+  repo: any,
+  number: any,
+  expected_commit_count: any,
+  per_page: any,
+  cfg: any,
+) {
   let commits: list<GithubPullRequestCommit> = []
   let seen_shas = {}
   let page = 1
@@ -383,7 +390,7 @@ fn __github_pr_commit_pages(harness: Harness, repo, number, expected_commit_coun
   return Ok({commits: commits, pages_fetched: page})
 }
 
-pub fn __github_pr_comment(harness: Harness, args, cfg) {
+pub fn __github_pr_comment(harness: Harness, args: any, cfg: any) {
   const commented = __github_issue_comment(
     harness,
     args + {issue_number: args?.pr_number ?? args?.number ?? args?.pull_number},
@@ -395,7 +402,7 @@ pub fn __github_pr_comment(harness: Harness, args, cfg) {
   return (commented + {pull_number: commented.issue_number}).removing("issue_number")
 }
 
-pub fn __github_pr_checks(harness: Harness, args, cfg) {
+pub fn __github_pr_checks(harness: Harness, args: any, cfg: any) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -450,7 +457,7 @@ pub fn __github_pr_checks(harness: Harness, args, cfg) {
   return evidence
 }
 
-pub fn __github_pr_merge(harness: Harness, args, cfg) {
+pub fn __github_pr_merge(harness: Harness, args: any, cfg: any) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -481,7 +488,7 @@ pub fn __github_pr_merge(harness: Harness, args, cfg) {
     + {repo: r.full_name, pull_number: number, requested_method: method, state: "merged"}
 }
 
-pub fn __github_pr_enable_auto_merge(harness: Harness, args, cfg) {
+pub fn __github_pr_enable_auto_merge(harness: Harness, args: any, cfg: any) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -501,7 +508,7 @@ pub fn __github_pr_enable_auto_merge(harness: Harness, args, cfg) {
   )
 }
 
-pub fn __github_pr_disable_auto_merge(harness: Harness, args, cfg) {
+pub fn __github_pr_disable_auto_merge(harness: Harness, args: any, cfg: any) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -521,7 +528,7 @@ pub fn __github_pr_disable_auto_merge(harness: Harness, args, cfg) {
   )
 }
 
-pub fn __github_merge_queue_entries(harness: Harness, args, cfg) {
+pub fn __github_merge_queue_entries(harness: Harness, args: any, cfg: any) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -591,7 +598,7 @@ pub fn __github_merge_queue_entries(harness: Harness, args, cfg) {
   return result
 }
 
-pub fn __github_merge_queue_membership(harness: Harness, args, cfg) {
+pub fn __github_merge_queue_membership(harness: Harness, args: any, cfg: any) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -677,7 +684,7 @@ pub fn __github_merge_queue_membership(harness: Harness, args, cfg) {
   return membership
 }
 
-pub fn __github_merge_queue_enqueue(harness: Harness, args, cfg) {
+pub fn __github_merge_queue_enqueue(harness: Harness, args: any, cfg: any) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -768,7 +775,7 @@ pub fn __github_merge_queue_enqueue(harness: Harness, args, cfg) {
   return receipt
 }
 
-pub fn __github_issue_create(harness: Harness, args, cfg) {
+pub fn __github_issue_create(harness: Harness, args: any, cfg: any) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -787,7 +794,7 @@ pub fn __github_issue_create(harness: Harness, args, cfg) {
   )
 }
 
-pub fn __github_issue_comment(harness: Harness, args, cfg) {
+pub fn __github_issue_comment(harness: Harness, args: any, cfg: any) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -831,7 +838,7 @@ pub fn __github_issue_comment(harness: Harness, args, cfg) {
   }
 }
 
-pub fn __github_branch_protection(harness: Harness, args, cfg) {
+pub fn __github_branch_protection(harness: Harness, args: any, cfg: any) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -845,7 +852,7 @@ pub fn __github_branch_protection(harness: Harness, args, cfg) {
   return __branch_protection_summary(unwrap(protection), branch)
 }
 
-pub fn __issues_create_with_template(harness: Harness, args, cfg) {
+pub fn __issues_create_with_template(harness: Harness, args: any, cfg: any) {
   const template = args?.template ?? {}
   const title_template = if type_of(template) == "dict" {
     template?.title ?? args?.title_template ?? args?.title ?? "Merge Captain follow-up"
@@ -897,7 +904,7 @@ pub fn __issues_create_with_template(harness: Harness, args, cfg) {
   )
 }
 
-pub fn __pulls_list_with_checks(harness: Harness, args, cfg) {
+pub fn __pulls_list_with_checks(harness: Harness, args: any, cfg: any) {
   const graph = __github_json(
     harness,
     "POST",
@@ -929,7 +936,7 @@ pub fn __pulls_list_with_checks(harness: Harness, args, cfg) {
   return pulls
 }
 
-pub fn __pulls_merge_safe(harness: Harness, args, cfg) {
+pub fn __pulls_merge_safe(harness: Harness, args: any, cfg: any) {
   const pull = __github_json(
     harness,
     "GET",
@@ -991,7 +998,7 @@ pub fn __pulls_merge_safe(harness: Harness, args, cfg) {
   return result
 }
 
-fn __pulls_enable_auto_merge(harness: Harness, args, cfg) {
+fn __pulls_enable_auto_merge(harness: Harness, args: any, cfg: any) {
   const expected_head_oid = trim(to_string(args?.expected_head_oid ?? args?.expectedHeadOid ?? ""))
   if expected_head_oid == "" {
     return __err(
@@ -1092,7 +1099,13 @@ fn __pulls_enable_auto_merge(harness: Harness, args, cfg) {
   }
 }
 
-fn __reenable_after_lost_disable(harness: Harness, cfg, node_id, head_oid, method) {
+fn __reenable_after_lost_disable(
+  harness: Harness,
+  cfg: any,
+  node_id: any,
+  head_oid: any,
+  method: any,
+) {
   if trim(to_string(head_oid ?? "")) == "" {
     return {ok: false, detail: "post-mutation pull response omitted the head needed to compensate"}
   }
@@ -1124,7 +1137,14 @@ fn __reenable_after_lost_disable(harness: Harness, cfg, node_id, head_oid, metho
   return {ok: true, detail: "restored auto-merge at the post-mutation head"}
 }
 
-fn __fail_uncertain_disable(harness: Harness, args, cfg, node_id, method, reason) {
+fn __fail_uncertain_disable(
+  harness: Harness,
+  args: any,
+  cfg: any,
+  node_id: any,
+  method: any,
+  reason: any,
+) {
   const pull = __github_json(
     harness,
     "GET",
@@ -1172,7 +1192,7 @@ fn __fail_uncertain_disable(harness: Harness, args, cfg, node_id, method, reason
   )
 }
 
-fn __pulls_disable_auto_merge(harness: Harness, args, cfg) {
+fn __pulls_disable_auto_merge(harness: Harness, args: any, cfg: any) {
   const expected_head_oid = trim(to_string(args?.expected_head_oid ?? ""))
   const base_branch = trim(to_string(args?.base_branch ?? ""))
   const expected_base_oid = trim(to_string(args?.expected_base_oid ?? ""))
@@ -1328,7 +1348,7 @@ fn __pulls_disable_auto_merge(harness: Harness, args, cfg) {
   return typed
 }
 
-pub fn __repos_commit_pulls(harness: Harness, args, cfg) {
+pub fn __repos_commit_pulls(harness: Harness, args: any, cfg: any) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -1364,7 +1384,7 @@ const DEFAULT_MERGEABLE_POLL_INTERVAL_MS = 1500
  * `poll_interval_ms` (default 1500ms) between attempts.
  */
 @complexity(allow)
-pub fn __pull_requests_resolve_mergeable(harness: Harness, args, cfg) {
+pub fn __pull_requests_resolve_mergeable(harness: Harness, args: any, cfg: any) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return __mergeable_envelope(false, nil, "unknown", 0, false, nil, unwrap_err(repo))
@@ -1422,7 +1442,15 @@ pub fn __pull_requests_resolve_mergeable(harness: Harness, args, cfg) {
   )
 }
 
-fn __mergeable_envelope(ok, mergeable, mergeable_state, attempts, resolved, raw, error) {
+fn __mergeable_envelope(
+  ok: any,
+  mergeable: any,
+  mergeable_state: any,
+  attempts: any,
+  resolved: any,
+  raw: any,
+  error: any,
+) {
   if !ok {
     return Err(error)
   }
@@ -1437,7 +1465,7 @@ fn __mergeable_envelope(ok, mergeable, mergeable_state, attempts, resolved, raw,
   return value
 }
 
-fn __render_template(template, vars) {
+fn __render_template(template: any, vars: any) {
   let rendered = to_string(template ?? "")
   for entry in (vars ?? {}).entries() {
     const value = to_string(entry.value ?? "")
@@ -1447,7 +1475,7 @@ fn __render_template(template, vars) {
   return rendered
 }
 
-fn __graphql_errors_indicate_stale_head(errors) {
+fn __graphql_errors_indicate_stale_head(errors: any) {
   const message = lowercase(json_stringify(errors ?? []))
   return contains(message, "expected head") || contains(message, "expectedheadoid")
     || contains(message, "head oid")

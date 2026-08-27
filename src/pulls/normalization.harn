@@ -14,7 +14,7 @@ import {
 import { __err } from "../errors"
 import { pr_edit_result } from "../pr_edit"
 
-pub fn __normalize_graphql_pr(node) {
+pub fn __normalize_graphql_pr(node: any) {
   return {
     number: node?.number,
     title: node?.title ?? "",
@@ -27,7 +27,7 @@ pub fn __normalize_graphql_pr(node) {
   }
 }
 
-pub fn __normalize_status_check_rollup(rollup) {
+pub fn __normalize_status_check_rollup(rollup: any) {
   const contexts = rollup?.contexts?.nodes ?? []
   let checks = []
   for context in contexts {
@@ -37,7 +37,7 @@ pub fn __normalize_status_check_rollup(rollup) {
 }
 
 /** Project GraphQL check contexts into the same exact-head rows as the REST adapter. */
-pub fn __graphql_pr_check_runs(rollup, head_sha: string) -> list<GithubCheckRun> {
+pub fn __graphql_pr_check_runs(rollup: any, head_sha: string) -> list<GithubCheckRun> {
   let checks: list<GithubCheckRun> = []
   for context in __normalize_status_check_rollup(rollup) {
     const details_url = context?.detailsUrl
@@ -59,7 +59,7 @@ pub fn __graphql_pr_check_runs(rollup, head_sha: string) -> list<GithubCheckRun>
   return checks
 }
 
-pub fn __normalize_status_check(context) {
+pub fn __normalize_status_check(context: any) {
   if context?.__typename == "StatusContext" {
     const state = uppercase(context?.state ?? "")
     return {
@@ -81,7 +81,7 @@ pub fn __normalize_status_check(context) {
   }
 }
 
-pub fn __status_context_conclusion(state) {
+pub fn __status_context_conclusion(state: any) {
   if state == "SUCCESS" {
     return "SUCCESS"
   }
@@ -91,7 +91,7 @@ pub fn __status_context_conclusion(state) {
   return nil
 }
 
-pub fn __typed_pr_summary(pull) -> GithubPullRequestSummary {
+pub fn __typed_pr_summary(pull: any) -> GithubPullRequestSummary {
   const state = __classify_pr_state(pull, nil, nil)
   const summary: GithubPullRequestSummary = {
     repo: pull?.base?.repo?.full_name ?? "",
@@ -124,7 +124,7 @@ pub fn __typed_pr_summary(pull) -> GithubPullRequestSummary {
   return summary
 }
 
-pub fn __typed_pr_details(pull) -> GithubPullRequestDetails {
+pub fn __typed_pr_details(pull: any) -> GithubPullRequestDetails {
   const details: GithubPullRequestDetails = __typed_pr_summary(pull)
     + {
       body: pull?.body ?? "",
@@ -136,7 +136,7 @@ pub fn __typed_pr_details(pull) -> GithubPullRequestDetails {
   return details
 }
 
-pub fn __typed_pr_view(pull, protection, queue) -> GithubPullRequestView {
+pub fn __typed_pr_view(pull: any, protection: any, queue: any) -> GithubPullRequestView {
   let summary = __typed_pr_details(pull)
   summary["auto_merge_armed"] = queue.auto_merge_armed
   summary["auto_merge_method"] = queue.auto_merge_method
@@ -159,12 +159,12 @@ pub fn __typed_pr_view(pull, protection, queue) -> GithubPullRequestView {
   return view
 }
 
-pub fn __typed_pr_edit(pull) -> GithubPullRequestEditReceipt {
+pub fn __typed_pr_edit(pull: any) -> GithubPullRequestEditReceipt {
   const receipt: GithubPullRequestEditReceipt = pr_edit_result(__typed_pr_summary(pull), pull)
   return receipt
 }
 
-pub fn __typed_ref(ref) -> GithubPullRequestRef {
+pub fn __typed_ref(ref: any) -> GithubPullRequestRef {
   const typed: GithubPullRequestRef = {
     ref: ref?.ref ?? "",
     sha: ref?.sha ?? "",
@@ -174,14 +174,14 @@ pub fn __typed_ref(ref) -> GithubPullRequestRef {
   return typed
 }
 
-pub fn __typed_user(user) -> GithubPullRequestUser? {
+pub fn __typed_user(user: any) -> GithubPullRequestUser? {
   if user == nil {
     return nil
   }
   return {id: user?.id, login: user?.login ?? "", type: user?.type ?? ""}
 }
 
-pub fn __validate_pull_response(pull, surface) {
+pub fn __validate_pull_response(pull: any, surface: any) {
   if type_of(pull) != "dict" || pull?.number == nil || trim(to_string(pull?.title ?? "")) == ""
     || trim(to_string(pull?.state ?? ""))
       == ""
@@ -204,11 +204,11 @@ pub fn __validate_pull_response(pull, surface) {
   return Ok(true)
 }
 
-pub fn __pull_is_merged(pull) {
+pub fn __pull_is_merged(pull: any) {
   return (pull?.merged ?? false) || pull?.merged_at != nil
 }
 
-pub fn __pull_merge_commit_oid(pull) {
+pub fn __pull_merge_commit_oid(pull: any) {
   if !__pull_is_merged(pull) {
     return nil
   }
@@ -219,7 +219,7 @@ pub fn __pull_merge_commit_oid(pull) {
   return lowercase(to_string(oid))
 }
 
-pub fn __validate_pull_identity(pull, surface) {
+pub fn __validate_pull_identity(pull: any, surface: any) {
   if type_of(pull) != "dict" || pull?.number == nil
     || trim(to_string(pull?.head?.sha ?? "")) == "" {
     return __err("invalid_response", surface + " response omitted pull number or head sha")
@@ -227,7 +227,7 @@ pub fn __validate_pull_identity(pull, surface) {
   return Ok(true)
 }
 
-pub fn __typed_pr_file(file) {
+pub fn __typed_pr_file(file: any) {
   if type_of(file) != "dict" || trim(to_string(file?.sha ?? "")) == ""
     || trim(to_string(file?.filename ?? ""))
       == ""
@@ -252,7 +252,7 @@ pub fn __typed_pr_file(file) {
   return Ok(typed)
 }
 
-pub fn __label_names(labels) {
+pub fn __label_names(labels: any) {
   let names = []
   for label in labels ?? [] {
     names = names + [label?.name ?? to_string(label)]
@@ -260,7 +260,7 @@ pub fn __label_names(labels) {
   return names
 }
 
-pub fn __branch_protection_summary(protection, branch) {
+pub fn __branch_protection_summary(protection: any, branch: any) {
   if protection == nil {
     return {
       available: true,
@@ -295,7 +295,7 @@ pub fn __branch_protection_summary(protection, branch) {
   }
 }
 
-pub fn __branch_protection_unavailable(branch, error) {
+pub fn __branch_protection_unavailable(branch: any, error: any) {
   return {
     available: false,
     branch: to_string(branch ?? ""),
@@ -311,7 +311,13 @@ pub fn __branch_protection_unavailable(branch, error) {
   }
 }
 
-pub fn __queue_membership_unavailable(repo, number, error, auto_merge_armed, auto_merge_method) {
+pub fn __queue_membership_unavailable(
+  repo: any,
+  number: any,
+  error: any,
+  auto_merge_armed: any,
+  auto_merge_method: any,
+) {
   return {
     repo: repo,
     pull_number: to_int(number),
@@ -328,7 +334,7 @@ pub fn __queue_membership_unavailable(repo, number, error, auto_merge_armed, aut
   }
 }
 
-pub fn __typed_check_runs(runs) -> list<GithubCheckRun> {
+pub fn __typed_check_runs(runs: any) -> list<GithubCheckRun> {
   let checks: list<GithubCheckRun> = []
   for run in runs ?? [] {
     checks = checks + [__typed_check_run(run)]
@@ -336,7 +342,7 @@ pub fn __typed_check_runs(runs) -> list<GithubCheckRun> {
   return checks
 }
 
-pub fn __typed_check_run(run) -> GithubCheckRun {
+pub fn __typed_check_run(run: any) -> GithubCheckRun {
   const typed: GithubCheckRun = {
     id: run?.id,
     name: run?.name ?? "",
@@ -353,7 +359,7 @@ pub fn __typed_check_run(run) -> GithubCheckRun {
   return typed
 }
 
-pub fn __check_rollup(checks) -> GithubCheckRollup {
+pub fn __check_rollup(checks: any) -> GithubCheckRollup {
   let pending = 0
   let failed = 0
   let successful = 0
@@ -396,7 +402,7 @@ pub fn __check_rollup(checks) -> GithubCheckRollup {
   return rollup
 }
 
-pub fn __classify_pr_state(pull, rollup, queue) {
+pub fn __classify_pr_state(pull: any, rollup: any, queue: any) {
   if __pull_is_merged(pull) {
     return "merged"
   }
@@ -418,7 +424,7 @@ pub fn __classify_pr_state(pull, rollup, queue) {
   return "pending"
 }
 
-pub fn __typed_merge_queue_entry(entry) {
+pub fn __typed_merge_queue_entry(entry: any) {
   if type_of(entry) != "dict" || trim(to_string(entry?.id ?? "")) == ""
     || entry?.pullRequest?.number
       == nil

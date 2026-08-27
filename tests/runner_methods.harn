@@ -5,7 +5,7 @@ import {
   call,
 } from "../src/facade"
 
-pipeline test_runner_methods(harness: Harness, task) {
+pipeline test_runner_methods(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const base = "https://github-api.test"
   const token = "github-installation-token"

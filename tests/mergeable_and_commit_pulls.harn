@@ -1,6 +1,6 @@
 import { call, github_resolve_mergeable, github_resolve_pr_for_sha } from "../src/facade"
 
-pipeline test_mergeable_and_commit_pulls(harness: Harness, task) {
+pipeline test_mergeable_and_commit_pulls(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const base = "https://github-api.test"
   const token = "github-installation-token"

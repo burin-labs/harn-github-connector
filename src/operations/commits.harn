@@ -3,7 +3,7 @@ import "../contracts"
 import { __err } from "../errors"
 import "./shared"
 
-pub fn __typed_commit_signature(repo, commit, surface) {
+pub fn __typed_commit_signature(repo: any, commit: any, surface: any) {
   const verification = commit?.commit?.verification
   if type_of(commit) != "dict" || trim(to_string(commit?.sha ?? "")) == ""
     || type_of(verification)
@@ -25,7 +25,7 @@ pub fn __typed_commit_signature(repo, commit, surface) {
   return Ok(result)
 }
 
-pub fn __typed_pull_request_commit(repo, commit) {
+pub fn __typed_pull_request_commit(repo: any, commit: any) {
   if type_of(commit) != "dict" || trim(to_string(commit?.sha ?? "")) == ""
     || commit?.commit?.message
       == nil {
@@ -43,7 +43,7 @@ pub fn __typed_pull_request_commit(repo, commit) {
   return Ok(result)
 }
 
-pub fn __github_create_signed_commit(harness: Harness, args, cfg) {
+pub fn __github_create_signed_commit(harness: Harness, args: any, cfg: any) {
   const owner = trim(to_string(args?.owner ?? ""))
   const repo = trim(to_string(args?.repo ?? ""))
   const branch = trim(to_string(args?.branch ?? ""))
@@ -138,7 +138,7 @@ pub fn __github_create_signed_commit(harness: Harness, args, cfg) {
   return receipt
 }
 
-fn __github_signed_commit_additions(raw) {
+fn __github_signed_commit_additions(raw: any) {
   let additions = []
   let seen = {}
   for item in raw {
@@ -157,7 +157,7 @@ fn __github_signed_commit_additions(raw) {
   return Ok(additions)
 }
 
-fn __github_signed_commit_deletions(raw) {
+fn __github_signed_commit_deletions(raw: any) {
   let deletions = []
   let seen = {}
   for item in raw {

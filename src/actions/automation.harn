@@ -88,7 +88,7 @@ pub fn github_wait_for_workflow_run(
   return __workflow_wait_loop(harness, request.owner, request.repo, cfg)
 }
 
-fn __workflow_wait_config(opts, run_id_or_filter) {
+fn __workflow_wait_config(opts: any, run_id_or_filter: any) {
   const polling = opts?.polling ?? {}
   const poll_interval = __positive_int(polling?.interval_ms, DEFAULT_DISPATCH_POLL_INTERVAL_MS)
   const timeout_ms = __positive_int(polling?.timeout_ms, DEFAULT_DISPATCH_TIMEOUT_MS)
@@ -114,7 +114,7 @@ fn __workflow_wait_config(opts, run_id_or_filter) {
   }
 }
 
-fn __workflow_wait_loop(harness: Harness, owner, repo, cfg) {
+fn __workflow_wait_loop(harness: Harness, owner: any, repo: any, cfg: any) {
   let attempts = []
   let attempt = 0
   let run_id = cfg.initial_run_id
@@ -186,7 +186,7 @@ fn __workflow_wait_loop(harness: Harness, owner, repo, cfg) {
   return __workflow_wait_loop_terminal(cfg, attempts, run_id, last_run)
 }
 
-fn __workflow_wait_loop_terminal(cfg, attempts, run_id, last_run) {
+fn __workflow_wait_loop_terminal(cfg: any, attempts: any, run_id: any, last_run: any) {
   if last_run != nil {
     return __workflow_envelope_from_run(false, "timed_out", last_run, attempts, true, nil)
   }
@@ -204,7 +204,14 @@ fn __workflow_wait_loop_terminal(cfg, attempts, run_id, last_run) {
   return __workflow_wait_envelope(false, "timed_out", cfg.workflow_id, run_id, attempts, true, nil)
 }
 
-fn __workflow_wait_locate_step(harness: Harness, owner, repo, filter, auth, attempt) {
+fn __workflow_wait_locate_step(
+  harness: Harness,
+  owner: any,
+  repo: any,
+  filter: any,
+  auth: any,
+  attempt: any,
+) {
   const located = __locate_workflow_run(harness, owner, repo, filter, auth)
   if is_err(located) {
     return {
@@ -224,7 +231,14 @@ fn __workflow_wait_locate_step(harness: Harness, owner, repo, filter, auth, atte
   }
 }
 
-fn __workflow_wait_probe_step(harness: Harness, owner, repo, run_id, auth, attempt) {
+fn __workflow_wait_probe_step(
+  harness: Harness,
+  owner: any,
+  repo: any,
+  run_id: any,
+  auth: any,
+  attempt: any,
+) {
   const run = __actions_call_raw(
     harness,
     "actions.workflow_run.get",
@@ -253,14 +267,14 @@ fn __workflow_wait_probe_step(harness: Harness, owner, repo, run_id, auth, attem
   }
 }
 
-fn __extract_dispatch_run_id(dispatched) {
+fn __extract_dispatch_run_id(dispatched: any) {
   if dispatched == nil {
     return nil
   }
   return dispatched?.workflow_run_id ?? dispatched?.run_id ?? dispatched?.id
 }
 
-fn __locate_workflow_run(harness: Harness, owner, repo, filter, auth) {
+fn __locate_workflow_run(harness: Harness, owner: any, repo: any, filter: any, auth: any) {
   const resp = __actions_call_raw(
     harness,
     "actions.workflow_runs.list",
@@ -272,7 +286,7 @@ fn __locate_workflow_run(harness: Harness, owner, repo, filter, auth) {
   return __pick_newest_run(unwrap(resp)?.workflow_runs ?? [], filter)
 }
 
-fn __locate_args(filter) {
+fn __locate_args(filter: any) {
   let args = {}
   if filter?.workflow_id != nil {
     args["workflow_id"] = filter.workflow_id
@@ -292,7 +306,7 @@ fn __locate_args(filter) {
   return args
 }
 
-fn __pick_newest_run(runs, filter) {
+fn __pick_newest_run(runs: any, filter: any) {
   const cutoff = filter?.created_after
   const head_sha = filter?.head_sha
   let best = nil
@@ -307,7 +321,7 @@ fn __pick_newest_run(runs, filter) {
   return best
 }
 
-fn __run_matches_filter(run, cutoff, head_sha) {
+fn __run_matches_filter(run: any, cutoff: any, head_sha: any) {
   const created_at = run?.created_at
   if cutoff != nil && created_at != nil && to_string(created_at) < to_string(cutoff) {
     return false
@@ -318,7 +332,7 @@ fn __run_matches_filter(run, cutoff, head_sha) {
   return true
 }
 
-fn __run_is_newer(candidate, best) {
+fn __run_is_newer(candidate: any, best: any) {
   const created_at = candidate?.created_at
   if created_at == nil || best?.created_at == nil {
     return false
@@ -327,14 +341,14 @@ fn __run_is_newer(candidate, best) {
 }
 
 fn __workflow_wait_envelope(
-  ok,
-  status,
-  workflow_id,
-  run_id,
-  attempts,
-  timed_out,
-  error,
-  candidate_run_ids = nil,
+  ok: any,
+  status: any,
+  workflow_id: any,
+  run_id: any,
+  attempts: any,
+  timed_out: any,
+  error: any,
+  candidate_run_ids: any = nil,
 ) {
   return {
     ok: ok,
@@ -363,7 +377,14 @@ fn __workflow_wait_envelope(
   }
 }
 
-fn __workflow_envelope_from_run(ok, status, run, attempts, timed_out, error) {
+fn __workflow_envelope_from_run(
+  ok: any,
+  status: any,
+  run: any,
+  attempts: any,
+  timed_out: any,
+  error: any,
+) {
   return {
     ok: ok,
     status: status,

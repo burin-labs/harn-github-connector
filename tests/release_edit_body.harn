@@ -4,7 +4,7 @@ const REF_OID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 const TARGET_OID = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
-fn release_fixture(id, body) {
+fn release_fixture(id: any, body: any) {
   return {
     id: id,
     tag_name: "v1.2.3",
@@ -17,7 +17,7 @@ fn release_fixture(id, body) {
   }
 }
 
-fn mock_release(testing: HarnessTesting, base, id, body) {
+fn mock_release(testing: HarnessTesting, base: any, id: any, body: any) {
   testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/releases/tags/v1.2.3",
@@ -29,7 +29,7 @@ fn mock_release(testing: HarnessTesting, base, id, body) {
   )
 }
 
-fn mock_annotated_tag(testing: HarnessTesting, base, ref_oid, target_oid) {
+fn mock_annotated_tag(testing: HarnessTesting, base: any, ref_oid: any, target_oid: any) {
   testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/git/ref/tags/v1.2.3",
@@ -50,12 +50,12 @@ fn mock_annotated_tag(testing: HarnessTesting, base, ref_oid, target_oid) {
   )
 }
 
-fn lease(overrides = nil) {
+fn lease(overrides: any = nil) {
   return {release_id: 701, tag_ref_oid: REF_OID, tag_target_oid: TARGET_OID}
     + (overrides ?? {})
 }
 
-fn auth(base) {
+fn auth(base: any) {
   return {api_base_url: base, installation_token: "token"}
 }
 
@@ -70,7 +70,7 @@ fn edit_request(base: string, body: string) -> GithubReleaseEditRequest {
   }
 }
 
-pipeline test_release_body_edit_is_leased_and_metadata_only(harness: Harness, task) {
+pipeline test_release_body_edit_is_leased_and_metadata_only(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const base = "https://github-api.test"
   const replacement = "Exact notes\n\nCorrection footer.\n"
@@ -101,7 +101,7 @@ pipeline test_release_body_edit_is_leased_and_metadata_only(harness: Harness, ta
   assert_eq(patch_body.get("assets"), nil, "metadata edit cannot modify assets")
 }
 
-pipeline test_release_body_edit_rejects_stale_release(harness: Harness, task) {
+pipeline test_release_body_edit_rejects_stale_release(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const base = "https://github-api.test"
   mock_release(harness.testing, base, 702, "Old notes\n")
@@ -112,7 +112,7 @@ pipeline test_release_body_edit_rejects_stale_release(harness: Harness, task) {
   assert_eq(len(harness.testing.http_mock_calls()), 3, "stale release performs no mutation")
 }
 
-pipeline test_release_body_edit_rejects_stale_tag(harness: Harness, task) {
+pipeline test_release_body_edit_rejects_stale_tag(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const base = "https://github-api.test"
   mock_release(harness.testing, base, 701, "Old notes\n")
@@ -123,7 +123,7 @@ pipeline test_release_body_edit_rejects_stale_tag(harness: Harness, task) {
   assert_eq(len(harness.testing.http_mock_calls()), 3, "stale tag performs no mutation")
 }
 
-pipeline test_release_body_edit_rejects_missing_release(harness: Harness, task) {
+pipeline test_release_body_edit_rejects_missing_release(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const base = "https://github-api.test"
   harness.testing.http_mock(
@@ -150,7 +150,7 @@ pipeline test_release_body_edit_rejects_missing_release(harness: Harness, task) 
   assert_eq(len(harness.testing.http_mock_calls()), 2, "missing release performs no mutation")
 }
 
-pipeline test_release_body_edit_normalizes_provider_failure(harness: Harness, task) {
+pipeline test_release_body_edit_normalizes_provider_failure(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const base = "https://github-api.test"
   mock_release(harness.testing, base, 701, "Old notes\n")

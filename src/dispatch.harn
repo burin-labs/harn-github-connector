@@ -112,7 +112,7 @@ const GITHUB_OUTBOUND_METHODS = [
 ]
 
 @complexity(allow)
-pub fn __call_raw(harness: Harness, method, args = {}) {
+pub fn __call_raw(harness: Harness, method: any, args: any = {}) {
   if !contains(GITHUB_OUTBOUND_METHODS, method) {
     return __err(
       "method_not_found",

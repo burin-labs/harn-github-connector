@@ -24,7 +24,7 @@ pub fn __actions_call_raw(harness: Harness, method: string, args: dict) {
   return __err("method_not_found", "Actions polling does not implement `" + method + "`")
 }
 
-pub fn __actions_workflow_dispatch(harness: Harness, args, cfg) {
+pub fn __actions_workflow_dispatch(harness: Harness, args: any, cfg: any) {
   const workflow_id = args?.workflow_id ?? args?.workflow ?? args?.workflow_file
   if workflow_id == nil || trim(to_string(workflow_id)) == "" {
     return __err(
@@ -48,7 +48,7 @@ pub fn __actions_workflow_dispatch(harness: Harness, args, cfg) {
   )
 }
 
-pub fn __actions_workflow_runs_list(harness: Harness, args, cfg) {
+pub fn __actions_workflow_runs_list(harness: Harness, args: any, cfg: any) {
   const workflow_id = args?.workflow_id ?? args?.workflow ?? args?.workflow_file
   const path = if workflow_id == nil || trim(to_string(workflow_id)) == "" {
     "/repos/" + args.owner + "/" + args.repo + "/actions/runs"
@@ -66,7 +66,7 @@ pub fn __actions_workflow_runs_list(harness: Harness, args, cfg) {
   )
 }
 
-pub fn __actions_workflow_run_get(harness: Harness, args, cfg) {
+pub fn __actions_workflow_run_get(harness: Harness, args: any, cfg: any) {
   const run_id = __actions_run_id(args?.run_id ?? args?.id)
   if run_id == nil {
     return __err(
@@ -86,7 +86,7 @@ pub fn __actions_workflow_run_get(harness: Harness, args, cfg) {
   )
 }
 
-pub fn __actions_workflow_run_jobs(harness: Harness, args, cfg) {
+pub fn __actions_workflow_run_jobs(harness: Harness, args: any, cfg: any) {
   const run_id = __actions_run_id(args?.run_id)
   if run_id == nil {
     return __err("schema_drift", "actions.workflow_run.jobs requires a positive decimal run_id")
@@ -117,7 +117,7 @@ pub fn __actions_workflow_run_jobs(harness: Harness, args, cfg) {
   )
 }
 
-pub fn __actions_workflow_run_cancel(harness: Harness, args, cfg) {
+pub fn __actions_workflow_run_cancel(harness: Harness, args: any, cfg: any) {
   const run_id = __actions_run_id(args?.run_id)
   if run_id == nil {
     return __err("schema_drift", "actions.workflow_run.cancel requires a positive run_id")
@@ -135,7 +135,7 @@ pub fn __actions_workflow_run_cancel(harness: Harness, args, cfg) {
   )
 }
 
-pub fn __actions_workflow_run_rerun(harness: Harness, args, cfg) {
+pub fn __actions_workflow_run_rerun(harness: Harness, args: any, cfg: any) {
   const run_id = __actions_run_id(args?.run_id)
   if run_id == nil {
     return __err("schema_drift", "actions.workflow_run.rerun requires a positive run_id")
@@ -167,7 +167,7 @@ pub fn __actions_workflow_run_rerun(harness: Harness, args, cfg) {
  * `Ok("/repos/{owner}/{repo}")` or `Ok("/orgs/{org}")`, or a schema_drift error
  * when neither scope is supplied.
  */
-fn __runner_scope_prefix(args) {
+fn __runner_scope_prefix(args: any) {
   const org = args?.org
   if org != nil && trim(to_string(org)) != "" {
     return Ok("/orgs/" + url_encode(to_string(org)))
@@ -189,7 +189,7 @@ fn __runner_scope_prefix(args) {
  * require the matching read permission.
  */
 @complexity(allow)
-pub fn __actions_runners_dispatch(harness: Harness, method, args, cfg) {
+pub fn __actions_runners_dispatch(harness: Harness, method: any, args: any, cfg: any) {
   const runner_id = args?.runner_id ?? args?.id
   if method == "actions.runner_groups.list" || method == "actions.runner_groups.create" {
     const org = args?.org
@@ -328,7 +328,7 @@ pub fn __actions_runners_dispatch(harness: Harness, method, args, cfg) {
   return __err("method_not_found", "unsupported runner method `" + method + "`")
 }
 
-fn __runner_jitconfig_body(args) {
+fn __runner_jitconfig_body(args: any) {
   let body = {
     name: to_string(args?.name),
     runner_group_id: args?.runner_group_id ?? 1,

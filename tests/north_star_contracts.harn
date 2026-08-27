@@ -6,7 +6,7 @@ fn auth() {
   return {api_base_url: BASE, installation_token: "test-token", retry: {max_attempts: 2}}
 }
 
-fn pull(number, sha, auto_merge = nil) {
+fn pull(number: any, sha: any, auto_merge: any = nil) {
   return {
     number: number,
     node_id: "PR_" + to_string(number),
@@ -31,7 +31,7 @@ fn pull(number, sha, auto_merge = nil) {
   }
 }
 
-fn queue_entry(number, sha) {
+fn queue_entry(number: any, sha: any) {
   return {
     id: "MQE_" + to_string(number),
     position: 2,
@@ -50,7 +50,7 @@ fn queue_entry(number, sha) {
   }
 }
 
-pipeline test_pr_create_files_and_comment_are_closed_records(harness: Harness, task) {
+pipeline test_pr_create_files_and_comment_are_closed_records(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   harness.testing.http_mock(
     "POST",
@@ -140,7 +140,7 @@ pipeline test_pr_create_files_and_comment_are_closed_records(harness: Harness, t
 
 pipeline test_pr_view_survives_missing_branch_admin_permission_and_armed_is_not_queued(
   harness: Harness,
-  task,
+  task: any,
 ) {
   harness.testing.http_mock_clear()
   harness.testing.http_mock(
@@ -202,7 +202,7 @@ pipeline test_pr_view_survives_missing_branch_admin_permission_and_armed_is_not_
   assert_eq(viewed.state, "green", "armed PR is not classified as queued")
 }
 
-pipeline test_merge_queue_membership_uses_queue_entry_evidence(harness: Harness, task) {
+pipeline test_merge_queue_membership_uses_queue_entry_evidence(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   harness.testing.http_mock(
     "GET",
@@ -246,7 +246,7 @@ pipeline test_merge_queue_membership_uses_queue_entry_evidence(harness: Harness,
   assert_eq(membership.entry.state, "awaiting_checks", "wire enum is normalized once")
 }
 
-pipeline test_auto_merge_rejects_stale_expected_head_before_mutation(harness: Harness, task) {
+pipeline test_auto_merge_rejects_stale_expected_head_before_mutation(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const missing = call(
     harness,
@@ -277,7 +277,7 @@ pipeline test_auto_merge_rejects_stale_expected_head_before_mutation(harness: Ha
   assert_eq(len(harness.testing.http_mock_calls()), 1, "stale lease performs no mutation")
 }
 
-pipeline test_commit_signature_states_are_normalized(harness: Harness, task) {
+pipeline test_commit_signature_states_are_normalized(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   harness.testing.http_mock(
     "GET",
@@ -386,7 +386,10 @@ pipeline test_commit_signature_states_are_normalized(harness: Harness, task) {
   assert_eq(unwrap_err(malformed).code, "invalid_response", "signature shape is validated once")
 }
 
-pipeline test_exact_file_lookup_separates_absence_from_inaccessibility(harness: Harness, task) {
+pipeline test_exact_file_lookup_separates_absence_from_inaccessibility(
+  harness: Harness,
+  task: any,
+) {
   harness.testing.http_mock_clear()
   harness.testing.http_mock(
     "GET",
@@ -469,7 +472,10 @@ pipeline test_exact_file_lookup_separates_absence_from_inaccessibility(harness: 
   )
 }
 
-pipeline test_canonical_http_failures_and_malformed_payloads_fail_closed(harness: Harness, task) {
+pipeline test_canonical_http_failures_and_malformed_payloads_fail_closed(
+  harness: Harness,
+  task: any,
+) {
   harness.testing.http_mock_clear()
   const cases = [
     {path: "unauthorized", status: 401, code: "auth", message: "Bad credentials", headers: {}},
@@ -530,7 +536,7 @@ pipeline test_canonical_http_failures_and_malformed_payloads_fail_closed(harness
   assert_eq(unwrap_err(bad_shape).code, "invalid_response", "shape error is normalized")
 }
 
-pipeline test_exact_workflow_run_and_jobs_are_normalized(harness: Harness, task) {
+pipeline test_exact_workflow_run_and_jobs_are_normalized(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   harness.testing.http_mock(
     "GET",
@@ -603,7 +609,7 @@ pipeline test_exact_workflow_run_and_jobs_are_normalized(harness: Harness, task)
   assert_eq(jobs.jobs[0].steps[0].name, "Run tests", "step evidence is normalized")
 }
 
-pipeline test_workflow_dispatch_returns_exact_accepted_run_identity(harness: Harness, task) {
+pipeline test_workflow_dispatch_returns_exact_accepted_run_identity(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   harness.testing.http_mock(
     "GET",

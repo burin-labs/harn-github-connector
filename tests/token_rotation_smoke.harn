@@ -4,7 +4,7 @@ fn fixture_key(fs: HarnessFs) {
   return fs.read_text(path_join(fs.source_dir(), "fixtures/github_app_test_key.pem"))
 }
 
-fn base_config(fs: HarnessFs, now) {
+fn base_config(fs: HarnessFs, now: any) {
   return {
     app_id: 12345,
     installation_id: 77,
@@ -14,7 +14,7 @@ fn base_config(fs: HarnessFs, now) {
   }
 }
 
-pipeline test_token_rotation_smoke(harness: Harness, task) {
+pipeline test_token_rotation_smoke(harness: Harness, task: any) {
   reset_token_cache(harness.runtime)
   harness.testing.http_mock_clear()
   const config = base_config(harness.fs, 1700000000)

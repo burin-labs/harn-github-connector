@@ -26,7 +26,7 @@ fn archive(value: unknown, path: string = "evidence.json") {
   return zip_create([{path: path, content: json_stringify(value)}])
 }
 
-fn assert_code(result, code: string) {
+fn assert_code(result: any, code: string) {
   require is_err(result), "single-field mutation must fail"
   require unwrap_err(result).code == code, "single-field mutation returned the wrong error code"
 }
@@ -211,7 +211,7 @@ pipeline test_file_backed_artifact_decode_cleans_success(harness: Harness, task:
   assert_eq(receipt.artifact_digest, artifact_meta().digest)
 }
 
-fn run_meta(overrides = {}) {
+fn run_meta(overrides: any = {}) {
   return {
     id: 42,
     name: "Release producer",
@@ -225,7 +225,7 @@ fn run_meta(overrides = {}) {
     + overrides
 }
 
-fn mock_run(testing: HarnessTesting, overrides = {}) {
+fn mock_run(testing: HarnessTesting, overrides: any = {}) {
   testing.http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/actions/runs/42",
@@ -237,7 +237,7 @@ fn mock_run(testing: HarnessTesting, overrides = {}) {
   )
 }
 
-fn mock_artifacts(testing: HarnessTesting, artifacts, total_count: int? = nil) {
+fn mock_artifacts(testing: HarnessTesting, artifacts: any, total_count: int? = nil) {
   testing.http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/actions/runs/42/artifacts?per_page=100&page=1",
@@ -249,7 +249,7 @@ fn mock_artifacts(testing: HarnessTesting, artifacts, total_count: int? = nil) {
   )
 }
 
-fn artifact_meta(overrides = {}) {
+fn artifact_meta(overrides: any = {}) {
   return {
     id: 91,
     name: "release-evidence",

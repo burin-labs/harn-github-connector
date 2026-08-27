@@ -1,6 +1,6 @@
 import { actions_workflow_run_jobs, call } from "../src/facade"
 
-fn auth(base) {
+fn auth(base: any) {
   return {api_base_url: base, installation_token: "test-token"}
 }
 
@@ -8,7 +8,7 @@ fn jobs_fixture(fs: HarnessFs) {
   return json_parse(fs.read_text(fs.source_dir() + "/fixtures/actions_workflow_run_jobs.json"))
 }
 
-pipeline test_actions_workflow_run_jobs_returns_canonical_payload(harness: Harness, task) {
+pipeline test_actions_workflow_run_jobs_returns_canonical_payload(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const base = "https://github-api.test"
   const fixture = jobs_fixture(harness.fs)
@@ -47,7 +47,7 @@ pipeline test_actions_workflow_run_jobs_returns_canonical_payload(harness: Harne
   assert_eq(calls[0].url, url, "workflow jobs forwards filter and pagination options")
 }
 
-pipeline test_actions_workflow_run_jobs_requires_run_id(harness: Harness, task) {
+pipeline test_actions_workflow_run_jobs_requires_run_id(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const base = "https://github-api.test"
   const missing = call(
@@ -90,7 +90,7 @@ pipeline test_actions_workflow_run_jobs_requires_run_id(harness: Harness, task) 
   )
 }
 
-pipeline test_actions_workflow_run_jobs_validates_query_options(harness: Harness, task) {
+pipeline test_actions_workflow_run_jobs_validates_query_options(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const base = "https://github-api.test"
   const bad_filter = call(
@@ -124,7 +124,7 @@ pipeline test_actions_workflow_run_jobs_validates_query_options(harness: Harness
   )
 }
 
-pipeline test_actions_workflow_run_jobs_preserves_http_failure(harness: Harness, task) {
+pipeline test_actions_workflow_run_jobs_preserves_http_failure(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const base = "https://github-api.test"
   harness.testing.http_mock(

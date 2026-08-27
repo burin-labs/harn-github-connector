@@ -103,7 +103,7 @@ fn __wc_category(code: string) -> string {
   return code
 }
 
-fn __wc_error(code: string, message: string, details = nil) -> GithubConnectorError {
+fn __wc_error(code: string, message: string, details: any = nil) -> GithubConnectorError {
   const base = {code: code, category: __wc_category(code), message: message}
   const error: GithubConnectorError = if details == nil {
     base
@@ -113,17 +113,17 @@ fn __wc_error(code: string, message: string, details = nil) -> GithubConnectorEr
   return error
 }
 
-fn __wc_err(code: string, message: string, details = nil) {
+fn __wc_err(code: string, message: string, details: any = nil) {
   return Err(__wc_error(code, message, details))
 }
 
 /** Re-type an inner failure so annotated boundaries keep one error contract. */
-fn __wc_error_of(result) -> GithubConnectorError {
+fn __wc_error_of(result: any) -> GithubConnectorError {
   const failure: GithubConnectorError = unwrap_err(result)
   return failure
 }
 
-fn __wc_delta_result(result) -> GithubConnectorResult<GithubWorktreeDelta> {
+fn __wc_delta_result(result: any) -> GithubConnectorResult<GithubWorktreeDelta> {
   if is_err(result) {
     return Err(__wc_error_of(result))
   }
@@ -217,7 +217,7 @@ fn __wc_git_line(process: HarnessProcess, repo_dir: string, args: list<string>, 
   return Ok(trim(unwrap(out)))
 }
 
-fn __wc_source(raw) -> string? {
+fn __wc_source(raw: any) -> string? {
   const value = trim(to_string(raw ?? "worktree"))
   if value == "" || value == "worktree" {
     return "worktree"
@@ -374,7 +374,7 @@ fn __wc_parse_raw(raw: string) {
   return Ok(entries)
 }
 
-fn __wc_check_paths(entries) {
+fn __wc_check_paths(entries: any) {
   const replacement = __wc_replacement_char()
   for entry in entries {
     for path in [entry.src_path, entry.dst_path] {
@@ -390,7 +390,7 @@ fn __wc_check_paths(entries) {
   return Ok(true)
 }
 
-fn __wc_deletion(path: string, oid: string, rename_to) -> GithubWorktreeChange {
+fn __wc_deletion(path: string, oid: string, rename_to: any) -> GithubWorktreeChange {
   return {
     path: path,
     status: "deleted",
@@ -407,7 +407,7 @@ fn __wc_addition(
   path: string,
   oid: string,
   status: string,
-  rename_from,
+  rename_from: any,
 ) {
   const blob = __wc_blob(process, repo_dir, oid)
   if is_err(blob) {
@@ -463,7 +463,7 @@ fn __wc_addition(
  * of any mode is supported.
  */
 @complexity(allow)
-fn __wc_mode_gate(entry) {
+fn __wc_mode_gate(entry: any) {
   const base_mode = entry.src_mode
   const mode = entry.dst_mode
   const path = entry.dst_path
@@ -514,7 +514,7 @@ fn __wc_mode_gate(entry) {
 }
 
 @complexity(allow)
-fn __wc_classify(process: HarnessProcess, repo_dir: string, entries) {
+fn __wc_classify(process: HarnessProcess, repo_dir: string, entries: any) {
   let changes = []
   let contents = {}
   for entry in entries {
@@ -624,7 +624,7 @@ fn __wc_raw_diff(process: HarnessProcess, repo_dir: string, base_oid: string, en
   )
 }
 
-fn __wc_base_oid(process: HarnessProcess, repo_dir: string, requested) {
+fn __wc_base_oid(process: HarnessProcess, repo_dir: string, requested: any) {
   const head = __wc_git_line(process, repo_dir, ["rev-parse", "HEAD"], {})
   if is_err(head) {
     return head
@@ -645,7 +645,7 @@ fn __wc_base_oid(process: HarnessProcess, repo_dir: string, requested) {
   return Ok(observed)
 }
 
-fn __wc_delta_env(process: HarnessProcess, repo_dir: string, source: string, scratch) {
+fn __wc_delta_env(process: HarnessProcess, repo_dir: string, source: string, scratch: any) {
   if source == "index" {
     return Ok({})
   }
@@ -656,7 +656,13 @@ fn __wc_delta_env(process: HarnessProcess, repo_dir: string, source: string, scr
 }
 
 @complexity(allow)
-fn __wc_delta(process: HarnessProcess, repo_dir: string, source: string, requested_base, scratch) {
+fn __wc_delta(
+  process: HarnessProcess,
+  repo_dir: string,
+  source: string,
+  requested_base: any,
+  scratch: any,
+) {
   const base = __wc_base_oid(process, repo_dir, requested_base)
   if is_err(base) {
     return base

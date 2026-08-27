@@ -2,7 +2,7 @@ import { call } from "../src/facade"
 
 type BotContentBody = {author?: unknown, committer?: unknown, message: string}
 
-pipeline test_author_mode(harness: Harness, task) {
+pipeline test_author_mode(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const base_url = "https://github-api.test"
   const app_auth = {api_base_url: base_url, installation_token: "github-installation-token"}

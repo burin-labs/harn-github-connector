@@ -8,9 +8,9 @@ import {
 import { __err } from "../errors"
 
 pub fn __typed_workflow_dispatch(
-  repo,
-  ref,
-  resolved,
+  repo: any,
+  ref: any,
+  resolved: any,
 ) -> GithubConnectorResult<GithubWorkflowDispatchReceipt> {
   if resolved?.run_id == nil || trim(to_string(resolved?.head_sha ?? "")) == ""
     || trim(to_string(resolved?.event ?? ""))
@@ -48,7 +48,7 @@ pub fn __typed_workflow_dispatch(
   return Ok(receipt)
 }
 
-pub fn __typed_workflow_run(repo, run) {
+pub fn __typed_workflow_run(repo: any, run: any) {
   const id = __actions_run_id(run?.id)
   if type_of(run) != "dict" || id == nil || trim(to_string(run?.status ?? "")) == ""
     || trim(to_string(run?.event ?? ""))
@@ -107,7 +107,7 @@ pub fn __typed_workflow_run(repo, run) {
   return Ok(typed)
 }
 
-pub fn __typed_workflow_job(job) -> GithubConnectorResult<GithubWorkflowJob> {
+pub fn __typed_workflow_job(job: any) -> GithubConnectorResult<GithubWorkflowJob> {
   if type_of(job) != "dict" || job?.id == nil || job?.run_id == nil
     || trim(to_string(job?.name ?? ""))
       == ""
@@ -162,7 +162,7 @@ pub fn __typed_workflow_job(job) -> GithubConnectorResult<GithubWorkflowJob> {
   )
 }
 
-pub fn __actions_run_id(value) {
+pub fn __actions_run_id(value: any) {
   const raw = trim(to_string(value ?? ""))
   if len(regex_captures("^[1-9][0-9]*$", raw)) == 0 {
     return nil
@@ -170,7 +170,7 @@ pub fn __actions_run_id(value) {
   return to_int(raw)
 }
 
-pub fn __positive_decimal(value, max_value) {
+pub fn __positive_decimal(value: any, max_value: any) {
   const parsed = __actions_run_id(value)
   if parsed == nil || (max_value != nil && parsed > max_value) {
     return nil
@@ -178,7 +178,7 @@ pub fn __positive_decimal(value, max_value) {
   return parsed
 }
 
-pub fn __nonnegative_decimal(value) {
+pub fn __nonnegative_decimal(value: any) {
   const raw = trim(to_string(value ?? ""))
   if len(regex_captures("^[0-9]+$", raw)) == 0 {
     return nil
@@ -186,7 +186,7 @@ pub fn __nonnegative_decimal(value) {
   return to_int(raw)
 }
 
-pub fn __extract_actions_run_id(url) {
+pub fn __extract_actions_run_id(url: any) {
   if url == nil || !contains(to_string(url), "/actions/runs/") {
     return nil
   }
@@ -204,7 +204,7 @@ pub fn __extract_actions_run_id(url) {
   return unwrap(parsed)
 }
 
-pub fn __duration_seconds(started_at, completed_at) {
+pub fn __duration_seconds(started_at: any, completed_at: any) {
   if started_at == nil || completed_at == nil {
     return nil
   }

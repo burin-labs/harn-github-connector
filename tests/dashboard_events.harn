@@ -1,7 +1,7 @@
 import { call, init, shutdown } from "../src/facade"
 import { fixture_raw, github_normalize } from "./helpers"
 
-fn find_intent(intents, name) {
+fn find_intent(intents: any, name: any) {
   for intent in intents ?? [] {
     if intent?.name == name {
       return intent
@@ -10,7 +10,7 @@ fn find_intent(intents, name) {
   return nil
 }
 
-pipeline test_dashboard_events(harness: Harness, task) {
+pipeline test_dashboard_events(harness: Harness, task: any) {
   const secret = "test-signing-secret"
   shutdown(harness)
   init(harness, {signing_secret: secret})

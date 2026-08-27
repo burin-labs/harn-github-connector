@@ -3,7 +3,7 @@ import "./values"
 
 const GITHUB_PROVIDER_ID = "github"
 
-pub fn __reaction_topics(event_kind, raw) {
+pub fn __reaction_topics(event_kind: any, raw: any) {
   if event_kind == "pull_request" && __pull_request_has_conflict(raw?.pull_request) {
     return ["github.reaction.merge_conflict"]
   }
@@ -13,11 +13,11 @@ pub fn __reaction_topics(event_kind, raw) {
   return []
 }
 
-pub fn __pull_request_has_conflict(pr) {
+pub fn __pull_request_has_conflict(pr: any) {
   return lowercase(to_string(pr?.mergeable_state ?? "")) == "dirty"
 }
 
-pub fn __ci_concluded_failed(event_kind, raw) {
+pub fn __ci_concluded_failed(event_kind: any, raw: any) {
   if event_kind == "status" {
     return contains(GITHUB_CI_FAILURE_STATES, lowercase(to_string(raw?.state ?? "")))
   }
@@ -52,7 +52,7 @@ const MENTION_HANDLE_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWX
  * `[A-Za-z0-9-_/]`, and (optionally) a command word follows on the same line.
  */
 @complexity(allow)
-pub fn __extract_mention_candidates(body) {
+pub fn __extract_mention_candidates(body: any) {
   const text = to_string(body ?? "")
   const n = len(text)
   let out = []
@@ -77,11 +77,11 @@ pub fn __extract_mention_candidates(body) {
   return out
 }
 
-pub fn __is_mention_boundary(ch) {
+pub fn __is_mention_boundary(ch: any) {
   return ch == " " || ch == "\n" || ch == "\t" || ch == "\r" || ch == "(" || ch == "["
 }
 
-pub fn __mention_from(handle, text, after_handle, n) {
+pub fn __mention_from(handle: any, text: any, after_handle: any, n: any) {
   // A command must be separated from the handle by whitespace; punctuation
   // directly attached to the handle (e.g. `@reviewer!`) yields no command.
   if after_handle < n {
@@ -117,7 +117,7 @@ pub fn __mention_from(handle, text, after_handle, n) {
  * (downstream filters by bot identity) plus the first command for convenience.
  * Returns nil when the event kind has no body or no mentions are found.
  */
-pub fn __mention_block(event_kind, payload) {
+pub fn __mention_block(event_kind: any, payload: any) {
   const body = __mention_body(event_kind, payload)
   if body == nil || trim(to_string(body)) == "" {
     return nil
@@ -143,7 +143,7 @@ pub fn __mention_block(event_kind, payload) {
   }
 }
 
-pub fn __mention_body(event_kind, payload) {
+pub fn __mention_body(event_kind: any, payload: any) {
   if event_kind == "issue_comment" || event_kind == "pull_request_review_comment" {
     return payload?.comment?.body
   }
@@ -157,7 +157,12 @@ pub fn __mention_body(event_kind, payload) {
 }
 
 @complexity(allow)
-pub fn __decorate_dashboard_payload(event_kind, payload, dedupe_key, occurred_at) {
+pub fn __decorate_dashboard_payload(
+  event_kind: any,
+  payload: any,
+  dedupe_key: any,
+  occurred_at: any,
+) {
   const source_refs = __source_refs(event_kind, payload)
   const source = __first(source_refs)
   let out = payload + {source: source, source_refs: source_refs}
@@ -177,7 +182,7 @@ pub fn __decorate_dashboard_payload(event_kind, payload, dedupe_key, occurred_at
 }
 
 @complexity(allow)
-pub fn __source_refs(event_kind, payload) {
+pub fn __source_refs(event_kind: any, payload: any) {
   let refs = []
   if event_kind == "issues" {
     refs = __append_ref(refs, __issue_source_ref(payload))
@@ -239,14 +244,14 @@ pub fn __source_refs(event_kind, payload) {
   return refs
 }
 
-pub fn __append_ref(refs, ref) {
+pub fn __append_ref(refs: any, ref: any) {
   if ref == nil {
     return refs
   }
   return refs + [ref]
 }
 
-pub fn __source_ref(kind, id, payload, fields = nil) {
+pub fn __source_ref(kind: any, id: any, payload: any, fields: any = nil) {
   const data = fields ?? {}
   const repo = payload?.repo ?? {}
   const repo_name = repo?.full_name ?? ""
@@ -268,7 +273,7 @@ pub fn __source_ref(kind, id, payload, fields = nil) {
     + data
 }
 
-pub fn __source_key(kind, repo, id) {
+pub fn __source_key(kind: any, repo: any, id: any) {
   const value = if id == nil || trim(to_string(id)) == "" {
     "unknown"
   } else {
@@ -282,7 +287,7 @@ pub fn __source_key(kind, repo, id) {
   return "github:" + to_string(kind) + ":" + repo_part + ":" + value
 }
 
-pub fn __repo_source_ref(payload) {
+pub fn __repo_source_ref(payload: any) {
   const repo = payload?.repo ?? {}
   if repo?.full_name == nil || repo.full_name == "" {
     return nil
@@ -296,7 +301,7 @@ pub fn __repo_source_ref(payload) {
   )
 }
 
-pub fn __issue_source_ref(payload) {
+pub fn __issue_source_ref(payload: any) {
   const issue = payload?.issue
   if issue == nil || issue?.number == nil {
     return nil
@@ -316,7 +321,7 @@ pub fn __issue_source_ref(payload) {
   )
 }
 
-pub fn __comment_source_ref(payload) {
+pub fn __comment_source_ref(payload: any) {
   const comment = payload?.comment
   if comment == nil || comment?.id == nil {
     return nil
@@ -335,7 +340,7 @@ pub fn __comment_source_ref(payload) {
   )
 }
 
-pub fn __pull_request_source_ref(payload) {
+pub fn __pull_request_source_ref(payload: any) {
   const pr = payload?.pull_request
   const number = payload?.pull_request_number ?? pr?.number
   if number == nil {
@@ -356,7 +361,7 @@ pub fn __pull_request_source_ref(payload) {
   )
 }
 
-pub fn __pull_request_number_source_ref(payload, number) {
+pub fn __pull_request_number_source_ref(payload: any, number: any) {
   if number == nil {
     return nil
   }
@@ -372,7 +377,7 @@ pub fn __pull_request_number_source_ref(payload, number) {
   )
 }
 
-pub fn __review_source_ref(payload) {
+pub fn __review_source_ref(payload: any) {
   const review = payload?.review
   if review == nil || review?.id == nil {
     return nil
@@ -391,7 +396,7 @@ pub fn __review_source_ref(payload) {
   )
 }
 
-pub fn __check_run_source_ref(payload) {
+pub fn __check_run_source_ref(payload: any) {
   if payload?.check_id == nil {
     return nil
   }
@@ -412,7 +417,7 @@ pub fn __check_run_source_ref(payload) {
   )
 }
 
-pub fn __check_suite_source_ref(payload) {
+pub fn __check_suite_source_ref(payload: any) {
   if payload?.check_suite_id == nil {
     return nil
   }
@@ -430,7 +435,7 @@ pub fn __check_suite_source_ref(payload) {
   )
 }
 
-pub fn __workflow_run_source_ref(payload) {
+pub fn __workflow_run_source_ref(payload: any) {
   if payload?.run_id == nil {
     return nil
   }
@@ -454,7 +459,7 @@ pub fn __workflow_run_source_ref(payload) {
   )
 }
 
-pub fn __status_source_ref(payload) {
+pub fn __status_source_ref(payload: any) {
   const id = payload?.status_id ?? payload?.head_sha
   if id == nil {
     return nil
@@ -473,7 +478,7 @@ pub fn __status_source_ref(payload) {
   )
 }
 
-pub fn __merge_group_source_ref(payload) {
+pub fn __merge_group_source_ref(payload: any) {
   if payload?.merge_group_id == nil {
     return nil
   }
@@ -491,7 +496,7 @@ pub fn __merge_group_source_ref(payload) {
   )
 }
 
-pub fn __push_source_ref(payload) {
+pub fn __push_source_ref(payload: any) {
   const id = payload?.after ?? payload?.ref
   if id == nil {
     return nil
@@ -506,7 +511,7 @@ pub fn __push_source_ref(payload) {
   )
 }
 
-pub fn __deployment_source_ref(payload) {
+pub fn __deployment_source_ref(payload: any) {
   const status = payload?.deployment_status ?? {}
   const deployment = payload?.deployment ?? {}
   const id = status?.id ?? deployment?.id
@@ -528,7 +533,7 @@ pub fn __deployment_source_ref(payload) {
   )
 }
 
-pub fn __installation_source_ref(payload) {
+pub fn __installation_source_ref(payload: any) {
   if payload?.installation_id == nil {
     return nil
   }
@@ -547,7 +552,7 @@ pub fn __installation_source_ref(payload) {
   )
 }
 
-pub fn __release_source_ref(payload) {
+pub fn __release_source_ref(payload: any) {
   if payload?.release_id == nil {
     return nil
   }
@@ -568,7 +573,7 @@ pub fn __release_source_ref(payload) {
   )
 }
 
-pub fn __repo_url(payload) {
+pub fn __repo_url(payload: any) {
   const explicit = payload?.repository?.html_url
   if explicit != nil && explicit != "" {
     return explicit
@@ -580,7 +585,7 @@ pub fn __repo_url(payload) {
   return "https://github.com/" + full_name
 }
 
-pub fn __issue_url(payload, number) {
+pub fn __issue_url(payload: any, number: any) {
   const repo_url = __repo_url(payload)
   if repo_url == nil || number == nil {
     return nil
@@ -588,7 +593,7 @@ pub fn __issue_url(payload, number) {
   return repo_url + "/issues/" + to_string(number)
 }
 
-pub fn __pull_request_url(payload, number) {
+pub fn __pull_request_url(payload: any, number: any) {
   const repo_url = __repo_url(payload)
   if repo_url == nil || number == nil {
     return nil
@@ -596,7 +601,7 @@ pub fn __pull_request_url(payload, number) {
   return repo_url + "/pull/" + to_string(number)
 }
 
-pub fn __commit_url(payload, sha) {
+pub fn __commit_url(payload: any, sha: any) {
   const repo_url = __repo_url(payload)
   if repo_url == nil || sha == nil || sha == "" {
     return nil
@@ -604,7 +609,7 @@ pub fn __commit_url(payload, sha) {
   return repo_url + "/commit/" + to_string(sha)
 }
 
-pub fn __branch_or_commit_url(payload, branch, sha) {
+pub fn __branch_or_commit_url(payload: any, branch: any, sha: any) {
   const repo_url = __repo_url(payload)
   if repo_url == nil {
     return nil
@@ -618,7 +623,7 @@ pub fn __branch_or_commit_url(payload, branch, sha) {
   return repo_url
 }
 
-pub fn __actions_run_url(payload, run_id) {
+pub fn __actions_run_url(payload: any, run_id: any) {
   const repo_url = __repo_url(payload)
   if repo_url == nil || run_id == nil {
     return nil
@@ -626,7 +631,7 @@ pub fn __actions_run_url(payload, run_id) {
   return repo_url + "/actions/runs/" + to_string(run_id)
 }
 
-pub fn __check_suite_url(payload, suite_id) {
+pub fn __check_suite_url(payload: any, suite_id: any) {
   const commit = __commit_url(payload, payload?.head_sha)
   if commit == nil || suite_id == nil {
     return commit
@@ -634,7 +639,7 @@ pub fn __check_suite_url(payload, suite_id) {
   return commit + "/checks?check_suite_id=" + to_string(suite_id)
 }
 
-pub fn __release_url(payload, tag_name) {
+pub fn __release_url(payload: any, tag_name: any) {
   const repo_url = __repo_url(payload)
   if repo_url == nil || tag_name == nil || tag_name == "" {
     return nil
@@ -642,7 +647,14 @@ pub fn __release_url(payload, tag_name) {
   return repo_url + "/releases/tag/" + url_encode(to_string(tag_name))
 }
 
-pub fn __triage_event(event_kind, payload, source, source_refs, dedupe_key, occurred_at) {
+pub fn __triage_event(
+  event_kind: any,
+  payload: any,
+  source: any,
+  source_refs: any,
+  dedupe_key: any,
+  occurred_at: any,
+) {
   if !contains(["issues", "issue_comment", "pull_request", "pull_request_review"], event_kind) {
     return nil
   }
@@ -672,7 +684,14 @@ pub fn __triage_event(event_kind, payload, source, source_refs, dedupe_key, occu
   }
 }
 
-pub fn __job_event(event_kind, payload, source, source_refs, dedupe_key, occurred_at) {
+pub fn __job_event(
+  event_kind: any,
+  payload: any,
+  source: any,
+  source_refs: any,
+  dedupe_key: any,
+  occurred_at: any,
+) {
   if !contains(
     [
       "workflow_run",
@@ -723,7 +742,7 @@ pub fn __job_event(event_kind, payload, source, source_refs, dedupe_key, occurre
   }
 }
 
-pub fn __read_action_intents(source, source_refs) {
+pub fn __read_action_intents(source: any, source_refs: any) {
   if source == nil || source?.url == nil {
     return []
   }
@@ -738,7 +757,7 @@ pub fn __read_action_intents(source, source_refs) {
   ]
 }
 
-pub fn __host_task_action_intents(source, source_refs) {
+pub fn __host_task_action_intents(source: any, source_refs: any) {
   return [
     {kind: "host", name: "dismiss", requires_approval: false, source_ref: source},
     {kind: "host", name: "snooze", requires_approval: false, source_ref: source},
@@ -752,7 +771,7 @@ pub fn __host_task_action_intents(source, source_refs) {
   ]
 }
 
-pub fn __triage_write_action_intents(event_kind, payload) {
+pub fn __triage_write_action_intents(event_kind: any, payload: any) {
   let intents = []
   const repo = payload?.repo ?? {}
   const issue_number = payload?.issue?.number
@@ -796,7 +815,7 @@ pub fn __triage_write_action_intents(event_kind, payload) {
   return intents
 }
 
-pub fn __job_write_action_intents(event_kind, payload) {
+pub fn __job_write_action_intents(event_kind: any, payload: any) {
   let intents = []
   const repo = payload?.repo ?? {}
   if event_kind == "workflow_run" && payload?.workflow_id != nil {
@@ -832,14 +851,14 @@ pub fn __job_write_action_intents(event_kind, payload) {
   return intents
 }
 
-pub fn __append_intent(intents, intent) {
+pub fn __append_intent(intents: any, intent: any) {
   if intent == nil {
     return intents
   }
   return intents + [intent]
 }
 
-pub fn __provider_write_intent(name, method, args) {
+pub fn __provider_write_intent(name: any, method: any, args: any) {
   if args?.repo == nil {
     return nil
   }
@@ -853,7 +872,7 @@ pub fn __provider_write_intent(name, method, args) {
   }
 }
 
-pub fn __provider_operation_intent(name, operation, available) {
+pub fn __provider_operation_intent(name: any, operation: any, available: any) {
   return {
     kind: "provider_write",
     name: name,
@@ -864,11 +883,11 @@ pub fn __provider_operation_intent(name, operation, available) {
   }
 }
 
-pub fn __primary_actor(payload) {
+pub fn __primary_actor(payload: any) {
   return __first(__actors(payload))
 }
 
-pub fn __actors(payload) {
+pub fn __actors(payload: any) {
   let actors = []
   actors = __append_actor(actors, payload?.sender)
   actors = __append_actor(actors, payload?.issue?.user)
@@ -883,7 +902,7 @@ pub fn __actors(payload) {
   return actors
 }
 
-pub fn __append_actor(actors, raw_actor) {
+pub fn __append_actor(actors: any, raw_actor: any) {
   const actor = __actor(raw_actor)
   if actor == nil || actor?.handle == nil || actor.handle == "" {
     return actors
@@ -896,7 +915,7 @@ pub fn __append_actor(actors, raw_actor) {
   return actors + [actor]
 }
 
-pub fn __actor(raw_actor) {
+pub fn __actor(raw_actor: any) {
   if raw_actor == nil {
     return nil
   }
@@ -914,18 +933,18 @@ pub fn __actor(raw_actor) {
   }
 }
 
-pub fn __privacy(payload) {
+pub fn __privacy(payload: any) {
   return {redacted: false, contains_private_repo: payload?.repository?.private ?? false}
 }
 
-pub fn __privacy_flags(payload) {
+pub fn __privacy_flags(payload: any) {
   if payload?.repository?.private ?? false {
     return ["private_repository"]
   }
   return []
 }
 
-pub fn __triage_summary(event_kind, payload) {
+pub fn __triage_summary(event_kind: any, payload: any) {
   if event_kind == "issues" {
     return "Issue #" + to_string(payload?.issue?.number ?? "") + " "
       + to_string(payload?.action ?? "updated")
@@ -951,7 +970,7 @@ pub fn __triage_summary(event_kind, payload) {
   return "GitHub item updated"
 }
 
-pub fn __triage_reason(event_kind, payload) {
+pub fn __triage_reason(event_kind: any, payload: any) {
   if event_kind == "issues" {
     return "A tracked GitHub issue changed and may need triage or conversion into a task."
   }
@@ -964,7 +983,7 @@ pub fn __triage_reason(event_kind, payload) {
   return "A GitHub source item changed."
 }
 
-pub fn __triage_proposed_action(event_kind, payload) {
+pub fn __triage_proposed_action(event_kind: any, payload: any) {
   if event_kind == "issues" {
     return "triage_issue"
   }
@@ -983,7 +1002,7 @@ pub fn __triage_proposed_action(event_kind, payload) {
   return "review"
 }
 
-pub fn __triage_urgency(event_kind, payload) {
+pub fn __triage_urgency(event_kind: any, payload: any) {
   if event_kind == "pull_request_review"
     && lowercase(to_string(payload?.review?.state ?? ""))
       == "changes_requested" {
@@ -996,14 +1015,14 @@ pub fn __triage_urgency(event_kind, payload) {
   return "normal"
 }
 
-pub fn __triage_priority(event_kind, payload) {
+pub fn __triage_priority(event_kind: any, payload: any) {
   if __triage_urgency(event_kind, payload) == "high" {
     return "high"
   }
   return "normal"
 }
 
-pub fn __labels_include(labels, wanted) {
+pub fn __labels_include(labels: any, wanted: any) {
   for label in labels ?? [] {
     const name = lowercase(to_string(label?.name ?? label))
     if name == lowercase(to_string(wanted)) {
@@ -1013,7 +1032,7 @@ pub fn __labels_include(labels, wanted) {
   return false
 }
 
-pub fn __job_summary(event_kind, payload) {
+pub fn __job_summary(event_kind: any, payload: any) {
   if event_kind == "workflow_run" {
     return "Workflow " + to_string(payload?.name ?? payload?.workflow_id ?? "") + " "
       + to_string(payload?.status ?? "updated")
@@ -1053,7 +1072,7 @@ pub fn __job_summary(event_kind, payload) {
   return "GitHub job updated"
 }
 
-pub fn __job_status(event_kind, payload) {
+pub fn __job_status(event_kind: any, payload: any) {
   if payload?.status != nil {
     return payload.status
   }
@@ -1078,7 +1097,7 @@ pub fn __job_status(event_kind, payload) {
   return "updated"
 }
 
-pub fn __job_conclusion(event_kind, payload) {
+pub fn __job_conclusion(event_kind: any, payload: any) {
   if payload?.conclusion != nil {
     return payload.conclusion
   }

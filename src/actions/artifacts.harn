@@ -296,7 +296,12 @@ fn __list_exact_run_artifacts(
   return __err("incomplete_page", "GitHub workflow artifact listing exceeded its page limit")
 }
 
-fn __validated_workflow_run(run, run_id: int, expected_run_name: string, evidence_mode: string) {
+fn __validated_workflow_run(
+  run: any,
+  run_id: int,
+  expected_run_name: string,
+  evidence_mode: string,
+) {
   const observed_run_id = to_int(run?.id)
   const observed_run_name = to_string(run?.name ?? "")
   const observed_run_head = trim(to_string(run?.head_sha ?? ""))
@@ -352,7 +357,7 @@ fn __validated_workflow_run(run, run_id: int, expected_run_name: string, evidenc
   return Ok(run)
 }
 
-fn __validated_artifact_producer(artifact, run_id: int, run_head_sha: string) {
+fn __validated_artifact_producer(artifact: any, run_id: int, run_head_sha: string) {
   if type_of(artifact?.workflow_run) != "dict" {
     return __err("invalid_response", "GitHub workflow artifact omitted its producer identity")
   }

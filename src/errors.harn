@@ -1,4 +1,4 @@
-pub fn __err(code, message, details = nil) {
+pub fn __err(code: any, message: any, details: any = nil) {
   const error = {code: code, category: __error_category(code), message: message}
   return Err(
     if details == nil {
@@ -9,7 +9,7 @@ pub fn __err(code, message, details = nil) {
   )
 }
 
-fn __error_category(code) {
+fn __error_category(code: any) {
   if code == "auth" || code == "unauthorized" || code == "missing_credentials"
     || code
       == "missing_private_key"

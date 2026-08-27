@@ -5,7 +5,7 @@ import "../pulls/normalization"
 import { __typed_commit_signature } from "./commits"
 import "./shared"
 
-pub fn __github_release_latest(harness: Harness, args, cfg) {
+pub fn __github_release_latest(harness: Harness, args: any, cfg: any) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return __release_error_envelope(nil, unwrap_err(repo))
@@ -18,7 +18,7 @@ pub fn __github_release_latest(harness: Harness, args, cfg) {
   return __release_envelope(r.full_name, unwrap(release))
 }
 
-pub fn __github_release_view(harness: Harness, args, cfg) {
+pub fn __github_release_view(harness: Harness, args: any, cfg: any) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -71,7 +71,7 @@ pub fn __github_release_view(harness: Harness, args, cfg) {
   }
 }
 
-pub fn __github_release_latest_lookup(harness: Harness, args, cfg) {
+pub fn __github_release_latest_lookup(harness: Harness, args: any, cfg: any) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -108,7 +108,7 @@ pub fn __github_release_latest_lookup(harness: Harness, args, cfg) {
   return found
 }
 
-pub fn __github_release_edit_body(harness: Harness, args, cfg) {
+pub fn __github_release_edit_body(harness: Harness, args: any, cfg: any) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -192,7 +192,7 @@ pub fn __github_release_edit_body(harness: Harness, args, cfg) {
   }
 }
 
-fn __github_tag_lease(harness: Harness, repo, tag, cfg) {
+fn __github_tag_lease(harness: Harness, repo: any, tag: any, cfg: any) {
   const ref = __github_json(
     harness,
     "GET",
@@ -241,7 +241,7 @@ fn __github_tag_lease(harness: Harness, repo, tag, cfg) {
   return Ok({tag_ref_oid: ref_oid, tag_target_oid: target_oid, tag_target_type: target_type})
 }
 
-pub fn __github_file_view(harness: Harness, args, cfg) {
+pub fn __github_file_view(harness: Harness, args: any, cfg: any) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -280,7 +280,7 @@ pub fn __github_file_view(harness: Harness, args, cfg) {
   return {repo: r.full_name, path: path, ref: ref, state: "found", found: true, file: unwrap(file)}
 }
 
-pub fn __github_commit_signature(harness: Harness, args, cfg) {
+pub fn __github_commit_signature(harness: Harness, args: any, cfg: any) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return repo
@@ -310,7 +310,7 @@ pub fn __github_commit_signature(harness: Harness, args, cfg) {
   return unwrap(typed)
 }
 
-pub fn __github_release_assets(harness: Harness, args, cfg) {
+pub fn __github_release_assets(harness: Harness, args: any, cfg: any) {
   const repo = __repo_parts(args)
   if is_err(repo) {
     return __release_assets_error_envelope(nil, args?.release_id ?? args?.id, unwrap_err(repo))
@@ -335,7 +335,7 @@ pub fn __github_release_assets(harness: Harness, args, cfg) {
   return __release_assets_envelope(r.full_name, release_id, unwrap(assets))
 }
 
-pub fn __repos_get_text(harness: Harness, args, cfg) {
+pub fn __repos_get_text(harness: Harness, args: any, cfg: any) {
   const content = __github_json(
     harness,
     "GET",
@@ -387,7 +387,7 @@ pub fn __repos_get_text(harness: Harness, args, cfg) {
   }
 }
 
-pub fn __repos_get_latest_release(harness: Harness, args, cfg) {
+pub fn __repos_get_latest_release(harness: Harness, args: any, cfg: any) {
   return __github_json(
     harness,
     "GET",
@@ -400,7 +400,7 @@ pub fn __repos_get_latest_release(harness: Harness, args, cfg) {
   )
 }
 
-pub fn __repos_list_release_assets(harness: Harness, args, cfg) {
+pub fn __repos_list_release_assets(harness: Harness, args: any, cfg: any) {
   const release_id = args?.release_id ?? args?.id
   if release_id == nil || trim(to_string(release_id)) == "" {
     return __err("schema_drift", "repos.list_release_assets requires release_id or id")

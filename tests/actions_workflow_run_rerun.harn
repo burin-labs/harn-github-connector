@@ -16,7 +16,7 @@ fn rerun_url() -> string {
   return BASE + "/repos/octo-org/octo-repo/actions/runs/${RUN_ID}/rerun"
 }
 
-pipeline test_actions_workflow_run_rerun_requests_exact_run(harness: Harness, task) {
+pipeline test_actions_workflow_run_rerun_requests_exact_run(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   harness.testing.http_mock("POST", rerun_url(), {status: 201, body: ""})
   const result = actions_workflow_run_rerun(
@@ -39,7 +39,7 @@ pipeline test_actions_workflow_run_rerun_requests_exact_run(harness: Harness, ta
   harness.testing.http_mock_clear()
 }
 
-pipeline test_github_actions_run_rerun_returns_closed_receipt(harness: Harness, task) {
+pipeline test_github_actions_run_rerun_returns_closed_receipt(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   harness.testing.http_mock("POST", rerun_url(), {status: 201, body: ""})
   const result = call(
@@ -55,7 +55,7 @@ pipeline test_github_actions_run_rerun_returns_closed_receipt(harness: Harness, 
   harness.testing.http_mock_clear()
 }
 
-pipeline test_actions_workflow_run_rerun_rejects_invalid_input(harness: Harness, task) {
+pipeline test_actions_workflow_run_rerun_rejects_invalid_input(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   const invalid_id = call(
     harness,
@@ -75,7 +75,7 @@ pipeline test_actions_workflow_run_rerun_rejects_invalid_input(harness: Harness,
   harness.testing.http_mock_clear()
 }
 
-pipeline test_actions_workflow_run_rerun_preserves_auth_failures(harness: Harness, task) {
+pipeline test_actions_workflow_run_rerun_preserves_auth_failures(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   harness.testing.http_mock(
     "POST",
