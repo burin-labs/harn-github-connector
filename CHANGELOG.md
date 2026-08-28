@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.7 - 2026-08-27
+
 - Preserve a typed retry disposition for GitHub GraphQL server failures so
   bounded callers can replay transient operations without retrying semantic
   GraphQL errors.
