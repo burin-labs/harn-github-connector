@@ -1,9 +1,14 @@
+/** Closed disposition for a GraphQL error envelope returned with HTTP success. */
+pub type GithubGraphqlErrorKind = "server" | "semantic"
+
 /** One normalized connector failure. Provider-specific evidence stays typed. */
 pub type GithubConnectorError = {
   code: string,
   category: string,
   message: string,
   http_status?: int,
+  retryable?: bool,
+  graphql_error_kind?: GithubGraphqlErrorKind,
   expected_head_oid?: string,
   observed_head_oid?: string,
   expected_base_oid?: string,

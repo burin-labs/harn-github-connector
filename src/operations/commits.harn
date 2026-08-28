@@ -1,6 +1,6 @@
 import "../client"
 import "../contracts"
-import { __err } from "../errors"
+import { __err, __graphql_err } from "../errors"
 import "./shared"
 
 pub fn __typed_commit_signature(repo: any, commit: any, surface: any) {
@@ -109,10 +109,7 @@ pub fn __github_create_signed_commit(harness: Harness, args: any, cfg: any) {
     return payload
   }
   if payload?.errors != nil && len(payload.errors) != 0 {
-    return __err(
-      "graphql",
-      "github createCommitOnBranch returned errors: " + json_stringify(payload.errors),
-    )
+    return __graphql_err("github createCommitOnBranch", payload.errors)
   }
   const result = payload?.data?.createCommitOnBranch
   const commit = result?.commit

@@ -1,6 +1,6 @@
 import "./actions/operations"
 import "./client"
-import { __err } from "./errors"
+import { __err, __graphql_err } from "./errors"
 import "./operations/actions"
 import "./operations/branches"
 import "./operations/commits"
@@ -533,7 +533,7 @@ pub fn __call_raw(harness: Harness, method: any, args: any = {}) {
     return graph
   }
   if graph?.errors != nil && len(graph.errors) > 0 {
-    return __err("graphql", "github GraphQL returned errors: " + json_stringify(graph.errors))
+    return __graphql_err("github GraphQL", graph.errors)
   }
   return graph
 }

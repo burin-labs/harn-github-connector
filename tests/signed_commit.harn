@@ -134,6 +134,67 @@ pipeline test_create_signed_commit_fails_closed_on_unverified_signature(
   harness.testing.http_mock_clear()
 }
 
+pipeline test_create_signed_commit_classifies_graphql_internal_failure_as_retryable(
+  harness: Harness,
+  task: any,
+) {
+  harness.testing.http_mock_clear()
+  const base = "https://api.github.test"
+  harness.testing.http_mock(
+    "POST",
+    base + "/graphql",
+    {
+      status: 200,
+      body: json_stringify(
+        {
+          errors: [
+            {
+              message:
+                "Something went wrong while executing your query on 2026-08-28T04:50:37Z. Please include `reference-id` when reporting this issue.",
+            },
+          ],
+        },
+      ),
+    },
+  )
+  const result = github_create_signed_commit(harness, request(base))
+  assert(is_err(result), "internal GraphQL failure is preserved")
+  const failure = unwrap_err(result)
+  assert_eq(failure.code, "graphql_server", "server failure code")
+  assert_eq(failure.category, "graphql", "GraphQL category")
+  assert_eq(failure.graphql_error_kind, "server", "server disposition")
+  assert_eq(failure.retryable, true, "safe replay signal")
+  assert_eq(len(harness.testing.http_mock_calls()), 1, "one connector attempt")
+  harness.testing.http_mock_clear()
+}
+
+pipeline test_create_signed_commit_keeps_semantic_graphql_failure_terminal(
+  harness: Harness,
+  task: any,
+) {
+  harness.testing.http_mock_clear()
+  const base = "https://api.github.test"
+  harness.testing.http_mock(
+    "POST",
+    base + "/graphql",
+    {
+      status: 200,
+      body: json_stringify(
+        {errors: [{type: "FORBIDDEN", message: "Resource not accessible by integration"}]},
+      ),
+    },
+  )
+  const result = github_create_signed_commit(harness, request(base))
+  assert(is_err(result), "semantic GraphQL failure is preserved")
+  const failure = unwrap_err(result)
+  assert_eq(failure.code, "graphql", "semantic failure code")
+  assert_eq(failure.category, "graphql", "GraphQL category")
+  assert_eq(failure.graphql_error_kind, "semantic", "semantic disposition")
+  assert_eq(failure.retryable, false, "semantic failure remains terminal")
+  assert_eq(len(harness.testing.http_mock_calls()), 1, "no connector retry")
+  harness.testing.http_mock_clear()
+}
+
 pipeline test_create_signed_commit_rejects_overlapping_changes_before_network(
   harness: Harness,
   task: any,

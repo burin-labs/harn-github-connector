@@ -1,7 +1,7 @@
 import { __nonnegative_decimal, __positive_decimal } from "../actions/normalization"
 import "../client"
 import "../contracts"
-import { __err } from "../errors"
+import { __err, __graphql_err } from "../errors"
 import "../pulls/normalization"
 import { __positive_int, __request_context_keys } from "../request_options"
 import "./branches"
@@ -556,10 +556,7 @@ pub fn __github_merge_queue_entries(harness: Harness, args: any, cfg: any) {
     return response
   }
   if response?.errors != nil && len(response.errors) > 0 {
-    return __err(
-      "graphql",
-      "github merge queue query returned errors: " + json_stringify(response.errors),
-    )
+    return __graphql_err("github merge queue query", response.errors)
   }
   const repository = response?.data?.repository
   if type_of(repository) != "dict" {
@@ -645,10 +642,7 @@ pub fn __github_merge_queue_membership(harness: Harness, args: any, cfg: any) {
     return response
   }
   if response?.errors != nil && len(response.errors) > 0 {
-    return __err(
-      "graphql",
-      "github merge queue membership returned errors: " + json_stringify(response.errors),
-    )
+    return __graphql_err("github merge queue membership", response.errors)
   }
   const node = response?.data?.repository?.pullRequest
   if node?.number == nil || to_int(node.number) != to_int(number) {
@@ -757,10 +751,7 @@ pub fn __github_merge_queue_enqueue(harness: Harness, args: any, cfg: any) {
         "GitHub rejected merge queue enqueue because the pull request head changed",
       )
     }
-    return __err(
-      "graphql",
-      "github merge queue enqueue returned errors: " + json_stringify(response.errors),
-    )
+    return __graphql_err("github merge queue enqueue", response.errors)
   }
   const entry = __typed_merge_queue_entry(response?.data?.enqueuePullRequest?.mergeQueueEntry)
   if is_err(entry) {
@@ -926,7 +917,7 @@ pub fn __pulls_list_with_checks(harness: Harness, args: any, cfg: any) {
   }
   const payload = graph
   if payload?.errors != nil && len(payload.errors) > 0 {
-    return __err("graphql", "github GraphQL returned errors: " + json_stringify(payload.errors))
+    return __graphql_err("github pull request query", payload.errors)
   }
   const nodes = payload?.data?.repository?.pullRequests?.nodes ?? []
   let pulls = []
@@ -1078,7 +1069,7 @@ fn __pulls_enable_auto_merge(harness: Harness, args: any, cfg: any) {
         {expected_head_oid: expected_head_oid, observed_head_oid: observed_head_oid},
       )
     }
-    return __err("graphql", "github GraphQL returned errors: " + json_stringify(graph.errors))
+    return __graphql_err("github auto-merge enable", graph.errors)
   }
   const enabled = graph?.data?.enablePullRequestAutoMerge
   const enabled_pull = enabled?.pullRequest
@@ -1129,7 +1120,11 @@ fn __reenable_after_lost_disable(
     return {ok: false, detail: to_string(unwrap_err(graph)?.message ?? unwrap_err(graph))}
   }
   if graph?.errors != nil && len(graph.errors) > 0 {
-    return {ok: false, detail: json_stringify(graph.errors)}
+    return {
+      ok: false,
+      detail: unwrap_err(__graphql_err("github compensating auto-merge enable", graph.errors))
+        .message,
+    }
   }
   if graph?.data?.enablePullRequestAutoMerge?.pullRequest?.autoMergeRequest == nil {
     return {ok: false, detail: "compensating enable omitted auto-merge evidence"}
@@ -1284,13 +1279,14 @@ fn __pulls_disable_auto_merge(harness: Harness, args: any, cfg: any) {
     )
   }
   if graph?.errors != nil && len(graph.errors) > 0 {
+    const cause = unwrap_err(__graphql_err("github auto-merge disable", graph.errors))
     return __fail_uncertain_disable(
       harness,
       args,
       cfg,
       node_id,
       restore_merge_method,
-      "GitHub auto-merge disable returned errors: " + json_stringify(graph.errors),
+      cause.message,
     )
   }
   const disabled_pull = graph?.data?.disablePullRequestAutoMerge?.pullRequest

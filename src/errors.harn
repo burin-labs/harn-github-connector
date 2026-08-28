@@ -1,3 +1,14 @@
+import { GithubConnectorError } from "./contracts"
+
+const GITHUB_GRAPHQL_SERVER_CODES = [
+  "INTERNAL",
+  "INTERNAL_SERVER_ERROR",
+  "SERVICE_UNAVAILABLE",
+  "TIMEOUT",
+]
+
+const GITHUB_GRAPHQL_INTERNAL_MESSAGE_PREFIX = "Something went wrong while executing your query"
+
 pub fn __err(code: any, message: any, details: any = nil) {
   const error = {code: code, category: __error_category(code), message: message}
   return Err(
@@ -5,6 +16,56 @@ pub fn __err(code: any, message: any, details: any = nil) {
       error
     } else {
       error + details
+    },
+  )
+}
+
+fn __graphql_server_error(raw_error: unknown) -> bool {
+  if type_of(raw_error) != "dict" {
+    return false
+  }
+  const error = raw_error
+  const code = uppercase(
+    trim(
+      to_string(error?.type ?? error?.extensions?.code ?? error?.extensions?.classification ?? ""),
+    ),
+  )
+  if contains(GITHUB_GRAPHQL_SERVER_CODES, code) {
+    return true
+  }
+  const message = trim(to_string(error?.message ?? ""))
+  return starts_with(message, GITHUB_GRAPHQL_INTERNAL_MESSAGE_PREFIX)
+}
+
+fn __graphql_errors_are_server_failures(raw_errors: unknown) -> bool {
+  if type_of(raw_errors) != "list" || len(raw_errors) == 0 {
+    return false
+  }
+  for error in raw_errors {
+    if !__graphql_server_error(error) {
+      return false
+    }
+  }
+  return true
+}
+
+/** Normalize GitHub's GraphQL error envelope without losing retry disposition. */
+pub fn __graphql_err(surface: string, raw_errors: unknown) -> Result<never, GithubConnectorError> {
+  const retryable = __graphql_errors_are_server_failures(raw_errors)
+  return __err(
+    if retryable {
+      "graphql_server"
+    } else {
+      "graphql"
+    },
+    surface + " returned errors: " + json_stringify(raw_errors),
+    {
+      retryable: retryable,
+      graphql_error_kind: if retryable {
+        "server"
+      } else {
+        "semantic"
+      },
     },
   )
 }
@@ -36,6 +97,9 @@ fn __error_category(code: any) {
   }
   if code == "network" || code == "transport" {
     return "network"
+  }
+  if code == "graphql_server" {
+    return "graphql"
   }
   if code == "oauth_failed" {
     return "auth"
