@@ -1,6 +1,6 @@
 /** Exact pull-request check reads that preserve the connector's typed rollup contract. */
 import "../client"
-import { __err } from "../errors"
+import { __err, __graphql_err } from "../errors"
 import "../pulls/normalization"
 import "./actions"
 import "./pull_graphql"
@@ -349,7 +349,7 @@ pub fn __github_pr_checks_graphql_fallback(
         cfg,
       )
     }
-    return __err("graphql", "github GraphQL returned errors: " + json_stringify(graph.errors))
+    return __graphql_err("github.pr.checks GraphQL fallback", graph.errors)
   }
   const pull = graph?.data?.repository?.pullRequest
   if pull == nil {
