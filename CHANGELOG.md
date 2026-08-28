@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Preserve a typed retry disposition for GitHub GraphQL server failures so
+  bounded callers can replay transient operations without retrying semantic
+  GraphQL errors.
 - Add typed, bounded JSON artifact evidence for exact GitHub Actions workflow runs and complete exact-head check evidence across Checks and legacy status contexts.
 
 ## 0.8.6 - 2026-08-15

@@ -374,6 +374,8 @@ pub type GithubConnectorError = {
   category: string,
   message: string,
   http_status?: int,
+  retryable?: bool,
+  graphql_error_kind?: GithubGraphqlErrorKind,
   expected_head_oid?: string,
   observed_head_oid?: string,
   expected_base_oid?: string,
@@ -471,6 +473,14 @@ pub type GithubFindPullRequestRequest = GithubRepositoryRequest \
   labels?: list<string>,
   per_page?: int,
 }
+```
+
+### type `GithubGraphqlErrorKind`
+
+Closed disposition for a GraphQL error envelope returned with HTTP success.
+
+```harn
+pub type GithubGraphqlErrorKind = "server" | "semantic"
 ```
 
 ### type `GithubIssueTemplate`
@@ -2674,6 +2684,8 @@ pub type GithubConnectorError = {
   category: string,
   message: string,
   http_status?: int,
+  retryable?: bool,
+  graphql_error_kind?: GithubGraphqlErrorKind,
   expected_head_oid?: string,
   observed_head_oid?: string,
   expected_base_oid?: string,
