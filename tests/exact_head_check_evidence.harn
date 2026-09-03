@@ -20,6 +20,33 @@ fn check_run(overrides: any = {}) {
     + overrides
 }
 
+fn actions_check(run_id: int, overrides: any = {}) {
+  return check_run(
+    {
+      id: run_id * 10,
+      details_url: "https://github.com/octo-org/octo-repo/actions/runs/" + to_string(run_id)
+        + "/job/1",
+    }
+      + overrides,
+  )
+}
+
+fn workflow_run(id: int, workflow_id: int, overrides: any = {}) {
+  return {
+    id: id,
+    workflow_id: workflow_id,
+    path: ".github/workflows/" + to_string(workflow_id) + ".yml",
+    name: "Workflow " + to_string(workflow_id),
+    event: "pull_request",
+    status: "completed",
+    conclusion: "success",
+    head_sha: HEAD,
+    run_attempt: 1,
+    html_url: "https://github.com/octo-org/octo-repo/actions/runs/" + to_string(id),
+  }
+    + overrides
+}
+
 fn status_context(overrides: any = {}) {
   return {
     id: 21,
@@ -32,7 +59,13 @@ fn status_context(overrides: any = {}) {
     + overrides
 }
 
-fn mock_checks(testing: HarnessTesting, runs: any, total: int? = nil) {
+fn mock_checks(
+  testing: HarnessTesting,
+  runs: any,
+  total: int? = nil,
+  workflow_runs: any = [],
+  workflow_total: int? = nil,
+) {
   testing.http_mock(
     "GET",
     BASE + "/repos/octo-org/octo-repo/commits/" + HEAD
@@ -43,6 +76,20 @@ fn mock_checks(testing: HarnessTesting, runs: any, total: int? = nil) {
       headers: {"x-ratelimit-remaining": "20"},
     },
   )
+  if len(workflow_runs) > 0 {
+    testing.http_mock(
+      "GET",
+      BASE + "/repos/octo-org/octo-repo/actions/runs?head_sha=" + HEAD
+        + "&per_page=100&page=1",
+      {
+        status: 200,
+        body: json_stringify(
+          {total_count: workflow_total ?? len(workflow_runs), workflow_runs: workflow_runs},
+        ),
+        headers: {"x-ratelimit-remaining": "18"},
+      },
+    )
+  }
 }
 
 fn mock_statuses(
@@ -137,5 +184,127 @@ pipeline test_exact_head_check_mutations_fail_closed(harness: Harness, task: unk
   harness.testing.http_mock_clear()
   mock_checks(harness.testing, [check_run()])
   mock_statuses(harness.testing, [status_context({context: "CI"})])
-  assert_code(read(harness), "ambiguous_check_context")
+  const separate = unwrap(read(harness))
+  assert_eq(separate.rollup.total, 2)
+  assert_eq(len(separate.standalone_checks), 1)
+  assert_eq(len(separate.legacy_statuses), 1)
+  harness.testing.http_mock_clear()
+  mock_checks(harness.testing, [actions_check(11)], nil, [workflow_run(11, 5)], 2)
+  mock_statuses(harness.testing, [])
+  assert_code(read(harness), "incomplete_page")
+  harness.testing.http_mock_clear()
+  mock_checks(
+    harness.testing,
+    [actions_check(11)],
+    nil,
+    [workflow_run(11, 5, {head_sha: "replacement-head"})],
+  )
+  mock_statuses(harness.testing, [])
+  assert_code(read(harness), "stale_head")
+  harness.testing.http_mock_clear()
+  mock_checks(
+    harness.testing,
+    [actions_check(10, {head_sha: "replacement-head"}), actions_check(11)],
+    nil,
+    [workflow_run(10, 5), workflow_run(11, 5)],
+  )
+  mock_statuses(harness.testing, [])
+  assert_code(read(harness), "stale_head")
+}
+
+pipeline test_same_head_replacement_generation_is_pending_not_cancelled(
+  harness: Harness,
+  task: unknown,
+) {
+  harness.testing.http_mock_clear()
+  mock_checks(
+    harness.testing,
+    [
+      actions_check(10, {status: "completed", conclusion: "cancelled"}),
+      actions_check(11, {status: "queued", conclusion: nil}),
+    ],
+    nil,
+    [
+      workflow_run(10, 5, {status: "completed", conclusion: "cancelled"}),
+      workflow_run(11, 5, {status: "queued", conclusion: nil}),
+    ],
+  )
+  mock_statuses(harness.testing, [])
+  const receipt = unwrap(read(harness))
+  assert_eq(receipt.rollup.state, "pending")
+  assert_eq(receipt.rollup.failed, 0, "superseded cancellation is not current failure evidence")
+  assert_eq(len(receipt.generations), 1)
+  assert_eq(receipt.generations[0].generation_id, "actions:11:attempt:1")
+  assert_eq(receipt.generations[0].evidence_complete, false)
+  assert_eq(receipt.evidence_complete, false)
+}
+
+pipeline test_replacement_generation_failure_remains_failing(harness: Harness, task: unknown) {
+  harness.testing.http_mock_clear()
+  mock_checks(
+    harness.testing,
+    [
+      actions_check(10, {status: "completed", conclusion: "cancelled"}),
+      actions_check(11, {status: "completed", conclusion: "failure"}),
+    ],
+    nil,
+    [
+      workflow_run(10, 5, {status: "completed", conclusion: "cancelled"}),
+      workflow_run(11, 5, {status: "completed", conclusion: "failure"}),
+    ],
+  )
+  mock_statuses(harness.testing, [])
+  const receipt = unwrap(read(harness))
+  assert_eq(receipt.rollup.state, "failing")
+  assert_eq(receipt.generations[0].run_id, 11)
+  assert_eq(receipt.generations[0].evidence_complete, true)
+}
+
+pipeline test_unmeasured_completed_replacement_generation_never_reads_green(
+  harness: Harness,
+  task: unknown,
+) {
+  harness.testing.http_mock_clear()
+  mock_checks(
+    harness.testing,
+    [actions_check(10, {status: "completed", conclusion: "cancelled"})],
+    nil,
+    [
+      workflow_run(10, 5, {status: "completed", conclusion: "cancelled"}),
+      workflow_run(11, 5, {status: "completed", conclusion: "success"}),
+    ],
+  )
+  mock_statuses(harness.testing, [])
+  const receipt = unwrap(read(harness))
+  assert_eq(receipt.rollup.state, "pending")
+  assert_eq(receipt.rollup.successful, 0)
+  assert_eq(receipt.generations[0].check_run_total, 0)
+  assert_eq(receipt.generations[0].evidence_complete, false)
+}
+
+pipeline test_independently_restarted_workflows_do_not_hide_current_failure(
+  harness: Harness,
+  task: unknown,
+) {
+  harness.testing.http_mock_clear()
+  mock_checks(
+    harness.testing,
+    [
+      actions_check(10, {name: "CI", status: "completed", conclusion: "cancelled"}),
+      actions_check(11, {name: "CI", status: "queued", conclusion: nil}),
+      actions_check(20, {name: "Policy", status: "completed", conclusion: "failure"}),
+    ],
+    nil,
+    [
+      workflow_run(10, 5, {status: "completed", conclusion: "cancelled"}),
+      workflow_run(11, 5, {status: "queued", conclusion: nil}),
+      workflow_run(20, 6, {status: "completed", conclusion: "failure"}),
+    ],
+  )
+  mock_statuses(harness.testing, [status_context({context: "Policy", state: "success"})])
+  const receipt = unwrap(read(harness))
+  assert_eq(receipt.rollup.state, "failing")
+  assert_eq(len(receipt.generations), 2)
+  assert_eq(len(receipt.legacy_statuses), 1, "legacy contexts remain a separate evidence set")
+  assert_eq(receipt.legacy_statuses[0].external_id, "legacy-status:21")
 }

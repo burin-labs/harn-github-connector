@@ -558,7 +558,22 @@ pub type GithubCheckRollup = {
   conclusion: string?,
 }
 
-/** Check runs and rollup bound to one immutable head revision. */
+/** One selected GitHub Actions generation and the check evidence attributed to it. */
+pub type GithubCheckGeneration = {
+  generation_id: string,
+  workflow_id: int?,
+  workflow_path: string,
+  event: string,
+  run_id: int,
+  run_attempt: int?,
+  status: string,
+  conclusion: string?,
+  check_run_total: int,
+  evidence_complete: bool,
+  checks: list<GithubCheckRun>,
+}
+
+/** Coherent check generations and rollup bound to one immutable head revision. */
 pub type GithubPullRequestChecks = {
   repo: string,
   pull_number: int?,
@@ -566,6 +581,10 @@ pub type GithubPullRequestChecks = {
   state: string,
   rollup: GithubCheckRollup,
   checks: list<GithubCheckRun>,
+  generations: list<GithubCheckGeneration>,
+  standalone_checks: list<GithubCheckRun>,
+  legacy_statuses: list<GithubCheckRun>,
+  evidence_complete: bool,
   check_run_total: int,
   status_context_total: int,
   workflow_run_total: int,

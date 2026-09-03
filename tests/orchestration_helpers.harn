@@ -735,6 +735,32 @@ pipeline test_wait_for_pr_checks_pending_then_failing_with_logs(harness: Harness
     },
   )
   mock_empty_statuses(harness.testing, "sha-1")
+  harness.testing.http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/actions/runs?head_sha=sha-1&per_page=100&page=1",
+    {
+      status: 200,
+      body: json_stringify(
+        {
+          total_count: 1,
+          workflow_runs: [
+            {
+              id: 4242,
+              workflow_id: 1,
+              path: ".github/workflows/ci.yml",
+              name: "CI",
+              event: "pull_request",
+              status: "completed",
+              conclusion: "failure",
+              head_sha: "sha-1",
+              run_attempt: 1,
+              html_url: "https://github.com/octo-org/octo-repo/actions/runs/4242",
+            },
+          ],
+        },
+      ),
+    },
+  )
   const huge_log = "step output line\n".repeat(600)
   harness.testing.http_mock(
     "GET",

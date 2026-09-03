@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Keep exact-head pull-request checks coherent when GitHub replaces an Actions
+  run on the same commit. Receipts now select one generation per workflow,
+  expose generation identity and evidence completeness, and retain legacy
+  status contexts separately so superseded cancellations cannot become current
+  failures or incomplete replacements become green.
+
 ## 0.8.7 - 2026-08-27
 
 - Preserve a typed retry disposition for GitHub GraphQL server failures so
