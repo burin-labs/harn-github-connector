@@ -1,5 +1,5 @@
 import { init, shutdown } from "../src/facade"
-import { fixture_raw, github_normalize } from "./helpers"
+import { fixture_raw, github_normalize } from "../testdata/helpers"
 
 pipeline test_normalize_events(harness: Harness, task: any) {
   const secret = "test-signing-secret"
