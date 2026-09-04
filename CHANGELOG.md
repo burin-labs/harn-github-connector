@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Preserve GitHub's response message in typed API errors so permission
+  failures name the provider's actionable reason instead of reporting only an
+  HTTP status.
 - Keep exact-head pull-request checks coherent when GitHub replaces an Actions
   run on the same commit. Receipts now select one generation per workflow,
   expose generation identity and evidence completeness, and retain legacy

@@ -146,7 +146,7 @@ pipeline test_actions_workflow_run_jobs_preserves_http_failure(harness: Harness,
     {
       code: "missing_scopes",
       category: "permission",
-      message: "github API request failed with status 403",
+      message: "github API request failed with status 403: Resource not accessible by integration",
       http_status: 403,
     },
     "HTTP failure preserves the exact connector error shape and status",
