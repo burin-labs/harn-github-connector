@@ -160,6 +160,26 @@ pub type GithubBranchTreeComparison = {
 }
 ```
 
+### type `GithubCheckGeneration`
+
+One selected GitHub Actions generation and the check evidence attributed to it.
+
+```harn
+pub type GithubCheckGeneration = {
+  generation_id: string,
+  workflow_id: int?,
+  workflow_path: string,
+  event: string,
+  run_id: int,
+  run_attempt: int?,
+  status: string,
+  conclusion: string?,
+  check_run_total: int,
+  evidence_complete: bool,
+  checks: list<GithubCheckRun>,
+}
+```
+
 ### type `GithubCheckLogError`
 
 Structured retrieval failure or a provider-supplied log error message.
@@ -691,7 +711,7 @@ pub type GithubPollingPolicy = {interval_ms?: int, timeout_ms?: int, max_attempt
 
 ### type `GithubPullRequestChecks`
 
-Check runs and rollup bound to one immutable head revision.
+Coherent check generations and rollup bound to one immutable head revision.
 
 ```harn
 pub type GithubPullRequestChecks = {
@@ -701,6 +721,10 @@ pub type GithubPullRequestChecks = {
   state: string,
   rollup: GithubCheckRollup,
   checks: list<GithubCheckRun>,
+  generations: list<GithubCheckGeneration>,
+  standalone_checks: list<GithubCheckRun>,
+  legacy_statuses: list<GithubCheckRun>,
+  evidence_complete: bool,
   check_run_total: int,
   status_context_total: int,
   workflow_run_total: int,

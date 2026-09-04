@@ -1,10 +1,11 @@
-/** Exact pull-request check reads that preserve the connector's typed rollup contract. */
+import { __extract_actions_run_id } from "../actions/normalization"
 import "../client"
 import { __err, __graphql_err } from "../errors"
 import "../pulls/normalization"
 import "./actions"
 import "./pull_graphql"
 
+/** Exact pull-request check reads that preserve the connector's typed rollup contract. */
 const CHECK_EVIDENCE_PAGE_SIZE = 100
 
 const MAX_CHECK_EVIDENCE_PAGES = 100
@@ -140,6 +141,62 @@ fn __validate_exact_check_set(checks: any, head_sha: string) {
   return Ok(checks)
 }
 
+fn __validate_exact_check_rows(checks: any, head_sha: string) {
+  for check in checks ?? [] {
+    const name = trim(to_string(check?.name ?? ""))
+    if name == "" {
+      return __err("ambiguous_check_context", "github.pr.checks observed an unnamed context")
+    }
+    const observed_head = trim(to_string(check?.head_sha ?? ""))
+    if observed_head == "" || lowercase(observed_head) != lowercase(trim(head_sha)) {
+      return __err(
+        "stale_head",
+        "github.pr.checks observed a check bound to a different head",
+        {expected_head_oid: head_sha, observed_head_oid: observed_head},
+      )
+    }
+  }
+  return Ok(checks)
+}
+
+fn __workflow_identity(run: any) {
+  const workflow_id = to_int(run?.workflow_id)
+  const path = trim(to_string(run?.path ?? run?.workflow_path ?? ""))
+  const event = lowercase(trim(to_string(run?.event ?? "")))
+  if event == "" || (workflow_id == nil && path == "") {
+    return nil
+  }
+  return if path != "" {
+    "path:" + path
+  } else {
+    "id:" + to_string(workflow_id)
+  }
+    + ":event:"
+    + event
+}
+
+fn __validate_workflow_runs(runs: any, head_sha: string) {
+  for run in runs ?? [] {
+    const run_id = to_int(run?.id)
+    const status = lowercase(trim(to_string(run?.status ?? "")))
+    const observed_head = trim(to_string(run?.head_sha ?? ""))
+    if run_id == nil || run_id <= 0 || status == "" || __workflow_identity(run) == nil {
+      return __err(
+        "invalid_response",
+        "github.pr.checks observed a workflow run without generation identity",
+      )
+    }
+    if observed_head == "" || lowercase(observed_head) != lowercase(trim(head_sha)) {
+      return __err(
+        "stale_head",
+        "github.pr.checks observed a workflow generation bound to a different head",
+        {expected_head_oid: head_sha, observed_head_oid: observed_head},
+      )
+    }
+  }
+  return Ok(runs)
+}
+
 pub fn __github_pr_checks_rest(
   harness: Harness,
   repo: any,
@@ -171,32 +228,47 @@ pub fn __github_pr_checks_rest(
   if is_err(statuses) {
     return statuses
   }
-  let checks = __typed_check_runs(unwrap(runs).values)
+  const check_runs = __typed_check_runs(unwrap(runs).values)
+  let legacy_statuses = []
   for status in unwrap(statuses).values {
     const typed = __legacy_status_check(status, head_sha)
     if is_err(typed) {
       return typed
     }
-    checks = checks + [unwrap(typed)]
+    legacy_statuses = legacy_statuses + [unwrap(typed)]
   }
-  const validated = __validate_exact_check_set(checks, head_sha)
-  if is_err(validated) {
-    return validated
+  const workflow_runs = __exact_head_workflow_runs(harness, repo, head_sha, check_runs, cfg)
+  if is_err(workflow_runs) {
+    return workflow_runs
   }
-  const rollup = __check_rollup(checks)
+  const evidence = __coherent_check_evidence(
+    check_runs,
+    legacy_statuses,
+    unwrap(workflow_runs).values,
+    head_sha,
+  )
+  if is_err(evidence) {
+    return evidence
+  }
+  const coherent = unwrap(evidence)
+  const rollup = __check_rollup(coherent.checks)
   return {
     repo: repo.full_name,
     pull_number: number,
     head_sha: head_sha,
     state: __classify_pr_state(pull, rollup, nil),
     rollup: rollup,
-    checks: checks,
+    checks: coherent.checks,
+    generations: coherent.generations,
+    standalone_checks: coherent.standalone_checks,
+    legacy_statuses: coherent.legacy_statuses,
+    evidence_complete: coherent.evidence_complete,
     check_run_total: unwrap(runs).total_count,
     status_context_total: unwrap(statuses).total_count,
-    workflow_run_total: 0,
+    workflow_run_total: unwrap(workflow_runs).total_count,
     check_run_pages_fetched: unwrap(runs).pages_fetched,
     status_context_pages_fetched: unwrap(statuses).pages_fetched,
-    workflow_run_pages_fetched: 0,
+    workflow_run_pages_fetched: unwrap(workflow_runs).pages_fetched,
   }
 }
 
@@ -214,15 +286,8 @@ fn __graphql_checks_scope_denied(errors: any) {
 }
 
 fn __same_workflow(left: any, right: any) {
-  if lowercase(to_string(left?.event ?? "")) != lowercase(to_string(right?.event ?? "")) {
-    return false
-  }
-  const left_id = to_int(left?.workflow_id)
-  const right_id = to_int(right?.workflow_id)
-  if left_id != nil && right_id != nil {
-    return left_id == right_id
-  }
-  return trim(to_string(left?.path ?? "")) == trim(to_string(right?.path ?? ""))
+  const left_identity = __workflow_identity(left)
+  return left_identity != nil && left_identity == __workflow_identity(right)
 }
 
 fn __latest_workflow_runs(runs: any) {
@@ -242,6 +307,234 @@ fn __latest_workflow_runs(runs: any) {
   return latest
 }
 
+fn __exact_head_workflow_runs(
+  harness: Harness,
+  repo: any,
+  head_sha: string,
+  checks: any,
+  cfg: dict,
+  required: bool = false,
+) {
+  if !required {
+    let has_actions_checks = false
+    for check in checks ?? [] {
+      if __extract_actions_run_id(check?.details_url ?? check?.html_url) != nil {
+        has_actions_checks = true
+      }
+    }
+    if !has_actions_checks {
+      return Ok({values: [], total_count: 0, pages_fetched: 0})
+    }
+  }
+  const root = __github_api_url(
+    cfg.api_base_url,
+    "/repos/" + repo.owner + "/" + repo.name + "/actions/runs?head_sha=" + head_sha,
+  )
+  const runs = __complete_check_evidence_page(harness, root, "workflow_runs", cfg)
+  if is_err(runs) {
+    return runs
+  }
+  const validated = __validate_workflow_runs(unwrap(runs).values, head_sha)
+  if is_err(validated) {
+    return validated
+  }
+  return runs
+}
+
+fn __generation_status(run: any) {
+  return lowercase(trim(to_string(run?.status ?? "")))
+}
+
+fn __generation_conclusion(run: any) {
+  const raw = run?.conclusion
+  if raw == nil || trim(to_string(raw)) == "" {
+    return nil
+  }
+  return lowercase(trim(to_string(raw)))
+}
+
+fn __generation_is_terminal(run: any) {
+  return __generation_status(run) == "completed"
+}
+
+fn __generation_failed(run: any) {
+  if !__generation_is_terminal(run) {
+    return false
+  }
+  const conclusion = __generation_conclusion(run)
+  return conclusion != "success" && conclusion != "neutral" && conclusion != "skipped"
+}
+
+fn __all_checks_terminal(checks: any) {
+  for check in checks ?? [] {
+    if lowercase(to_string(check?.status ?? "")) != "completed" {
+      return false
+    }
+  }
+  return true
+}
+
+fn __generation_id(run: any) {
+  return "actions:"
+    + to_string(run.id)
+    + ":attempt:"
+    + to_string(to_int(run?.run_attempt) ?? 1)
+}
+
+fn __generation_sentinel(run: any, head_sha: string, conclusion: string?) {
+  return __typed_check_run(
+    {
+      id: run?.id,
+      name: "Workflow generation: " + to_string(run?.name ?? run?.path ?? run?.workflow_path ?? ""),
+      status: if conclusion == nil {
+        "in_progress"
+      } else {
+        "completed"
+      },
+      conclusion: conclusion ?? "",
+      head_sha: head_sha,
+      started_at: run?.run_started_at ?? run?.created_at,
+      completed_at: if conclusion == nil {
+        nil
+      } else {
+        run?.updated_at
+      },
+      details_url: run?.html_url ?? run?.url,
+      html_url: run?.html_url ?? run?.url,
+      external_id: "actions-workflow-generation:" + __generation_id(run),
+    },
+  )
+}
+
+fn __checks_for_generation(check_runs: any, run_id: int) {
+  let checks = []
+  for check in check_runs ?? [] {
+    if to_int(__extract_actions_run_id(check?.details_url ?? check?.html_url)) == run_id {
+      checks = checks + [check]
+    }
+  }
+  return checks
+}
+
+fn __project_generation(run: any, generation_checks: any, head_sha: string, summary_only: bool) {
+  const terminal = __generation_is_terminal(run)
+  const evidence_complete = terminal
+    && (summary_only || (len(generation_checks) > 0 && __all_checks_terminal(generation_checks)))
+  let projected_checks = generation_checks
+  const observed_rollup = __check_rollup(projected_checks)
+  if !terminal {
+    projected_checks = projected_checks + [__generation_sentinel(run, head_sha, nil)]
+  } else if __generation_failed(run) && observed_rollup.failed == 0 {
+    projected_checks = projected_checks + [__generation_sentinel(run, head_sha, "failure")]
+  } else if !evidence_complete {
+    projected_checks = projected_checks + [__generation_sentinel(run, head_sha, nil)]
+  } else if summary_only && len(projected_checks) == 0 {
+    projected_checks = projected_checks
+      + [__generation_sentinel(run, head_sha, __generation_conclusion(run) ?? "failure")]
+  }
+  return {
+    generation: {
+      generation_id: __generation_id(run),
+      workflow_id: if run?.workflow_id == nil {
+        nil
+      } else {
+        to_int(run.workflow_id)
+      },
+      workflow_path: to_string(run?.path ?? run?.workflow_path ?? ""),
+      event: lowercase(to_string(run?.event ?? "")),
+      run_id: to_int(run.id),
+      run_attempt: if run?.run_attempt == nil {
+        nil
+      } else {
+        to_int(run.run_attempt)
+      },
+      status: __generation_status(run),
+      conclusion: __generation_conclusion(run),
+      check_run_total: len(generation_checks),
+      evidence_complete: evidence_complete,
+      checks: generation_checks,
+    },
+    projected_checks: projected_checks,
+  }
+}
+
+fn __validate_actions_attribution(check_runs: any, workflow_runs: any) {
+  for check in check_runs ?? [] {
+    const run_id = __extract_actions_run_id(check?.details_url ?? check?.html_url)
+    if run_id != nil {
+      let found = false
+      for run in workflow_runs ?? [] {
+        if to_int(run?.id) == to_int(run_id) {
+          found = true
+        }
+      }
+      if !found {
+        return __err(
+          "incomplete_page",
+          "github.pr.checks could not attribute an Actions check to an exact-head workflow generation",
+        )
+      }
+    }
+  }
+  return Ok(true)
+}
+
+fn __coherent_check_evidence(
+  check_runs: any,
+  legacy_statuses: any,
+  workflow_runs: any,
+  head_sha: string,
+  summary_only: bool = false,
+) {
+  const rows_validated = __validate_exact_check_rows(check_runs, head_sha)
+  if is_err(rows_validated) {
+    return rows_validated
+  }
+  const latest_runs = __latest_workflow_runs(workflow_runs)
+  let standalone = []
+  for check in check_runs ?? [] {
+    if __extract_actions_run_id(check?.details_url ?? check?.html_url) == nil {
+      standalone = standalone + [check]
+    }
+  }
+  const standalone_validated = __validate_exact_check_set(standalone, head_sha)
+  if is_err(standalone_validated) {
+    return standalone_validated
+  }
+  const legacy_validated = __validate_exact_check_set(legacy_statuses, head_sha)
+  if is_err(legacy_validated) {
+    return legacy_validated
+  }
+  let generations = []
+  let selected_checks = []
+  let complete = len(latest_runs) + len(standalone) + len(legacy_statuses) > 0
+  for run in latest_runs {
+    const generation_checks = __checks_for_generation(check_runs, to_int(run.id))
+    const generation_validated = __validate_exact_check_set(generation_checks, head_sha)
+    if is_err(generation_validated) {
+      return generation_validated
+    }
+    const projection = __project_generation(run, generation_checks, head_sha, summary_only)
+    generations = generations + [projection.generation]
+    selected_checks = selected_checks + projection.projected_checks
+    complete = complete && projection.generation.evidence_complete
+  }
+  const attributed = __validate_actions_attribution(check_runs, workflow_runs)
+  if is_err(attributed) {
+    return attributed
+  }
+  const checks = standalone + selected_checks + legacy_statuses
+  return Ok(
+    {
+      checks: checks,
+      generations: generations,
+      standalone_checks: standalone,
+      legacy_statuses: legacy_statuses,
+      evidence_complete: complete && len(checks) > 0,
+    },
+  )
+}
+
 fn __github_pr_checks_actions_fallback(
   harness: Harness,
   repo: any,
@@ -250,70 +543,34 @@ fn __github_pr_checks_actions_fallback(
   pull: any,
   cfg: any,
 ) {
-  const envelope = __actions_workflow_runs_list(
-    harness,
-    {owner: repo.owner, repo: repo.name, head_sha: head_sha, per_page: 100},
-    cfg,
-  )
-  if is_err(envelope) {
-    return envelope
+  const workflow_runs = __exact_head_workflow_runs(harness, repo, head_sha, [], cfg, true)
+  if is_err(workflow_runs) {
+    return workflow_runs
   }
-  if type_of(envelope?.workflow_runs) != "list" {
-    return __err("invalid_response", "github.pr.checks Actions fallback omitted workflow_runs")
+  const envelope = unwrap(workflow_runs)
+  const evidence = __coherent_check_evidence([], [], envelope.values, head_sha, true)
+  if is_err(evidence) {
+    return evidence
   }
-  const total_count = to_int(envelope?.total_count)
-  if total_count == nil || total_count != len(envelope.workflow_runs) {
-    return __err(
-      "incomplete_page",
-      "github.pr.checks Actions fallback requires the complete exact-head workflow page",
-    )
-  }
-  let checks = []
-  for run in __latest_workflow_runs(envelope.workflow_runs) {
-    const observed_head = trim(to_string(run?.head_sha ?? ""))
-    if lowercase(observed_head) != lowercase(trim(head_sha)) {
-      return __err("stale_head", "github.pr.checks Actions fallback observed a different head")
-    }
-    checks = checks
-      + [
-        __typed_check_run(
-          {
-            id: run?.id,
-            name: run?.name ?? run?.path ?? "",
-            status: run?.status,
-            conclusion: run?.conclusion,
-            head_sha: observed_head,
-            started_at: run?.run_started_at,
-            completed_at: if lowercase(to_string(run?.status ?? "")) == "completed" {
-              run?.updated_at
-            } else {
-              nil
-            },
-            details_url: run?.html_url,
-            html_url: run?.html_url,
-            external_id: "actions-workflow-run:" + to_string(run?.id ?? ""),
-          },
-        ),
-      ]
-  }
-  const rollup = __check_rollup(checks)
-  const validated = __validate_exact_check_set(checks, head_sha)
-  if is_err(validated) {
-    return validated
-  }
+  const coherent = unwrap(evidence)
+  const rollup = __check_rollup(coherent.checks)
   return {
     repo: repo.full_name,
     pull_number: number,
     head_sha: head_sha,
     state: __classify_pr_state(pull, rollup, nil),
     rollup: rollup,
-    checks: checks,
+    checks: coherent.checks,
+    generations: coherent.generations,
+    standalone_checks: coherent.standalone_checks,
+    legacy_statuses: coherent.legacy_statuses,
+    evidence_complete: coherent.evidence_complete,
     check_run_total: 0,
     status_context_total: 0,
-    workflow_run_total: total_count,
+    workflow_run_total: envelope.total_count,
     check_run_pages_fetched: 0,
     status_context_pages_fetched: 0,
-    workflow_run_pages_fetched: 1,
+    workflow_run_pages_fetched: envelope.pages_fetched,
   }
 }
 
@@ -365,7 +622,6 @@ pub fn __github_pr_checks_graphql_fallback(
       "github.pr.checks GraphQL fallback observed a different pull-request head",
     )
   }
-  const checks = __graphql_pr_check_runs(pull?.statusCheckRollup, observed_head)
   const contexts = pull?.statusCheckRollup?.contexts
   const context_total = to_int(contexts?.totalCount)
   if context_total == nil || context_total < 0 || type_of(contexts?.nodes) != "list"
@@ -378,22 +634,37 @@ pub fn __github_pr_checks_graphql_fallback(
       "github.pr.checks GraphQL fallback requires a complete status-context connection",
     )
   }
-  const validated = __validate_exact_check_set(checks, observed_head)
-  if is_err(validated) {
-    return validated
-  }
+  let check_runs = []
+  let legacy_statuses = []
   let check_run_total = 0
   let status_context_total = 0
   for node in contexts.nodes {
     if node?.__typename == "CheckRun" {
       check_run_total = check_run_total + 1
+      check_runs = check_runs + __graphql_pr_check_runs({contexts: {nodes: [node]}}, observed_head)
     } else if node?.__typename == "StatusContext" {
       status_context_total = status_context_total + 1
+      legacy_statuses = legacy_statuses
+        + __graphql_pr_check_runs({contexts: {nodes: [node]}}, observed_head)
     } else {
       return __err("invalid_response", "github.pr.checks GraphQL returned an unknown context type")
     }
   }
-  const rollup = __check_rollup(checks)
+  const workflow_runs = __exact_head_workflow_runs(harness, repo, observed_head, check_runs, cfg)
+  if is_err(workflow_runs) {
+    return workflow_runs
+  }
+  const evidence = __coherent_check_evidence(
+    check_runs,
+    legacy_statuses,
+    unwrap(workflow_runs).values,
+    observed_head,
+  )
+  if is_err(evidence) {
+    return evidence
+  }
+  const coherent = unwrap(evidence)
+  const rollup = __check_rollup(coherent.checks)
   return {
     repo: repo.full_name,
     pull_number: number,
@@ -409,12 +680,16 @@ pub fn __github_pr_checks_graphql_fallback(
       nil,
     ),
     rollup: rollup,
-    checks: checks,
+    checks: coherent.checks,
+    generations: coherent.generations,
+    standalone_checks: coherent.standalone_checks,
+    legacy_statuses: coherent.legacy_statuses,
+    evidence_complete: coherent.evidence_complete,
     check_run_total: check_run_total,
     status_context_total: status_context_total,
-    workflow_run_total: 0,
+    workflow_run_total: unwrap(workflow_runs).total_count,
     check_run_pages_fetched: 1,
     status_context_pages_fetched: 1,
-    workflow_run_pages_fetched: 0,
+    workflow_run_pages_fetched: unwrap(workflow_runs).pages_fetched,
   }
 }

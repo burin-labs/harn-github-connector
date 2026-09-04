@@ -36,6 +36,19 @@ fn missing_checks_scope() {
   }
 }
 
+fn mock_workflow_runs(testing: HarnessTesting, runs: any) {
+  testing.http_mock(
+    "GET",
+    BASE + "/repos/octo-org/private-repo/actions/runs?head_sha=" + HEAD
+      + "&per_page=100&page=1",
+    {
+      status: 200,
+      body: json_stringify({total_count: len(runs), workflow_runs: runs}),
+      headers: {"x-ratelimit-remaining": "17"},
+    },
+  )
+}
+
 pipeline test_private_pr_checks_fall_back_to_exact_graphql_rollup(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   mock_pull(harness.testing)
@@ -89,6 +102,23 @@ pipeline test_private_pr_checks_fall_back_to_exact_graphql_rollup(harness: Harne
       headers: {"x-ratelimit-remaining": "18"},
     },
   )
+  mock_workflow_runs(
+    harness.testing,
+    [
+      {
+        id: 1,
+        workflow_id: 5,
+        path: ".github/workflows/ci.yml",
+        name: "CI",
+        event: "pull_request",
+        status: "completed",
+        conclusion: "success",
+        head_sha: HEAD,
+        run_attempt: 1,
+        html_url: "https://github.com/octo-org/private-repo/actions/runs/1",
+      },
+    ],
+  )
   const checks = unwrap(call(harness, "github.pr.checks", AUTH + {repo: REPO, number: 77}))
   assert_eq(checks.repo, REPO)
   assert_eq(checks.pull_number, 77)
@@ -100,7 +130,9 @@ pipeline test_private_pr_checks_fall_back_to_exact_graphql_rollup(harness: Harne
   assert_eq(checks.status_context_total, 1)
   assert_eq(checks.checks[0].head_sha, HEAD)
   assert_eq(checks.checks[1].conclusion, "success")
-  assert_eq(len(harness.testing.http_mock_calls()), 3)
+  assert_eq(checks.generations[0].generation_id, "actions:1:attempt:1")
+  assert(checks.evidence_complete)
+  assert_eq(len(harness.testing.http_mock_calls()), 4)
 }
 
 pipeline test_unrelated_private_pr_permission_failure_does_not_fall_back(
@@ -196,7 +228,8 @@ pipeline test_private_pr_checks_use_exact_head_actions_when_checks_scope_is_hidd
   )
   harness.testing.http_mock(
     "GET",
-    BASE + "/repos/octo-org/private-repo/actions/runs?head_sha=" + HEAD + "&per_page=100",
+    BASE + "/repos/octo-org/private-repo/actions/runs?head_sha=" + HEAD
+      + "&per_page=100&page=1",
     {
       status: 200,
       body: json_stringify(
@@ -247,8 +280,10 @@ pipeline test_private_pr_checks_use_exact_head_actions_when_checks_scope_is_hidd
   assert_eq(checks.state, "merged")
   assert_eq(checks.rollup.state, "green")
   assert_eq(checks.rollup.total, 2)
-  assert_eq(checks.checks[0].name, "CI")
-  assert_eq(checks.checks[0].external_id, "actions-workflow-run:11")
+  assert_eq(checks.checks[0].name, "Workflow generation: CI")
+  assert_eq(checks.checks[0].external_id, "actions-workflow-generation:actions:11:attempt:1")
+  assert_eq(checks.generations[0].run_id, 11)
+  assert(checks.generations[0].evidence_complete)
   assert_eq(checks.workflow_run_total, 3)
   assert_eq(len(harness.testing.http_mock_calls()), 4)
 }
