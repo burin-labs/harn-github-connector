@@ -21,6 +21,33 @@ pipeline test_shared_http_policy_smoke(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
   harness.testing.http_mock(
     "GET",
+    base + "/repos/octo-org/octo-repo/pulls/403",
+    {
+      status: 403,
+      body:
+        "{\"message\":\"Resource not accessible by integration\",\"token\":\"must-not-surface\"}",
+      headers: {"x-ratelimit-remaining": "10"},
+    },
+  )
+  const denied = call(
+    harness,
+    "pulls.get",
+    auth + {owner: "octo-org", repo: "octo-repo", pull_number: 403},
+  )
+  assert(is_err(denied), "permission denials should remain typed errors")
+  const denial = unwrap_err(denied)
+  assert_eq(denial.code, "missing_scopes", "provider denial keeps its stable code")
+  assert(
+    contains(denial.message, "Resource not accessible by integration"),
+    "provider denial keeps GitHub's actionable message",
+  )
+  assert(
+    !contains(denial.message, "must-not-surface"),
+    "provider denial does not copy unrelated response fields",
+  )
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
+    "GET",
     base + "/repos/octo-org/octo-repo/pulls/2",
     {
       responses: [

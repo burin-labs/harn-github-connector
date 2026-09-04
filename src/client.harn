@@ -1064,9 +1064,15 @@ pub fn __github_request_error(clock: HarnessClock, response: any) {
     )
   }
   const code = __github_error_code(clock, response)
+  const provider_message = trim(__github_error_message(response))
+  const message = "github API request failed with status " + to_string(response.status)
   return __err(
     code,
-    "github API request failed with status " + to_string(response.status),
+    if provider_message == "" {
+      message
+    } else {
+      message + ": " + provider_message
+    },
     {http_status: response.status},
   )
 }
