@@ -26,7 +26,7 @@ pub fn signed_raw(secret: any, body: any, event: any, extra: any = nil) {
 
 /** Read a fixture JSON body from the test fixtures directory. */
 pub fn fixture_body(fs: HarnessFs, name: any) {
-  return fs.read_text(fs.source_dir() + "/fixtures/webhooks/" + name + ".json")
+  return fs.read_text(fs.source_dir() + "/../tests/fixtures/webhooks/" + name + ".json")
 }
 
 /** Build a signed raw inbound envelope from a named fixture. */

@@ -5,7 +5,7 @@ import {
   github_headers,
   github_normalize,
   require_github_interface,
-} from "./helpers"
+} from "../testdata/helpers"
 
 pipeline test_normalize_smoke(harness: Harness, task: any) {
   const secret = "test-signing-secret"

@@ -1,5 +1,5 @@
 import { call, init, shutdown } from "../src/facade"
-import { fixture_raw, github_normalize } from "./helpers"
+import { fixture_raw, github_normalize } from "../testdata/helpers"
 
 fn find_intent(intents: any, name: any) {
   for intent in intents ?? [] {
