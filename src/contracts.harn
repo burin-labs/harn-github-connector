@@ -721,13 +721,19 @@ pub type GithubWorkflowRunRequest = {
   options?: GithubClientOptions,
 }
 
-/** Exact producer identity and bounded archive policy for one JSON workflow artifact. */
+/**
+ * Exact producer identity and bounded archive policy for one JSON workflow artifact.
+ * Require a single-file artifact by default, or select one exact member from a bundle.
+ */
+pub type GithubWorkflowArtifactMemberSelection = "only_file" | "named_file"
+
 pub type GithubWorkflowJsonArtifactRequest = GithubWorkflowRunRequest \
   & {
   run_name: string,
   evidence_mode?: "terminal_success" | "diagnostic",
   artifact_name: string,
   member_name: string,
+  member_selection?: GithubWorkflowArtifactMemberSelection,
   expected_archive_sha256?: string,
   expected_member_sha256?: string,
   max_archive_bytes?: int,

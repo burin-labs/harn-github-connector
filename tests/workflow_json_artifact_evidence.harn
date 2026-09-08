@@ -211,6 +211,133 @@ pipeline test_file_backed_artifact_decode_cleans_success(harness: Harness, task:
   assert_eq(receipt.artifact_digest, artifact_meta().digest)
 }
 
+pipeline test_named_member_selection_preserves_archive_guards(harness: Harness) {
+  const bundle = zip_create(
+    [
+      {path: "logs/run.txt", content: "diagnostic output"},
+      {path: "evidence.json", content: json_stringify(fixture())},
+    ],
+  )
+  const selected = __decode_workflow_json_artifact(
+    bundle,
+    "evidence.json",
+    Evidence,
+    sha256(bundle),
+    nil,
+    nil,
+    16777216,
+    8388608,
+    "named_file",
+  )
+  assert_eq(unwrap(selected).data, fixture())
+  assert_code(
+    __decode_workflow_json_artifact(bundle, "evidence.json", Evidence, sha256(bundle)),
+    "ambiguous_archive_member",
+  )
+  for probe in [
+    {
+      entries: [{path: "logs/run.txt", content: "diagnostic output"}],
+      code: "artifact_member_mismatch",
+    },
+    {
+      entries: [
+        {path: "evidence.json", content: json_stringify(fixture())},
+        {path: "../unsafe.txt", content: "not selected"},
+      ],
+      code: "unsafe_archive_member",
+    },
+  ] {
+    const bytes = zip_create(probe.entries)
+    assert_code(
+      __decode_workflow_json_artifact(
+        bytes,
+        "evidence.json",
+        Evidence,
+        sha256(bytes),
+        nil,
+        nil,
+        16777216,
+        8388608,
+        "named_file",
+      ),
+      probe.code,
+    )
+  }
+  // zip_create refuses duplicate names, so mutate both same-length ZIP name
+  // records after producing a valid archive. File bodies and CRCs stay intact.
+  const distinct = zip_create(
+    [
+      {path: "evidence.json", content: json_stringify(fixture())},
+      {path: "evidencf.json", content: json_stringify(fixture())},
+    ],
+  )
+  const duplicate = bytes_from_hex(
+    replace(
+      bytes_to_hex(distinct),
+      bytes_to_hex(bytes_from_string("evidencf.json")),
+      bytes_to_hex(bytes_from_string("evidence.json")),
+    ),
+  )
+  assert_code(
+    __decode_workflow_json_artifact(
+      duplicate,
+      "evidence.json",
+      Evidence,
+      sha256(duplicate),
+      nil,
+      nil,
+      16777216,
+      8388608,
+      "named_file",
+    ),
+    "invalid_archive",
+  )
+  assert_code(
+    __decode_workflow_json_artifact(
+      bundle,
+      "evidence.json",
+      Evidence,
+      sha256(bundle),
+      nil,
+      nil,
+      16777216,
+      bytes_len(bytes_from_string(json_stringify(fixture()))),
+      "named_file",
+    ),
+    "artifact_oversized",
+  )
+}
+
+@serial(group: "workflow-artifact-temp")
+pipeline test_file_backed_named_member_selection(harness: Harness) {
+  const scratch = harness.fs.mkdtemp_in_workspace("github-workflow-artifact-")
+  const path = path_join(scratch, "artifact.zip")
+  const bundle = zip_create(
+    [
+      {path: "evidence.json", content: json_stringify(fixture())},
+      {path: "logs.txt", content: "diagnostic output"},
+    ],
+  )
+  harness.fs.write_bytes(path, bundle)
+  const result = __decode_workflow_json_artifact_file(
+    harness.fs,
+    {
+      scratch: scratch,
+      archive_path: path,
+      member_name: "evidence.json",
+      member_selection: "named_file",
+      provider_archive_sha256: sha256(bundle),
+      expected_archive_sha256: nil,
+      expected_member_sha256: nil,
+      max_archive_bytes: 16777216,
+      max_member_bytes: 8388608,
+    },
+    Evidence,
+  )
+  assert_eq(unwrap(result).data, fixture())
+  assert(!harness.fs.exists(scratch), "Named-member reads clean the temporary archive")
+}
+
 fn run_meta(overrides: any = {}) {
   return {
     id: 42,
