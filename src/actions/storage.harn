@@ -56,7 +56,7 @@ pub type GithubStorageDeleteReceipt = {
   http_status: int,
 }
 
-fn storage_path(owner: string, repo: string, collection: string) {
+fn storage_path(owner: string, repo: string, collection: string) -> GithubConnectorResult<string> {
   if regex_match("^[A-Za-z0-9_.-]+$", owner) == nil
     || regex_match("^[A-Za-z0-9_.-]+$", repo) == nil
     || owner == "."
@@ -83,14 +83,17 @@ fn storage_inventory<T>(
   if max_pages <= 0 {
     return __err("schema_drift", "Storage inventory max_pages must be positive")
   }
-  let items = []
+  let items: list<T> = []
   let seen = {}
-  let total = nil
+  let total = -1
   let page = 1
   while page <= max_pages {
     const response = api_call(
       harness,
-      {path: unwrap(path) + "?per_page=100&page=" + to_string(page), options: request.options},
+      {
+        path: unwrap(path) + "?per_page=100&page=" + to_string(page),
+        options: request.options ?? {},
+      },
     )
     if is_err(response) {
       return Err(unwrap_err(response))
@@ -103,7 +106,7 @@ fn storage_inventory<T>(
       || type_of(envelope.get(field)) != "list" {
       return __err("invalid_response", "Storage inventory omitted its count or records")
     }
-    if total != nil && total != envelope.total_count {
+    if total != -1 && total != envelope.total_count {
       return __err("incomplete_page", "Storage inventory changed during pagination")
     }
     total = envelope.total_count
@@ -161,7 +164,11 @@ fn storage_delete(
   }
   const response = api_call(
     harness,
-    {path: unwrap(path) + "/" + to_string(request.id), method: "DELETE", options: request.options},
+    {
+      path: unwrap(path) + "/" + to_string(request.id),
+      method: "DELETE",
+      options: request.options ?? {},
+    },
   )
   if is_err(response) {
     return Err(unwrap_err(response))
