@@ -1,0 +1,197 @@
+import { api_call } from "../api"
+import { GithubClientOptions, GithubConnectorResult } from "../contracts"
+import { __err } from "../errors"
+
+/** Repository storage inventory, bounded by an explicit maximum page count. */
+pub type GithubStorageListRequest = {
+  owner: string,
+  repo: string,
+  max_pages?: int,
+  options?: GithubClientOptions,
+}
+
+/** One cache's identity, allocation, and retention timestamps. */
+pub type GithubActionsCache = {
+  id: int,
+  key: string,
+  ref: string,
+  version: string,
+  size_in_bytes: int,
+  created_at: string,
+  last_accessed_at: string,
+}
+
+/** Producer identity used to protect workflow evidence from deletion. */
+pub type GithubArtifactProducer = {id: int, head_branch: string?, head_sha: string}
+
+/** Artifact metadata including expiry and optional producer identity. */
+pub type GithubActionsArtifact = {
+  id: int,
+  name: string,
+  size_in_bytes: int,
+  expired: bool,
+  created_at: string,
+  updated_at: string,
+  expires_at: string,
+  workflow_run?: GithubArtifactProducer,
+}
+
+/** Complete inventory; incomplete pages are errors rather than partial success. */
+pub type GithubStorageInventory<T> = {items: list<T>, total_count: int, pages_fetched: int}
+
+/** Delete one exact storage object after the caller applies its retention policy. */
+pub type GithubStorageDeleteRequest = {
+  owner: string,
+  repo: string,
+  id: int,
+  options?: GithubClientOptions,
+}
+
+/** GitHub confirmed deletion of the named object with HTTP 204. */
+pub type GithubStorageDeleteReceipt = {
+  repository: string,
+  kind: "cache" | "artifact",
+  id: int,
+  deleted: bool,
+  http_status: int,
+}
+
+fn storage_path(owner: string, repo: string, collection: string) {
+  if regex_match("^[A-Za-z0-9_.-]+$", owner) == nil
+    || regex_match("^[A-Za-z0-9_.-]+$", repo) == nil
+    || owner == "."
+    || owner == ".."
+    || repo == "."
+    || repo == ".." {
+    return __err("schema_drift", "Storage operations require a repository owner and name")
+  }
+  return Ok("/repos/" + owner + "/" + repo + "/actions/" + collection)
+}
+
+fn storage_inventory<T>(
+  harness: Harness,
+  request: GithubStorageListRequest,
+  collection: string,
+  field: string,
+  schema: Schema<T>,
+) -> GithubConnectorResult<GithubStorageInventory<T>> {
+  const path = storage_path(request.owner, request.repo, collection)
+  if is_err(path) {
+    return Err(unwrap_err(path))
+  }
+  const max_pages = request.max_pages ?? 2000
+  if max_pages <= 0 {
+    return __err("schema_drift", "Storage inventory max_pages must be positive")
+  }
+  let items = []
+  let seen = {}
+  let total = nil
+  let page = 1
+  while page <= max_pages {
+    const response = api_call(
+      harness,
+      {path: unwrap(path) + "?per_page=100&page=" + to_string(page), options: request.options},
+    )
+    if is_err(response) {
+      return Err(unwrap_err(response))
+    }
+    const envelope = unwrap(response)
+    if type_of(envelope) != "dict" {
+      return __err("invalid_response", "Storage inventory response was not an object")
+    }
+    if type_of(envelope?.total_count) != "int" || envelope.total_count < 0
+      || type_of(envelope.get(field)) != "list" {
+      return __err("invalid_response", "Storage inventory omitted its count or records")
+    }
+    if total != nil && total != envelope.total_count {
+      return __err("incomplete_page", "Storage inventory changed during pagination")
+    }
+    total = envelope.total_count
+    const records = envelope.get(field)
+    for record in records {
+      if !schema_is(record, schema) || record.id <= 0 || record.size_in_bytes < 0 {
+        return __err("invalid_response", "Storage inventory contained an invalid record")
+      }
+      const key = to_string(record.id)
+      if seen.get(key) != nil {
+        return __err("incomplete_page", "Storage inventory repeated an object identity")
+      }
+      seen[key] = true
+      items = items.appending(record)
+    }
+    if len(items) == total {
+      return Ok({items: items, total_count: total, pages_fetched: page})
+    }
+    if len(items) > total || len(records) != 100 {
+      return __err("incomplete_page", "Storage inventory ended before its declared count")
+    }
+    page += 1
+  }
+  return __err("incomplete_page", "Storage inventory exceeded its page limit")
+}
+
+/** Read all repository Actions caches, rejecting incomplete or unstable pagination. */
+pub fn actions_caches_list(
+  harness: Harness,
+  request: GithubStorageListRequest,
+) -> GithubConnectorResult<GithubStorageInventory<GithubActionsCache>> {
+  return storage_inventory(harness, request, "caches", "actions_caches", GithubActionsCache)
+}
+
+/** Read all repository Actions artifacts, including expired metadata. */
+pub fn actions_artifacts_list(
+  harness: Harness,
+  request: GithubStorageListRequest,
+) -> GithubConnectorResult<GithubStorageInventory<GithubActionsArtifact>> {
+  return storage_inventory(harness, request, "artifacts", "artifacts", GithubActionsArtifact)
+}
+
+fn storage_delete(
+  harness: Harness,
+  request: GithubStorageDeleteRequest,
+  collection: string,
+  kind: "cache" | "artifact",
+) -> GithubConnectorResult<GithubStorageDeleteReceipt> {
+  const path = storage_path(request.owner, request.repo, collection)
+  if is_err(path) {
+    return Err(unwrap_err(path))
+  }
+  if request.id <= 0 {
+    return __err("schema_drift", "Storage deletion requires a positive object id")
+  }
+  const response = api_call(
+    harness,
+    {path: unwrap(path) + "/" + to_string(request.id), method: "DELETE", options: request.options},
+  )
+  if is_err(response) {
+    return Err(unwrap_err(response))
+  }
+  if unwrap(response)?.status != 204 {
+    return __err("invalid_response", "Storage deletion did not return HTTP 204")
+  }
+  return Ok(
+    {
+      repository: request.owner + "/" + request.repo,
+      kind: kind,
+      id: request.id,
+      deleted: true,
+      http_status: 204,
+    },
+  )
+}
+
+/** Delete one cache by id; retention and active-use policy belongs to the caller. */
+pub fn actions_cache_delete(
+  harness: Harness,
+  request: GithubStorageDeleteRequest,
+) -> GithubConnectorResult<GithubStorageDeleteReceipt> {
+  return storage_delete(harness, request, "caches", "cache")
+}
+
+/** Delete one artifact by id after the caller protects referenced evidence. */
+pub fn actions_artifact_delete(
+  harness: Harness,
+  request: GithubStorageDeleteRequest,
+) -> GithubConnectorResult<GithubStorageDeleteReceipt> {
+  return storage_delete(harness, request, "artifacts", "artifact")
+}
