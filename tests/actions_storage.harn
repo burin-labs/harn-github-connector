@@ -143,7 +143,7 @@ pipeline test_storage_deletion_requires_exact_success(harness: Harness, task: an
   assert_eq(unwrap(deleted).http_status, 204)
   assert_eq(harness.testing.http_mock_calls()[0].method, "DELETE")
   harness.testing.http_mock_clear()
-  harness.testing.http_mock("DELETE", url, {status: 200, body: "{}"})
+  harness.testing.http_mock("DELETE", url, {status: 200, body: "{\"status\":204}"})
   assert(
     is_err(actions_cache_delete(harness, request() + {id: 9})),
     "unexpected success shape fails",

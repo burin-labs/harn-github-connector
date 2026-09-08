@@ -1,6 +1,7 @@
-import { api_call } from "../api"
+import { api_call, call } from "../api"
 import { GithubClientOptions, GithubConnectorResult } from "../contracts"
 import { __err } from "../errors"
+import { __request_args } from "../request_options"
 
 /** Repository storage inventory, bounded by an explicit maximum page count. */
 pub type GithubStorageListRequest = {
@@ -162,13 +163,17 @@ fn storage_delete(
   if request.id <= 0 {
     return __err("schema_drift", "Storage deletion requires a positive object id")
   }
-  const response = api_call(
+  const response = call(
     harness,
-    {
-      path: unwrap(path) + "/" + to_string(request.id),
-      method: "DELETE",
-      options: request.options ?? {},
-    },
+    "api_call",
+    __request_args(
+      {
+        path: unwrap(path) + "/" + to_string(request.id),
+        method: "DELETE",
+        parse_json: false,
+        options: request.options ?? {},
+      },
+    ),
   )
   if is_err(response) {
     return Err(unwrap_err(response))
