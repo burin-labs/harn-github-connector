@@ -1,0 +1,171 @@
+import {
+  actions_artifact_delete,
+  actions_artifacts_list,
+  actions_cache_delete,
+  actions_caches_list,
+} from "../src/facade"
+
+const BASE = "https://github-api.test"
+
+fn request() {
+  return {
+    owner: "octo-org",
+    repo: "octo-repo",
+    options: {api_base_url: BASE, installation_token: "fixture-token", retry: {max_attempts: 1}},
+  }
+}
+
+fn cache(id: int) {
+  return {
+    id: id,
+    key: "build-" + to_string(id),
+    ref: "refs/heads/main",
+    version: "v1",
+    size_in_bytes: 1024,
+    created_at: "2026-08-01T00:00:00Z",
+    last_accessed_at: "2026-08-02T00:00:00Z",
+  }
+}
+
+fn mock_page(testing: HarnessTesting, page: int, total: int, records: list) {
+  testing.http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/actions/caches?per_page=100&page=" + to_string(page),
+    {status: 200, body: json_stringify({total_count: total, actions_caches: records})},
+  )
+}
+
+pipeline test_storage_inventory_reaches_second_page(harness: Harness, task: any) {
+  harness.testing.http_mock_clear()
+  let first = []
+  for id in range(1, 101) {
+    first = first.appending(cache(id))
+  }
+  mock_page(harness.testing, 1, 101, first)
+  mock_page(harness.testing, 2, 101, [cache(101)])
+  const result = actions_caches_list(harness, request())
+  assert(is_ok(result), "complete two-page inventory succeeds")
+  const inventory = unwrap(result)
+  assert_eq(inventory.total_count, 101)
+  assert_eq(inventory.pages_fetched, 2)
+  assert_eq(len(inventory.items), 101)
+  assert_eq(inventory.items[100].id, 101)
+  assert_eq(len(harness.testing.http_mock_calls()), 2)
+}
+
+pipeline test_storage_inventory_empty_and_partial_are_distinct(harness: Harness, task: any) {
+  harness.testing.http_mock_clear()
+  mock_page(harness.testing, 1, 0, [])
+  const empty = actions_caches_list(harness, request())
+  assert(is_ok(empty), "measured empty inventory succeeds")
+  assert_eq(unwrap(empty).pages_fetched, 1)
+  assert_eq(unwrap(empty).total_count, 0)
+  harness.testing.http_mock_clear()
+  mock_page(harness.testing, 1, 1, [])
+  const partial = actions_caches_list(harness, request())
+  assert(is_err(partial), "missing record cannot become empty success")
+  assert_eq(unwrap_err(partial).code, "incomplete_page")
+}
+
+pipeline test_storage_inventory_rejects_changing_counts_and_page_limit(
+  harness: Harness,
+  task: any,
+) {
+  harness.testing.http_mock_clear()
+  let first = []
+  for id in range(1, 101) {
+    first = first.appending(cache(id))
+  }
+  mock_page(harness.testing, 1, 101, first)
+  mock_page(harness.testing, 2, 100, [])
+  const changing = actions_caches_list(harness, request())
+  assert(is_err(changing), "a changing inventory cannot produce a complete receipt")
+  assert_eq(unwrap_err(changing).code, "incomplete_page")
+  harness.testing.http_mock_clear()
+  mock_page(harness.testing, 1, 101, first)
+  const bounded = actions_caches_list(harness, request() + {max_pages: 1})
+  assert(is_err(bounded), "the page limit cannot return a partial success")
+  assert_eq(unwrap_err(bounded).code, "incomplete_page")
+  assert_eq(len(harness.testing.http_mock_calls()), 1)
+}
+
+pipeline test_storage_inventory_rejects_invalid_and_duplicate_records(harness: Harness, task: any) {
+  harness.testing.http_mock_clear()
+  mock_page(harness.testing, 1, 1, [cache(1).removing("last_accessed_at")])
+  assert(is_err(actions_caches_list(harness, request())), "missing retention field fails")
+  harness.testing.http_mock_clear()
+  mock_page(harness.testing, 1, 2, [cache(1), cache(1)])
+  const duplicate = actions_caches_list(harness, request())
+  assert(is_err(duplicate), "duplicates cannot substitute for missing records")
+  assert_eq(unwrap_err(duplicate).code, "incomplete_page")
+}
+
+pipeline test_artifact_inventory_preserves_expiry_and_producer(harness: Harness, task: any) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/actions/artifacts?per_page=100&page=1",
+    {
+      status: 200,
+      body: json_stringify(
+        {
+          total_count: 1,
+          artifacts: [
+            {
+              id: 17,
+              name: "review-evidence",
+              size_in_bytes: 512,
+              expired: false,
+              created_at: "2026-08-01T00:00:00Z",
+              updated_at: "2026-08-01T00:00:00Z",
+              expires_at: "2026-09-30T00:00:00Z",
+              workflow_run: {id: 31, head_branch: "feature", head_sha: "abc", repository_id: 2},
+              url: "https://github-api.test/artifacts/17",
+            },
+          ],
+        },
+      ),
+    },
+  )
+  const result = actions_artifacts_list(harness, request())
+  assert(is_ok(result), "artifact metadata accepts provider extension fields")
+  assert_eq(unwrap(result).items[0].workflow_run.id, 31)
+  assert_eq(unwrap(result).items[0].expired, false)
+}
+
+pipeline test_storage_deletion_requires_exact_success(harness: Harness, task: any) {
+  harness.testing.http_mock_clear()
+  const url = BASE + "/repos/octo-org/octo-repo/actions/caches/9"
+  harness.testing.http_mock("DELETE", url, {status: 204, body: ""})
+  const deleted = actions_cache_delete(harness, request() + {id: 9})
+  assert(is_ok(deleted), "204 produces a deletion receipt")
+  assert_eq(unwrap(deleted).id, 9)
+  assert_eq(unwrap(deleted).http_status, 204)
+  assert_eq(harness.testing.http_mock_calls()[0].method, "DELETE")
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock("DELETE", url, {status: 200, body: "{\"status\":204}"})
+  assert(
+    is_err(actions_cache_delete(harness, request() + {id: 9})),
+    "unexpected success shape fails",
+  )
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
+    "DELETE",
+    BASE + "/repos/octo-org/octo-repo/actions/artifacts/9",
+    {status: 404, body: "{\"message\":\"Not Found\"}"},
+  )
+  assert(
+    is_err(actions_artifact_delete(harness, request() + {id: 9})),
+    "404 is not a deletion receipt",
+  )
+}
+
+pipeline test_storage_invalid_identity_never_reaches_http(harness: Harness, task: any) {
+  harness.testing.http_mock_clear()
+  assert(is_err(actions_cache_delete(harness, request() + {id: 0})), "nonpositive id fails")
+  assert(
+    is_err(actions_caches_list(harness, request() + {repo: "../other"})),
+    "path traversal fails",
+  )
+  assert_eq(len(harness.testing.http_mock_calls()), 0)
+}

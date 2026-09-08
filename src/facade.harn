@@ -23,6 +23,7 @@ pub import {
   github_wait_for_workflow_run,
 } from "./actions/automation"
 pub import { github_wait_for_pr_checks } from "./actions/checks"
+pub import "./actions/storage"
 pub import { api_call, call, call_typed } from "./api"
 pub import { github_branch_head, github_compare_branch_trees } from "./branches/api"
 pub import {

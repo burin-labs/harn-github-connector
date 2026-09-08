@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add typed Actions cache and artifact inventories with complete pagination,
+  retention metadata, and exact-object deletion receipts. Incomplete, changing,
+  or duplicate pages return errors instead of partial inventories.
 - Preserve GitHub's response message in typed API errors so permission
   failures name the provider's actionable reason instead of reporting only an
   HTTP status.

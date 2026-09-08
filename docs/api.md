@@ -8,6 +8,47 @@ Version: `0.8.7`
 
 `src/facade.harn`
 
+### type `GithubActionsArtifact`
+
+Artifact metadata including expiry and optional producer identity.
+
+```harn
+pub type GithubActionsArtifact = {
+  id: int,
+  name: string,
+  size_in_bytes: int,
+  expired: bool,
+  created_at: string,
+  updated_at: string,
+  expires_at: string,
+  workflow_run?: GithubArtifactProducer,
+}
+```
+
+### type `GithubActionsCache`
+
+One cache's identity, allocation, and retention timestamps.
+
+```harn
+pub type GithubActionsCache = {
+  id: int,
+  key: string,
+  ref: string,
+  version: string,
+  size_in_bytes: int,
+  created_at: string,
+  last_accessed_at: string,
+}
+```
+
+### type `GithubArtifactProducer`
+
+Producer identity used to protect workflow evidence from deletion.
+
+```harn
+pub type GithubArtifactProducer = {id: int, head_branch: string?, head_sha: string}
+```
+
 ### type `GithubAuthorChoice`
 
 Authorship policy that accompanies a mutation but never enters its body.
@@ -1396,6 +1437,54 @@ pub type GithubStatusCheckContext = {
 }
 ```
 
+### type `GithubStorageDeleteReceipt`
+
+GitHub confirmed deletion of the named object with HTTP 204.
+
+```harn
+pub type GithubStorageDeleteReceipt = {
+  repository: string,
+  kind: "cache" | "artifact",
+  id: int,
+  deleted: bool,
+  http_status: int,
+}
+```
+
+### type `GithubStorageDeleteRequest`
+
+Delete one exact storage object after the caller applies its retention policy.
+
+```harn
+pub type GithubStorageDeleteRequest = {
+  owner: string,
+  repo: string,
+  id: int,
+  options?: GithubClientOptions,
+}
+```
+
+### type `GithubStorageInventory`
+
+Complete inventory; incomplete pages are errors rather than partial success.
+
+```harn
+pub type GithubStorageInventory<T> = {items: list<T>, total_count: int, pages_fetched: int}
+```
+
+### type `GithubStorageListRequest`
+
+Repository storage inventory, bounded by an explicit maximum page count.
+
+```harn
+pub type GithubStorageListRequest = {
+  owner: string,
+  repo: string,
+  max_pages?: int,
+  options?: GithubClientOptions,
+}
+```
+
 ### type `GithubWorkflowAutomationRequest`
 
 Request for dispatching and optionally waiting for one workflow run.
@@ -1843,6 +1932,54 @@ GitHub's own signature evidence for the published commit.
 
 ```harn
 pub type GithubWorktreeSignature = {verified: bool, signed_by_github: bool, state: string}
+```
+
+### fn `actions_artifact_delete`
+
+Delete one artifact by id after the caller protects referenced evidence.
+
+```harn
+pub fn actions_artifact_delete(
+  harness: Harness,
+  request: GithubStorageDeleteRequest,
+) -> GithubConnectorResult<GithubStorageDeleteReceipt> {
+}
+```
+
+### fn `actions_artifacts_list`
+
+Read all repository Actions artifacts, including expired metadata.
+
+```harn
+pub fn actions_artifacts_list(
+  harness: Harness,
+  request: GithubStorageListRequest,
+) -> GithubConnectorResult<GithubStorageInventory<GithubActionsArtifact>> {
+}
+```
+
+### fn `actions_cache_delete`
+
+Delete one cache by id; retention and active-use policy belongs to the caller.
+
+```harn
+pub fn actions_cache_delete(
+  harness: Harness,
+  request: GithubStorageDeleteRequest,
+) -> GithubConnectorResult<GithubStorageDeleteReceipt> {
+}
+```
+
+### fn `actions_caches_list`
+
+Read all repository Actions caches, rejecting incomplete or unstable pagination.
+
+```harn
+pub fn actions_caches_list(
+  harness: Harness,
+  request: GithubStorageListRequest,
+) -> GithubConnectorResult<GithubStorageInventory<GithubActionsCache>> {
+}
 ```
 
 ### fn `actions_runner_generate_jitconfig`
