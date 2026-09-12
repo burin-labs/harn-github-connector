@@ -1,0 +1,9 @@
+version = 1
+include = ["README.md"]
+
+[defaults]
+# These examples are fragments with imports and context supplied by the caller.
+validation = "parse"
+format = true
+lint = "off"
+line_width = 100

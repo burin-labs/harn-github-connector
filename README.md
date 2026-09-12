@@ -24,7 +24,7 @@ REST and GraphQL normalization, mutation leases, and provider errors.
 Install a compatible Harn CLI, then add the connector:
 
 ```sh
-cargo install harn-cli --version 0.10.53 --locked
+cargo install harn-cli --version 0.10.135 --locked
 harn add github.com/burin-labs/harn-github-connector@v0.7.0
 ```
 
@@ -54,18 +54,14 @@ import {
   github_release,
 } from "harn-github-connector/default"
 
-fn find_release(
-  harness: Harness,
-) -> GithubConnectorResult<GithubReleaseLookup> {
+fn find_release(harness: Harness) -> GithubConnectorResult<GithubReleaseLookup> {
   return github_release(
     harness,
     {
       owner: "octo-org",
       repo: "octo-repo",
       tag: "v1.2.3",
-      options: {
-        installation_token: env("GITHUB_INSTALLATION_TOKEN"),
-      },
+      options: {installation_token: env("GITHUB_INSTALLATION_TOKEN")},
     },
   )
 }
@@ -75,9 +71,11 @@ Handle the `Result` before reading the success value:
 
 ```harn
 const result = find_release(harness)
+
 if is_err(result) {
   throw unwrap_err(result).message
 }
+
 const lookup = unwrap(result)
 ```
 
