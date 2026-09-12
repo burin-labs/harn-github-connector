@@ -19,4 +19,4 @@ jobs:
         with:
           persist-credentials: false
       - name: Check README examples
-        uses: burin-labs/.github/.github/actions/check-harn-docs@2cbcd10e9b01e7f4ab999e331ceaee7c6aff2a6e
+        uses: burin-labs/.github/.github/actions/check-harn-docs@d399b007b53c3d319ceb0bcd5942b745aef3f967
