@@ -5,7 +5,7 @@ description = "Pure-Harn GitHub App connector: webhooks, installation token rota
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/burin-labs/harn-github-connector"
 docs_url = "https://github.com/burin-labs/harn-github-connector/blob/main/docs/api.md"
-harn = ">=0.10.53,<0.11"
+harn = ">=0.10.135,<0.11"
 
 [exports]
 default = "src/facade.harn"

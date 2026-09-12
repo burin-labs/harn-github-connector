@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Require Harn 0.10.135 and use typed `pick` projections for request fields and
+  test capabilities. Check README examples with the shared documentation action.
+
 - Add typed Actions cache and artifact inventories with complete pagination,
   retention metadata, and exact-object deletion receipts. Incomplete, changing,
   or duplicate pages return errors instead of partial inventories.

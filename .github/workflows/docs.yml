@@ -1,0 +1,22 @@
+name: Documentation
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  examples:
+    name: Harn documentation examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check README examples
+        uses: burin-labs/.github/.github/actions/check-harn-docs@2cbcd10e9b01e7f4ab999e331ceaee7c6aff2a6e

@@ -82,7 +82,7 @@ pub fn github_resolve_pr_for_sha(
   const pulls = __call_raw(
     harness,
     "repos.commit_pulls",
-    auth + {owner: request.owner, repo: request.repo, sha: request.sha},
+    auth + pick(request, ["owner", "repo", "sha"]),
   )
   if is_err(pulls) {
     return {
