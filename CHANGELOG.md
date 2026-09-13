@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.8 - 2026-09-13
+
 - Require Harn 0.10.135 and use typed `pick` projections for request fields and
   test capabilities. Check README examples with the shared documentation action.
 
