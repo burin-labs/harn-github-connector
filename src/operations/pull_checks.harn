@@ -334,11 +334,109 @@ fn __exact_head_workflow_runs(
   if is_err(runs) {
     return runs
   }
-  const validated = __validate_workflow_runs(unwrap(runs).values, head_sha)
+  const listed = unwrap(runs)
+  const validated = __validate_workflow_runs(listed.values, head_sha)
   if is_err(validated) {
     return validated
   }
-  return runs
+  const resolved = __resolve_unlisted_generations(
+    harness,
+    repo,
+    checks,
+    listed.values,
+    head_sha,
+    cfg,
+  )
+  if is_err(resolved) {
+    return resolved
+  }
+  const recovered = unwrap(resolved)
+  if len(recovered) == 0 {
+    return runs
+  }
+  return Ok(
+    listed
+      + {values: listed.values + recovered, total_count: listed.total_count + len(recovered)},
+  )
+}
+
+/**
+ * Resolve, by id, each Actions run a check names that the filtered listing has
+ * not indexed yet.
+ *
+ * The commit's check list and `actions/runs?head_sha=` are two separately
+ * maintained indexes, and the second one lags the first. Measured on one
+ * commit, probed minutes apart with nothing changed but time: the filtered
+ * listing returned no runs and then twelve, while the run the census could not
+ * attribute existed the whole time, carried that exact head, and was returned
+ * by a direct read, an unfiltered listing, and a status-filtered listing
+ * throughout. Requiring the two indexes to agree therefore refused complete
+ * evidence for being freshly created.
+ *
+ * Reading the named run by id settles the question instead of widening a
+ * tolerance: it is the authoritative read of the exact object in dispute. A run
+ * that turns out to belong to another head is still refused, by the same head
+ * comparison every listed run passes, so this cannot be mistaken for dropping
+ * the check.
+ */
+fn __resolve_unlisted_generations(
+  harness: Harness,
+  repo: any,
+  checks: any,
+  listed_runs: any,
+  head_sha: string,
+  cfg: dict,
+) {
+  let recovered = []
+  for check in checks ?? [] {
+    const run_id = to_int(__extract_actions_run_id(check?.details_url ?? check?.html_url))
+    if run_id == nil {
+      continue
+    }
+    let found = false
+    for run in listed_runs ?? [] {
+      if to_int(run?.id) == run_id {
+        found = true
+      }
+    }
+    for run in recovered {
+      if to_int(run?.id) == run_id {
+        found = true
+      }
+    }
+    if found {
+      continue
+    }
+    const fetched = __github_json(
+      harness,
+      "GET",
+      __github_api_url(
+        cfg.api_base_url,
+        "/repos/" + repo.owner + "/" + repo.name + "/actions/runs/" + to_string(run_id),
+      ),
+      nil,
+      cfg,
+    )
+    if is_err(fetched) {
+      return fetched
+    }
+    if to_int(fetched?.id) != run_id {
+      return __err(
+        "invalid_response",
+        "github.pr.checks read a workflow run that is not the one its check names",
+        {expected_run_id: run_id, observed_run_id: fetched?.id},
+      )
+    }
+    recovered = recovered + [fetched]
+  }
+  if len(recovered) == 0 {
+    return Ok(recovered)
+  }
+  const validated = __validate_workflow_runs(recovered, head_sha)
+  if is_err(validated) {
+    return validated
+  }
+  return Ok(recovered)
 }
 
 fn __generation_status(run: any) {

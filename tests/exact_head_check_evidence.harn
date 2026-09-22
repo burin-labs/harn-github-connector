@@ -308,3 +308,79 @@ pipeline test_independently_restarted_workflows_do_not_hide_current_failure(
   assert_eq(len(receipt.legacy_statuses), 1, "legacy contexts remain a separate evidence set")
   assert_eq(receipt.legacy_statuses[0].external_id, "legacy-status:21")
 }
+
+fn mock_empty_run_listing(testing: HarnessTesting) {
+  testing.http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/actions/runs?head_sha=" + HEAD + "&per_page=100&page=1",
+    {
+      status: 200,
+      body: json_stringify({total_count: 0, workflow_runs: []}),
+      headers: {"x-ratelimit-remaining": "18"},
+    },
+  )
+}
+
+fn mock_run_by_id(testing: HarnessTesting, id: int, run: any) {
+  testing.http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/actions/runs/" + to_string(id),
+    {status: 200, body: json_stringify(run), headers: {"x-ratelimit-remaining": "17"}},
+  )
+}
+
+/**
+ * The race this operation used to report as missing evidence.
+ *
+ * A run created seconds before the read is in the commit's check list and not
+ * yet in the listing filtered by that head. Before the direct read, this exact
+ * shape refused with `incomplete_page` and said the check could not be
+ * attributed, which named the check rather than the index that lagged.
+ */
+pipeline test_a_run_absent_from_the_filtered_listing_is_resolved_by_id(
+  harness: Harness,
+  task: unknown,
+) {
+  harness.testing.http_mock_clear()
+  mock_checks(harness.testing, [actions_check(31)])
+  mock_empty_run_listing(harness.testing)
+  mock_run_by_id(harness.testing, 31, workflow_run(31, 7))
+  mock_statuses(harness.testing, [])
+  const resolved = unwrap(read(harness))
+  assert_eq(resolved.rollup.state, "green")
+  assert_eq(resolved.rollup.total, 1)
+  assert_eq(resolved.evidence_complete, true, "the resolved run completes the generation")
+  assert_eq(len(resolved.generations), 1, "the resolved run is a generation, not an exemption")
+  assert_eq(resolved.generations[0].run_id, 31)
+}
+
+/**
+ * The negative control. Resolving by id must not become a way to skip the head
+ * comparison: a run that belongs to a different commit still refuses, and it
+ * refuses on the head, not on the attribution.
+ */
+pipeline test_a_resolved_run_on_another_head_still_refuses(harness: Harness, task: unknown) {
+  harness.testing.http_mock_clear()
+  mock_checks(harness.testing, [actions_check(32)])
+  mock_empty_run_listing(harness.testing)
+  mock_run_by_id(harness.testing, 32, workflow_run(32, 7, {head_sha: "some-other-head"}))
+  mock_statuses(harness.testing, [])
+  assert_code(read(harness), "stale_head")
+}
+
+/**
+ * A check naming a run the direct read cannot produce is still a refusal. The
+ * resolution answers "has the index caught up", never "does this run exist".
+ */
+pipeline test_a_run_that_cannot_be_read_is_still_a_refusal(harness: Harness, task: unknown) {
+  harness.testing.http_mock_clear()
+  mock_checks(harness.testing, [actions_check(33)])
+  mock_empty_run_listing(harness.testing)
+  harness.testing.http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/actions/runs/33",
+    {status: 404, body: json_stringify({message: "Not Found"}), headers: {}},
+  )
+  mock_statuses(harness.testing, [])
+  require is_err(read(harness)), "an unreadable run must not complete the evidence"
+}
