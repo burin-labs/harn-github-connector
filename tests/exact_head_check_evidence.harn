@@ -382,5 +382,5 @@ pipeline test_a_run_that_cannot_be_read_is_still_a_refusal(harness: Harness, tas
     {status: 404, body: json_stringify({message: "Not Found"}), headers: {}},
   )
   mock_statuses(harness.testing, [])
-  require is_err(read(harness)), "an unreadable run must not complete the evidence"
+  assert(is_err(read(harness)), "an unreadable run must not complete the evidence")
 }
