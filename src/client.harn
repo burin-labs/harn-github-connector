@@ -917,7 +917,7 @@ pub fn __github_request(
       continue
     }
     if !(response.ok ?? false) {
-      return __github_request_error(harness.clock, response)
+      return __github_request_error(harness.clock, response, cfg)
     }
     if trim(response.body ?? "") == "" {
       return {status: response.status, headers: response.headers, body: ""}
@@ -1038,7 +1038,7 @@ pub fn __github_generic_retry_statuses(statuses: any) {
   return out
 }
 
-pub fn __github_request_error(clock: HarnessClock, response: any) {
+pub fn __github_request_error(clock: HarnessClock, response: any, cfg: any = nil) {
   if response?.error?.category == "invalid_json" {
     return __err("invalid_response", "GitHub API returned invalid JSON")
   }
@@ -1073,8 +1073,58 @@ pub fn __github_request_error(clock: HarnessClock, response: any) {
     } else {
       message + ": " + provider_message
     },
-    {http_status: response.status},
+    {http_status: response.status}
+      + if code == "rate_limited" {
+        __rate_limit_error_fields(clock, response, cfg)
+      } else {
+        {}
+      },
   )
+}
+
+/**
+ * The lowest value that can only be an absolute instant.
+ *
+ * `X-RateLimit-Reset` is an epoch second; the standard `RateLimit-Reset` is a
+ * delta. Both arrive as bare integers under names a reader can confuse, and
+ * reading a delta as an instant yields a timestamp in 1970, which is a reset
+ * already past and a caller that retries straight into the same limit. Nothing
+ * below this is an epoch any more, and no delta a server would send is above
+ * it, so the split is exact rather than a guess.
+ */
+const RATE_LIMIT_ABSOLUTE_RESET_FLOOR = 1000000000
+
+/**
+ * The budget the refused response reported, for the error record.
+ *
+ * Read from the response's own headers so a caller learns the state at the
+ * moment of the refusal rather than at the moment it thought to ask. Every
+ * field is omitted when its header is absent or unreadable: a missing budget
+ * and an exhausted one are opposite facts, and a zero default would collapse
+ * them.
+ */
+pub fn __rate_limit_error_fields(clock: HarnessClock, response: any, cfg: any = nil) {
+  const rate_limit = connector_http_rate_limit(clock, response)
+  let fields = {}
+  const remaining = to_int(rate_limit.remaining)
+  if remaining != nil {
+    fields["rate_limit_remaining"] = unwrap(remaining)
+  }
+  const limit = to_int(rate_limit.limit)
+  if limit != nil {
+    fields["rate_limit_limit"] = unwrap(limit)
+  }
+  const reset = to_int(rate_limit.x_ratelimit_reset ?? rate_limit.reset)
+  if reset == nil {
+    return fields
+  }
+  const epoch = if unwrap(reset) >= RATE_LIMIT_ABSOLUTE_RESET_FLOOR {
+    unwrap(reset)
+  } else {
+    __now_seconds(clock, cfg ?? {}) + unwrap(reset)
+  }
+  fields["rate_limit_reset"] = date_format(epoch, "%Y-%m-%dT%H:%M:%SZ")
+  return fields
 }
 
 pub fn __github_error_code(clock: HarnessClock, response: any) {
@@ -1142,9 +1192,14 @@ pub fn __maybe_wait_for_rate_limit(clock: HarnessClock, response: any, cfg: any)
       ?? DEFAULT_RATE_LIMIT_MAX_SLEEP_SECONDS,
   )
   if wait_seconds > max_sleep {
+    // The same fields as the refusal below. This is the site that fires when
+    // the headers are present and the reset is far away, which is exactly the
+    // case a caller most needs them for.
     return __err(
       "rate_limited",
       "github API rate limit reset is more than " + to_string(max_sleep) + " seconds away",
+      {http_status: to_int(response?.status) ?? 403}
+        + __rate_limit_error_fields(clock, response, cfg),
     )
   }
   if wait_seconds > 0 {

@@ -6,6 +6,13 @@
   `head_sha`-filtered run listing has not indexed yet, so `github.pr.checks`
   stops refusing complete evidence on a commit whose run was created seconds
   earlier. A run whose direct read carries a different head is still refused.
+- Carry the refused response's own rate-limit facts on a `rate_limited` error:
+  `rate_limit_reset` as an RFC 3339 instant, `rate_limit_remaining` and
+  `rate_limit_limit`. A caller learns when a retry can succeed from the
+  refusal itself instead of spending a second read for a fact the response
+  already held. A rate limit whose response carried no such headers reports
+  the fields absent rather than zero, because a missing budget and an
+  exhausted one are opposite facts.
 
 ## 0.8.8 - 2026-09-13
 
