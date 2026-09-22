@@ -1,0 +1,170 @@
+import { call } from "../src/facade"
+
+const BASE = "https://rate-limit-fields.test"
+
+const TOKEN = "rate-limit-fixture"
+
+// A fixed instant so the reset the test asserts is the one the header names,
+// not one derived from when the test happened to run.
+const NOW: int = 1700000000
+
+const RESET: int = 1700003600
+
+const RESET_RFC3339 = "2023-11-14T23:13:20Z"
+
+fn refuse(harness: Harness, headers: dict, status: int = 403) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/contents/README.md",
+    {
+      status: status,
+      body: json_stringify({message: "API rate limit exceeded for installation"}),
+      headers: headers,
+    },
+  )
+  return call(
+    harness,
+    "repos.get_content",
+    {
+      api_base_url: BASE,
+      installation_token: TOKEN,
+      owner: "octo-org",
+      repo: "octo-repo",
+      path: "README.md",
+      rate_limit_max_sleep_seconds: 0,
+      now: NOW,
+    },
+  )
+}
+
+/**
+ * The refusal carries what the response already said.
+ *
+ * A caller that meets this knows it is rate limited. Without these fields the
+ * only ways to learn when a retry could succeed are a guess or a second API
+ * read for a fact the response it already received had carried, and every
+ * caller that wants to behave well pays for it twice.
+ */
+pipeline test_a_rate_limited_refusal_carries_the_reset_and_the_budget(harness: Harness) {
+  const refused = refuse(
+    harness,
+    {
+      "x-ratelimit-limit": "5000",
+      "x-ratelimit-remaining": "0",
+      "x-ratelimit-reset": to_string(RESET),
+    },
+  )
+  assert(is_err(refused))
+  const error = unwrap_err(refused)
+  assert_eq(error.code, "rate_limited")
+  assert_eq(error.category, "rate_limit")
+  assert_eq(error.http_status, 403)
+  assert_eq(error.rate_limit_reset, RESET_RFC3339)
+  assert_eq(error.rate_limit_remaining, 0)
+  assert_eq(error.rate_limit_limit, 5000)
+}
+
+/**
+ * The control. A rate limit whose headers are missing is still a rate limit,
+ * and the fields are absent rather than zero.
+ *
+ * A budget reported as nothing left and a budget nobody reported are opposite
+ * facts for a caller deciding whether to wait. A field defaulting to zero
+ * would make the second read as the first, which is the mistake this change
+ * exists to remove rather than relocate.
+ */
+pipeline test_a_rate_limit_without_headers_reports_absent_not_zero(harness: Harness) {
+  // 429 rather than 403, deliberately. A 403 is classified as a rate limit by
+  // reading `x-ratelimit-remaining: 0`, so a 403 with no rate-limit headers is
+  // not a rate limit at all and this case would assert nothing about the code
+  // it claims to be about. A 429 is a rate limit on its status alone, which is
+  // the only way to reach this classification with the headers absent.
+  const refused = refuse(harness, {"retry-after": "60"}, 429)
+  assert(is_err(refused))
+  const error = unwrap_err(refused)
+  assert_eq(error.code, "rate_limited", "the classification must still land without headers")
+  assert_eq(error.category, "rate_limit")
+  assert_eq(error.http_status, 429)
+  assert_eq(error.rate_limit_remaining, nil, "a missing budget must not read as an empty one")
+  assert_eq(error.rate_limit_limit, nil)
+  assert_eq(error.rate_limit_reset, nil, "no header means no instant, never the epoch")
+}
+
+/**
+ * A partial header set reports the parts it has.
+ *
+ * GitHub sends all three together, but a proxy in front of it need not. One
+ * missing header must not suppress the two that arrived, because the reset is
+ * the field a caller acts on and it can be present on its own.
+ */
+pipeline test_a_partial_header_set_reports_only_what_arrived(harness: Harness) {
+  const refused = refuse(
+    harness,
+    {"x-ratelimit-remaining": "0", "x-ratelimit-reset": to_string(RESET)},
+  )
+  const error = unwrap_err(refused)
+  assert_eq(error.code, "rate_limited")
+  assert_eq(error.rate_limit_reset, RESET_RFC3339)
+  assert_eq(error.rate_limit_remaining, 0)
+  assert_eq(error.rate_limit_limit, nil)
+}
+
+/**
+ * A delta reset is not read as an instant.
+ *
+ * `X-RateLimit-Reset` is an epoch second and the standard `RateLimit-Reset` is
+ * a delta, and the two arrive as bare integers under names a reader can
+ * confuse. Reading 3600 as an epoch yields a timestamp in 1970, which is a
+ * reset already past and a caller that retries straight back into the limit.
+ */
+pipeline test_a_delta_reset_becomes_an_instant_not_nineteen_seventy(harness: Harness) {
+  const refused = refuse(
+    harness,
+    {"ratelimit-remaining": "0", "ratelimit-reset": "3600", "ratelimit-limit": "5000"},
+  )
+  const error = unwrap_err(refused)
+  assert_eq(error.code, "rate_limited")
+  assert_eq(error.rate_limit_reset, RESET_RFC3339, "3600 seconds from the fixed now")
+  assert_eq(error.rate_limit_limit, 5000)
+}
+
+/**
+ * A refusal that is not a rate limit carries none of this.
+ *
+ * The fields are scoped to the one code that makes them meaningful. A
+ * permission failure with a rate-limit reset attached would invite a caller to
+ * wait for a moment that changes nothing about it.
+ */
+pipeline test_a_permission_refusal_carries_no_rate_limit_fields(harness: Harness) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/contents/README.md",
+    {
+      status: 403,
+      body: json_stringify({message: "Resource not accessible by integration"}),
+      headers: {
+        "x-ratelimit-limit": "5000",
+        "x-ratelimit-remaining": "4999",
+        "x-ratelimit-reset": to_string(RESET),
+      },
+    },
+  )
+  const refused = call(
+    harness,
+    "repos.get_content",
+    {
+      api_base_url: BASE,
+      installation_token: TOKEN,
+      owner: "octo-org",
+      repo: "octo-repo",
+      path: "README.md",
+      now: NOW,
+    },
+  )
+  const error = unwrap_err(refused)
+  assert_eq(error.code, "missing_scopes")
+  assert_eq(error.rate_limit_reset, nil)
+  assert_eq(error.rate_limit_remaining, nil)
+}

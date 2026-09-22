@@ -8,6 +8,18 @@ pub type GithubConnectorError = {
   message: string,
   http_status?: int,
   retryable?: bool,
+  /**
+   * The budget the refused response itself reported, present only when the
+   * code is `rate_limited` and the response carried the headers.
+   *
+   * Absent is a fact, not a zero. A response with no rate-limit headers and a
+   * response reporting nothing left are opposite situations for a caller
+   * deciding whether to wait, and a field that defaulted to zero would make
+   * the first read as the second.
+   */
+  rate_limit_reset?: string,
+  rate_limit_remaining?: int,
+  rate_limit_limit?: int,
   graphql_error_kind?: GithubGraphqlErrorKind,
   expected_head_oid?: string,
   observed_head_oid?: string,
