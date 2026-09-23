@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Report GitHub's refusal to arm auto-merge on an already-mergeable pull
+  request as the typed error code `pull_request_clean` instead of a generic
+  GraphQL error, so a caller can land the pull request instead of failing.
+- Add `github_merge_queue_entries` and `github_merge_queue_enqueue` typed
+  wrappers with closed request types. `configured` on the entries result says
+  whether the branch has a merge queue.
+- `pulls_merge_safe` accepts `expected_head_oid` and refuses `stale_head` when
+  the pull request moved off it. Its typed `method` field now reaches GitHub;
+  before, it was dropped and the repository's default merge method was used.
+
 - Resolve an Actions run by id when a commit's check names one the
   `head_sha`-filtered run listing has not indexed yet, so `github.pr.checks`
   stops refusing complete evidence on a commit whose run was created seconds

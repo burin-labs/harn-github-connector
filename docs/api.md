@@ -617,6 +617,15 @@ pub type GithubMergeQueueEnqueueReceipt = {
 }
 ```
 
+### type `GithubMergeQueueEnqueueRequest`
+
+Request to enqueue one pull request under an exact head lease.
+
+```harn
+pub type GithubMergeQueueEnqueueRequest = GithubPullRequestRequest \
+  & {expected_head_oid: string, jump?: bool}
+```
+
 ### type `GithubMergeQueueEntries`
 
 Ordered merge-queue entries for one repository branch.
@@ -629,6 +638,14 @@ pub type GithubMergeQueueEntries = {
   url: string?,
   entries: list<GithubMergeQueueEntry>,
 }
+```
+
+### type `GithubMergeQueueEntriesRequest`
+
+Request for one branch's ordered merge-queue entries and queue configuration.
+
+```harn
+pub type GithubMergeQueueEntriesRequest = GithubRepositoryRequest & {branch: string, limit?: int}
 ```
 
 ### type `GithubMergeQueueEntry`
@@ -911,11 +928,14 @@ pub type GithubPullRequestMergeReceipt = {
 
 ### type `GithubPullRequestMergeRequest`
 
-Request for a protected-branch-aware pull-request merge.
+Request for a protected-branch-aware pull-request merge. `expected_head_oid`
+refuses `stale_head` unless the pull request is still on the head the caller
+verified, and pins GitHub's merge to it.
 
 ```harn
 pub type GithubPullRequestMergeRequest = GithubPullRequestRequest \
   & {
+  expected_head_oid?: string,
   admin_override?: bool,
   delete_branch?: bool,
   method?: "merge" | "squash" | "rebase",
@@ -2303,6 +2323,31 @@ pub fn github_latest_release_lookup(
   harness: Harness,
   request: GithubRepositoryRequest,
 ) -> GithubConnectorResult<GithubLatestReleaseLookup> {
+}
+```
+
+### fn `github_merge_queue_enqueue`
+
+Add one pull request to its base branch's merge queue under an exact head lease.
+
+```harn
+pub fn github_merge_queue_enqueue(
+  harness: Harness,
+  request: GithubMergeQueueEnqueueRequest,
+) -> GithubConnectorResult<GithubMergeQueueEnqueueReceipt> {
+}
+```
+
+### fn `github_merge_queue_entries`
+
+Read one branch's merge queue. `configured` is false when the branch has no
+merge queue, which is how a caller learns whether landing means enqueueing.
+
+```harn
+pub fn github_merge_queue_entries(
+  harness: Harness,
+  request: GithubMergeQueueEntriesRequest,
+) -> GithubConnectorResult<GithubMergeQueueEntries> {
 }
 ```
 

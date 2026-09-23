@@ -941,6 +941,10 @@ pub fn __pulls_merge_safe(harness: Harness, args: any, cfg: any) {
   if is_err(pull) {
     return pull
   }
+  const lease = __merge_head_lease(args, pull)
+  if is_err(lease) {
+    return lease
+  }
   const base_branch = pull?.base?.ref ?? args?.base_branch
   const protection_result = __github_branch_protection_raw(
     harness,
@@ -1066,6 +1070,13 @@ fn __pulls_enable_auto_merge(harness: Harness, args: any, cfg: any) {
       return __err(
         "stale_head",
         "GitHub rejected auto-merge because the pull request head changed",
+        {expected_head_oid: expected_head_oid, observed_head_oid: observed_head_oid},
+      )
+    }
+    if __graphql_errors_indicate_clean_status(graph.errors) {
+      return __err(
+        "pull_request_clean",
+        "GitHub refused auto-merge because the pull request is already mergeable",
         {expected_head_oid: expected_head_oid, observed_head_oid: observed_head_oid},
       )
     }

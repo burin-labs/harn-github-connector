@@ -1,0 +1,263 @@
+import { assert_eq } from "std/testing"
+import {
+  github_merge_queue_enqueue,
+  github_merge_queue_entries,
+  pulls_enable_auto_merge,
+  pulls_merge_safe,
+} from "../src/facade"
+
+const BASE = "https://github-api.test"
+
+const HEAD = "1111111111111111111111111111111111111111"
+
+const MOVED = "2222222222222222222222222222222222222222"
+
+fn auth() {
+  return {api_base_url: BASE, installation_token: "github-installation-token"}
+}
+
+fn pull(head_sha: string) {
+  return {
+    number: 42,
+    node_id: "PR_node_42",
+    html_url: "https://github.com/octo-org/octo-repo/pull/42",
+    base: {ref: "main"},
+    head: {
+      sha: head_sha,
+      ref: "automation/bump",
+      repo: {name: "octo-repo", owner: {login: "octo-org"}},
+    },
+    auto_merge: nil,
+  }
+}
+
+fn mock_pull(testing: HarnessTesting, head_sha: string) {
+  testing.http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/pulls/42",
+    {status: 200, body: json_stringify(pull(head_sha))},
+  )
+}
+
+pipeline test_clean_status_refusal_is_a_typed_merge_state(harness: Harness) {
+  harness.testing.http_mock_clear()
+  mock_pull(harness.testing, HEAD)
+  harness.testing.http_mock(
+    "POST",
+    BASE + "/graphql",
+    {
+      status: 200,
+      body: json_stringify(
+        {
+          data: {enablePullRequestAutoMerge: nil},
+          errors: [
+            {
+              type: "UNPROCESSABLE",
+              path: ["enablePullRequestAutoMerge"],
+              message: "Pull request Pull request is in clean status",
+            },
+          ],
+        },
+      ),
+    },
+  )
+  const result = pulls_enable_auto_merge(
+    harness,
+    {
+      owner: "octo-org",
+      repo: "octo-repo",
+      pull_number: 42,
+      expected_head_oid: HEAD,
+      method: "squash",
+      options: auth(),
+    },
+  )
+  assert(is_err(result), "a clean pull request is not armed")
+  const failure = unwrap_err(result)
+  assert_eq(failure.code, "pull_request_clean", "clean refusal has its own code")
+  assert_eq(failure.expected_head_oid, HEAD, "clean refusal keeps the head lease")
+  harness.testing.http_mock_clear()
+}
+
+pipeline test_other_auto_merge_refusals_stay_semantic_graphql_errors(harness: Harness) {
+  harness.testing.http_mock_clear()
+  mock_pull(harness.testing, HEAD)
+  harness.testing.http_mock(
+    "POST",
+    BASE + "/graphql",
+    {
+      status: 200,
+      body: json_stringify(
+        {
+          errors: [
+            {type: "UNPROCESSABLE", message: "Auto merge is not allowed for this repository"},
+          ],
+        },
+      ),
+    },
+  )
+  const failure = unwrap_err(
+    pulls_enable_auto_merge(
+      harness,
+      {
+        owner: "octo-org",
+        repo: "octo-repo",
+        pull_number: 42,
+        expected_head_oid: HEAD,
+        options: auth(),
+      },
+    ),
+  )
+  assert_eq(failure.code, "graphql", "an unrelated refusal is not reported as clean")
+  harness.testing.http_mock_clear()
+}
+
+pipeline test_merge_safe_pins_the_verified_head_and_typed_method(harness: Harness) {
+  harness.testing.http_mock_clear()
+  mock_pull(harness.testing, HEAD)
+  harness.testing.http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/branches/main/protection",
+    {status: 404, body: json_stringify({message: "Branch not protected"})},
+  )
+  harness.testing.http_mock(
+    "PUT",
+    BASE + "/repos/octo-org/octo-repo/pulls/42/merge",
+    {
+      status: 200,
+      body: json_stringify({merged: true, sha: "3333333333333333333333333333333333333333"}),
+    },
+  )
+  const merged = unwrap(
+    pulls_merge_safe(
+      harness,
+      {
+        owner: "octo-org",
+        repo: "octo-repo",
+        pull_number: 42,
+        expected_head_oid: HEAD,
+        method: "squash",
+        options: auth(),
+      },
+    ),
+  )
+  assert(merged.merge.merged, "merge response returned")
+  const calls = harness.testing.http_mock_calls()
+  const put = calls.filter({ call -> call.method == "PUT" })
+  assert_eq(len(put), 1, "one merge request")
+  const body: {merge_method: string, sha: string} = json_parse(put[0].body)
+  assert_eq(body.sha, HEAD, "GitHub re-checks the caller's verified head")
+  assert_eq(body.merge_method, "squash", "typed method reaches GitHub")
+  harness.testing.http_mock_clear()
+}
+
+pipeline test_merge_safe_refuses_a_head_the_caller_did_not_verify(harness: Harness) {
+  harness.testing.http_mock_clear()
+  mock_pull(harness.testing, MOVED)
+  const failure = unwrap_err(
+    pulls_merge_safe(
+      harness,
+      {
+        owner: "octo-org",
+        repo: "octo-repo",
+        pull_number: 42,
+        expected_head_oid: HEAD,
+        options: auth(),
+      },
+    ),
+  )
+  assert_eq(failure.code, "stale_head", "moved head is refused")
+  assert_eq(failure.observed_head_oid, MOVED, "refusal names the observed head")
+  const calls = harness.testing.http_mock_calls()
+  assert_eq(len(calls.filter({ call -> call.method == "PUT" })), 0, "nothing was merged")
+  harness.testing.http_mock_clear()
+}
+
+pipeline test_merge_queue_entries_report_whether_a_queue_exists(harness: Harness) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
+    "POST",
+    BASE + "/graphql",
+    {
+      responses: [
+        {status: 200, body: json_stringify({data: {repository: {mergeQueue: nil}}})},
+        {
+          status: 200,
+          body: json_stringify(
+            {
+              data: {
+                repository: {
+                  mergeQueue: {
+                    url: "https://github.com/octo-org/octo-repo/queue/main",
+                    entries: {nodes: []},
+                  },
+                },
+              },
+            },
+          ),
+        },
+      ],
+    },
+  )
+  const request = {owner: "octo-org", repo: "octo-repo", branch: "main", options: auth()}
+  const absent = unwrap(github_merge_queue_entries(harness, request))
+  assert_eq(absent.configured, false, "no queue on the branch")
+  const present = unwrap(github_merge_queue_entries(harness, request))
+  assert_eq(present.configured, true, "queue on the branch")
+  assert_eq(len(present.entries), 0, "empty queue")
+  harness.testing.http_mock_clear()
+}
+
+pipeline test_merge_queue_enqueue_is_typed_and_head_leased(harness: Harness) {
+  harness.testing.http_mock_clear()
+  mock_pull(harness.testing, HEAD)
+  harness.testing.http_mock(
+    "POST",
+    BASE + "/graphql",
+    {
+      status: 200,
+      body: json_stringify(
+        {
+          data: {
+            enqueuePullRequest: {
+              mergeQueueEntry: {
+                id: "MQE_42",
+                position: 1,
+                state: "QUEUED",
+                enqueuedAt: "2026-09-23T12:00:00Z",
+                jump: false,
+                solo: false,
+                estimatedTimeToMerge: 600,
+                headCommit: {oid: HEAD},
+                pullRequest: {
+                  number: 42,
+                  url: "https://github.com/octo-org/octo-repo/pull/42",
+                  headRefOid: HEAD,
+                  baseRefName: "main",
+                },
+              },
+            },
+          },
+        },
+      ),
+    },
+  )
+  const receipt = unwrap(
+    github_merge_queue_enqueue(
+      harness,
+      {
+        owner: "octo-org",
+        repo: "octo-repo",
+        pull_number: 42,
+        expected_head_oid: HEAD,
+        options: auth(),
+      },
+    ),
+  )
+  assert_eq(receipt.entry.state, "queued", "typed queue entry")
+  assert_eq(receipt.expected_head_oid, HEAD, "receipt binds the head lease")
+  const calls = harness.testing.http_mock_calls()
+  const mutation: {variables: {input: {expectedHeadOid: string}}} = json_parse(calls[1].body)
+  assert_eq(mutation.variables.input.expectedHeadOid, HEAD, "GitHub receives the head lease")
+  harness.testing.http_mock_clear()
+}

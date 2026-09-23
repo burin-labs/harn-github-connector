@@ -5,6 +5,10 @@ import {
   GithubAutoMergeReceipt,
   GithubAutoMergeRequest,
   GithubConnectorResult,
+  GithubMergeQueueEnqueueReceipt,
+  GithubMergeQueueEnqueueRequest,
+  GithubMergeQueueEntries,
+  GithubMergeQueueEntriesRequest,
   GithubMergeability,
   GithubMergeabilityRequest,
   GithubPullRequestCommits,
@@ -96,6 +100,35 @@ pub fn pulls_disable_auto_merge(
     "github.pr.disable_auto_merge",
     __request_args(request),
     GithubAutoMergeDisableReceipt,
+  )
+}
+
+/**
+ * Read one branch's merge queue. `configured` is false when the branch has no
+ * merge queue, which is how a caller learns whether landing means enqueueing.
+ */
+pub fn github_merge_queue_entries(
+  harness: Harness,
+  request: GithubMergeQueueEntriesRequest,
+) -> GithubConnectorResult<GithubMergeQueueEntries> {
+  return call_typed(
+    harness,
+    "github.merge_queue.entries",
+    __request_args(request),
+    GithubMergeQueueEntries,
+  )
+}
+
+/** Add one pull request to its base branch's merge queue under an exact head lease. */
+pub fn github_merge_queue_enqueue(
+  harness: Harness,
+  request: GithubMergeQueueEnqueueRequest,
+) -> GithubConnectorResult<GithubMergeQueueEnqueueReceipt> {
+  return call_typed(
+    harness,
+    "github.merge_queue.enqueue",
+    __request_args(request),
+    GithubMergeQueueEnqueueReceipt,
   )
 }
 

@@ -43,6 +43,8 @@ pub import {
   oauth_user_refresh,
 } from "./oauth/api"
 pub import {
+  github_merge_queue_enqueue,
+  github_merge_queue_entries,
   github_pr_commits,
   github_resolve_mergeable,
   github_upsert_pull_request,

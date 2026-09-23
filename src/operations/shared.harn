@@ -196,12 +196,43 @@ pub fn __merge_body(args: any, pull: any) {
         "number",
         "options",
         "pr_number",
+        "expected_head_oid",
       ],
   )
+  if body?.merge_method == nil && args?.method != nil {
+    body["merge_method"] = lowercase(to_string(args.method))
+  }
   if body?.sha == nil && pull?.head?.sha != nil {
     body["sha"] = pull.head.sha
   }
   return body
+}
+
+/**
+ * Refuse a merge whose caller verified a different head than the one GitHub
+ * now reports. The merge body pins `sha` to that same read, so GitHub refuses
+ * a push that lands between this check and the merge.
+ */
+pub fn __merge_head_lease(args: any, pull: any) {
+  const expected = trim(to_string(args?.expected_head_oid ?? ""))
+  const observed = trim(to_string(pull?.head?.sha ?? ""))
+  if expected != "" && expected != observed {
+    return __err(
+      "stale_head",
+      "pull request head no longer matches expected_head_oid",
+      {expected_head_oid: expected, observed_head_oid: observed},
+    )
+  }
+  return Ok(nil)
+}
+
+/**
+ * GitHub refuses to arm auto-merge on a pull request that already satisfies
+ * every requirement ("Pull request is in clean status"). There is nothing left
+ * for auto-merge to wait on, so this is a merge state, not a failure.
+ */
+pub fn __graphql_errors_indicate_clean_status(errors: any) -> bool {
+  return contains(lowercase(json_stringify(errors ?? [])), "clean status")
 }
 
 pub fn __merge_annotation(response: any, args: any) {

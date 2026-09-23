@@ -205,9 +205,14 @@ pub type GithubPullRequestsWithChecks = list<GithubPullRequestWithChecks>
 pub type GithubPullRequestEditRequest = GithubPullRequestRequest \
   & {edits: GithubPullRequestEditInput}
 
-/** Request for a protected-branch-aware pull-request merge. */
+/**
+ * Request for a protected-branch-aware pull-request merge. `expected_head_oid`
+ * refuses `stale_head` unless the pull request is still on the head the caller
+ * verified, and pins GitHub's merge to it.
+ */
 pub type GithubPullRequestMergeRequest = GithubPullRequestRequest \
   & {
+  expected_head_oid?: string,
   admin_override?: bool,
   delete_branch?: bool,
   method?: "merge" | "squash" | "rebase",
@@ -470,6 +475,13 @@ pub type GithubMergeQueueEntries = {
   url: string?,
   entries: list<GithubMergeQueueEntry>,
 }
+
+/** Request for one branch's ordered merge-queue entries and queue configuration. */
+pub type GithubMergeQueueEntriesRequest = GithubRepositoryRequest & {branch: string, limit?: int}
+
+/** Request to enqueue one pull request under an exact head lease. */
+pub type GithubMergeQueueEnqueueRequest = GithubPullRequestRequest \
+  & {expected_head_oid: string, jump?: bool}
 
 /** Receipt binding an enqueue request to the expected pull-request head. */
 pub type GithubMergeQueueEnqueueReceipt = {
