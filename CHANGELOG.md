@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Resolve an Actions run by id when a commit's check names one the
+  `head_sha`-filtered run listing has not indexed yet, so `github.pr.checks`
+  stops refusing complete evidence on a commit whose run was created seconds
+  earlier. A run whose direct read carries a different head is still refused.
+
 ## 0.8.8 - 2026-09-13
 
 - Require Harn 0.10.135 and use typed `pick` projections for request fields and
