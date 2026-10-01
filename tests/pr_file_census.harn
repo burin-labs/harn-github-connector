@@ -1,0 +1,205 @@
+import { call, github_pr_file_census } from "../src/facade"
+
+const BASE = "https://github-api.test"
+
+const HEAD = "cccccccccccccccccccccccccccccccccccccccc"
+
+const URL = BASE + "/repos/octo-org/octo-repo/pulls/42"
+
+type InvalidCensusCase = {count: any, files: list<dict>}
+
+fn auth() {
+  return {api_base_url: BASE, installation_token: "test-token"}
+}
+
+fn identity(count: any, head: string = HEAD) {
+  const pull = {
+    number: 42,
+    title: "Projection",
+    state: "open",
+    base: {ref: "main", sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    head: {ref: "projection", sha: head},
+  }
+  return if count == nil {
+    pull
+  } else {
+    pull + {changed_files: count}
+  }
+}
+
+fn file(name: string, previous: string? = nil) {
+  return {
+    sha: "dddddddddddddddddddddddddddddddddddddddd",
+    filename: name,
+    status: if previous == nil {
+      "modified"
+    } else {
+      "renamed"
+    },
+    additions: 1,
+    deletions: 1,
+    changes: 2,
+    previous_filename: previous,
+  }
+}
+
+fn mock_identity(testing: HarnessTesting, first: dict, final: dict) {
+  testing.http_mock(
+    "GET",
+    URL,
+    {
+      responses: [
+        {status: 200, body: json_stringify(first)},
+        {status: 200, body: json_stringify(final)},
+      ],
+    },
+  )
+}
+
+fn mock_page(testing: HarnessTesting, page: int, per_page: int, files: list<dict>) {
+  testing.http_mock(
+    "GET",
+    URL + "/files?per_page=${per_page}&page=${page}",
+    {status: 200, body: json_stringify(files)},
+  )
+}
+
+fn census(harness: Harness, per_page: int = 100, expected: string = HEAD) {
+  return github_pr_file_census(
+    harness,
+    {
+      owner: "octo-org",
+      repo: "octo-repo",
+      pull_number: 42,
+      per_page: per_page,
+      expected_head_oid: expected,
+      options: auth(),
+    },
+  )
+}
+
+pipeline test_file_census_reads_every_page_and_retains_rename_sources(harness: Harness, task: any) {
+  mock_identity(harness.testing, identity(3), identity(3))
+  mock_page(harness.testing, 1, 2, [file("a"), file("b", "old-b")])
+  mock_page(harness.testing, 2, 2, [file("c")])
+  const measured = unwrap(census(harness, 2))
+  assert_eq(measured.head_sha, HEAD)
+  assert_eq(measured.base_sha, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+  assert_eq(measured.total_files, 3)
+  assert_eq(measured.pages_fetched, 2)
+  assert_eq(measured.files.map({ row -> row.filename }), ["a", "b", "c"])
+  assert_eq(measured.files[1].previous_filename, "old-b")
+  const reads = harness.testing.http_mock_calls().filter({ row -> row.method == "GET" })
+  assert_eq(len(reads), 4, "two identity reads and both file pages actually fired")
+}
+
+pipeline test_file_census_refuses_unknown_partial_duplicate_and_over_limit_evidence(
+  harness: Harness,
+  task: any,
+) {
+  const cases: list<InvalidCensusCase> = [
+    {count: nil, files: [file("a")]},
+    {count: -1, files: [file("a")]},
+    {count: 1.5, files: [file("a")]},
+    {count: 3001, files: [file("a")]},
+    {count: 2, files: [file("a")]},
+    {count: 1, files: []},
+    {count: 1, files: [file("a"), file("b")]},
+    {count: 2, files: [file("a"), file("a")]},
+    {count: 1, files: [file("b", "")]},
+  ]
+  for case in cases {
+    harness.testing.http_mock_clear()
+    mock_identity(harness.testing, identity(case.count), identity(case.count))
+    mock_page(harness.testing, 1, 100, case.files)
+    const result = census(harness)
+    assert(
+      is_err(result),
+      "invalid census must be refused: " + to_string(case.count) + " " + to_string(case.files),
+    )
+    assert_eq(unwrap_err(result).category, "schema_drift")
+  }
+}
+
+pipeline test_file_census_refuses_head_count_and_expected_head_races(harness: Harness, task: any) {
+  for [final, expected] in [
+    [identity(1, "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"), HEAD],
+    [identity(2), HEAD],
+    [identity(1) + {base: {ref: "main", sha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}, HEAD],
+    [identity(nil), HEAD],
+    [identity(1), "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"],
+  ] {
+    harness.testing.http_mock_clear()
+    mock_identity(harness.testing, identity(1), final)
+    mock_page(harness.testing, 1, 100, [file("a")])
+    const result = census(harness, 100, expected)
+    assert(is_err(result), "moved identity cannot yield complete evidence")
+    assert_eq(unwrap_err(result).code, "stale_head")
+  }
+}
+
+pipeline test_file_census_distinguishes_measured_zero_from_missing_count(
+  harness: Harness,
+  task: any,
+) {
+  mock_identity(harness.testing, identity(0), identity(0))
+  mock_page(harness.testing, 1, 100, [])
+  const measured = unwrap(census(harness))
+  assert_eq(measured.total_files, 0)
+  assert_eq(measured.files, [])
+  assert_eq(
+    len(harness.testing.http_mock_calls()),
+    3,
+    "zero still requires the file page and two identity reads",
+  )
+}
+
+pipeline test_ordinary_file_page_remains_compatible(harness: Harness, task: any) {
+  mock_page(harness.testing, 2, 50, [file("b")])
+  const measured = unwrap(
+    call(
+      harness,
+      "github.pr.files",
+      auth() + {repo: "octo-org/octo-repo", number: 42, page: 2, per_page: 50},
+    ),
+  )
+  assert_eq(measured.page, 2)
+  assert_eq(measured.per_page, 50)
+  assert_eq(measured.files[0].filename, "b")
+  assert_eq(len(harness.testing.http_mock_calls()), 1, "page API remains a single page read")
+}
+
+pipeline test_file_census_refuses_duplicates_across_pages(harness: Harness, task: any) {
+  mock_identity(harness.testing, identity(2), identity(2))
+  mock_page(harness.testing, 1, 1, [file("a")])
+  mock_page(harness.testing, 2, 1, [file("a")])
+  const result = census(harness, 1)
+  assert(is_err(result))
+  assert_eq(unwrap_err(result).code, "invalid_response")
+  assert(contains(unwrap_err(result).message, "duplicate"))
+}
+
+pipeline test_file_census_cannot_turn_a_failed_page_read_into_empty_evidence(
+  harness: Harness,
+  task: any,
+) {
+  mock_identity(harness.testing, identity(1), identity(1))
+  harness.testing.http_mock(
+    "GET",
+    URL + "/files?per_page=100&page=1",
+    {status: 403, body: json_stringify({message: "Resource not accessible by integration"})},
+  )
+  assert(is_err(census(harness)), "an unavailable page never proves zero changes")
+}
+
+pipeline test_file_census_refuses_absent_base_and_rename_identities(harness: Harness, task: any) {
+  for [pull, row] in [
+    [identity(1) + {base: {ref: "main"}}, file("a")],
+    [identity(1), file("a") + {status: "renamed", previous_filename: nil}],
+  ] {
+    harness.testing.http_mock_clear()
+    mock_identity(harness.testing, pull, pull)
+    mock_page(harness.testing, 1, 100, [row])
+    assert(is_err(census(harness)), "missing identity is unknown evidence")
+  }
+}

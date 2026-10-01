@@ -1,0 +1,162 @@
+import { __nonnegative_decimal, __positive_decimal } from "../actions/normalization"
+import "../client"
+import "../contracts"
+import { __err } from "../errors"
+import { __typed_pr_file } from "../pulls/normalization"
+import "./shared"
+
+const MAX_PULL_REQUEST_FILES = 3000
+
+/** Preserve the ordinary paginated file operation. */
+pub fn __github_pr_files(harness: Harness, args: any, cfg: any) {
+  const repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  const r = unwrap(repo)
+  const number = args?.pr_number ?? args?.number ?? args?.pull_number
+  if number == nil {
+    return __err("schema_drift", "github.pr.files requires number, pr_number, or pull_number")
+  }
+  const files = __github_json(
+    harness,
+    "GET",
+    __github_api_url(
+      cfg.api_base_url,
+      "/repos/" + r.owner + "/" + r.name + "/pulls/" + to_string(number) + "/files"
+        + __pagination_query(args),
+    ),
+    nil,
+    cfg,
+  )
+  if is_err(files) {
+    return files
+  }
+  if type_of(files) != "list" {
+    return __err("invalid_response", "github.pr.files expected GitHub to return a file list")
+  }
+  let normalized: list<GithubPullRequestFile> = []
+  for file in files {
+    const typed = __typed_pr_file(file)
+    if is_err(typed) {
+      return typed
+    }
+    normalized = normalized + [unwrap(typed)]
+  }
+  return {
+    repo: r.full_name,
+    pull_number: to_int(number),
+    files: normalized,
+    page: if args?.page == nil {
+      1
+    } else {
+      to_int(args.page)
+    },
+    per_page: if args?.per_page == nil {
+      30
+    } else {
+      to_int(args.per_page)
+    },
+  }
+}
+
+/** Measure all file pages between matching pull-request identity reads. */
+pub fn __github_pr_file_census(harness: Harness, args: any, cfg: any) {
+  const repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  const r = unwrap(repo)
+  const number = __positive_decimal(args?.pr_number ?? args?.number ?? args?.pull_number, nil)
+  const per_page = __positive_decimal(args?.per_page ?? 100, nil)
+  if number == nil || per_page == nil || per_page > 100 {
+    return __err(
+      "schema_drift",
+      "github.pr.file_census requires a positive number and per_page from 1 to 100",
+    )
+  }
+  const initial = __github_pull_identity(harness, r, number, cfg, "github.pr.file_census")
+  if is_err(initial) {
+    return initial
+  }
+  const pull = unwrap(initial)
+  const head = to_string(pull.head.sha)
+  const base = trim(to_string(pull?.base?.sha ?? ""))
+  if len(regex_captures("^[0-9a-fA-F]{40}$", head)) != 1
+    || len(regex_captures("^[0-9a-fA-F]{40}$", base)) != 1 {
+    return __err(
+      "invalid_response",
+      "github.pr.file_census requires exact head and base revision identities",
+    )
+  }
+  const expected = trim(to_string(args?.expected_head_oid ?? ""))
+  if expected != "" && expected != head {
+    return __stale_pr_head(expected, head)
+  }
+  const total = __nonnegative_decimal(pull?.changed_files)
+  if total == nil || total > MAX_PULL_REQUEST_FILES {
+    return __err(
+      "invalid_response",
+      "github.pr.file_census requires an explicit changed_files count within GitHub's 3000-file limit",
+    )
+  }
+  let files: list<GithubPullRequestFile> = []
+  let seen = {}
+  let page = 1
+  while true {
+    const read = __github_pr_files(
+      harness,
+      args + {number: number, page: page, per_page: per_page},
+      cfg,
+    )
+    if is_err(read) {
+      return read
+    }
+    const rows = read.files
+    const owed = min(per_page, total - len(files))
+    if len(rows) != owed {
+      return __err(
+        "invalid_response",
+        "github.pr.file_census page did not match the declared changed-file count",
+      )
+    }
+    for file in rows {
+      if seen.get(file.filename) {
+        return __err("invalid_response", "github.pr.file_census returned duplicate filenames")
+      }
+      if file.status == "renamed" && trim(file.previous_filename ?? "") == "" {
+        return __err("invalid_response", "github.pr.file_census rename omitted its source path")
+      }
+      seen[file.filename] = true
+      files = files + [file]
+    }
+    if len(files) == total {
+      break
+    }
+    page = page + 1
+  }
+  const final = __github_pull_identity(harness, r, number, cfg, "github.pr.file_census")
+  if is_err(final) {
+    return final
+  }
+  const observed = unwrap(final)
+  if to_string(observed.head.sha) != head {
+    return __stale_pr_head(head, to_string(observed.head.sha))
+  }
+  if to_string(observed?.base?.sha ?? "") != base {
+    return __err("stale_head", "pull request base changed during the file census")
+  }
+  if __nonnegative_decimal(observed?.changed_files) != total {
+    return __err("stale_head", "pull request changed-file count changed during the census")
+  }
+  const census: GithubPullRequestFileCensus = {
+    repo: r.full_name,
+    pull_number: number,
+    head_sha: head,
+    base_sha: base,
+    total_files: total,
+    files: files,
+    pages_fetched: page,
+  }
+  return census
+}

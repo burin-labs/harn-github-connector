@@ -11,6 +11,8 @@ import {
   GithubPullRequestCommitsRequest,
   GithubPullRequestEditReceipt,
   GithubPullRequestEditRequest,
+  GithubPullRequestFileCensus,
+  GithubPullRequestFileCensusRequest,
   GithubPullRequestMergeReceipt,
   GithubPullRequestMergeRequest,
   GithubPullRequestUpsertReceipt,
@@ -105,6 +107,25 @@ pub fn github_pr_commits(
   request: GithubPullRequestCommitsRequest,
 ) -> GithubConnectorResult<GithubPullRequestCommits> {
   return call_typed(harness, "github.pr.commits", __request_args(request), GithubPullRequestCommits)
+}
+
+/**
+ * Read complete changed-file evidence, including rename sources.
+ *
+ * Head, base, and declared count must stay stable across the reads. Missing,
+ * partial, duplicate, or over-limit evidence is refused. A measured zero is
+ * returned only after an empty page agrees with both explicit count reads.
+ */
+pub fn github_pr_file_census(
+  harness: Harness,
+  request: GithubPullRequestFileCensusRequest,
+) -> GithubConnectorResult<GithubPullRequestFileCensus> {
+  return call_typed(
+    harness,
+    "github.pr.file_census",
+    __request_args(request),
+    GithubPullRequestFileCensus,
+  )
 }
 
 /** Resolve GitHub's asynchronous mergeability state with bounded polling. */

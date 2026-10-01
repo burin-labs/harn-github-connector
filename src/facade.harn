@@ -44,6 +44,7 @@ pub import {
 } from "./oauth/api"
 pub import {
   github_pr_commits,
+  github_pr_file_census,
   github_resolve_mergeable,
   github_upsert_pull_request,
   pulls_disable_auto_merge,
