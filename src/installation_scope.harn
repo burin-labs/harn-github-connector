@@ -1,0 +1,130 @@
+import {
+  GithubConnectorResult,
+  GithubInstallationPermission,
+  GithubInstallationTokenScope,
+} from "./contracts"
+import { __err } from "./errors"
+
+/** Validate once before minting; an empty explicit restriction is never widened. */
+pub fn __normalize_installation_scope(
+  scope: unknown,
+) -> GithubConnectorResult<GithubInstallationTokenScope?> {
+  if scope == nil {
+    return Ok(nil)
+  }
+  const fields = schema_of(GithubInstallationTokenScope).properties.keys()
+  if type_of(scope) != "dict" || !schema_is(scope, schema_of(GithubInstallationTokenScope)) {
+    return __err(
+      "invalid_installation_scope",
+      "installation scope does not match its typed contract",
+    )
+  }
+  for key in scope.keys() {
+    if !fields.contains(key) {
+      return __err("invalid_installation_scope", "installation scope contains an unknown field")
+    }
+  }
+  const raw: GithubInstallationTokenScope = scope
+  if raw.repositories != nil && raw.repository_ids != nil {
+    return __err("invalid_installation_scope", "choose repository names or IDs, not both")
+  }
+  let normalized_scope: GithubInstallationTokenScope = {}
+  if raw.repositories != nil {
+    const names = __repository_names(raw.repositories)
+    if is_err(names) {
+      return names
+    }
+    normalized_scope.repositories = unwrap(names)
+  }
+  if raw.repository_ids != nil {
+    if len(raw.repository_ids) == 0 || len(raw.repository_ids) > 500 {
+      return __err("invalid_installation_scope", "repository restriction requires 1 to 500 IDs")
+    }
+    let ids: list<int> = []
+    for id in raw.repository_ids {
+      if id <= 0 {
+        return __err("invalid_installation_scope", "repository IDs must be positive integers")
+      }
+      if !ids.contains(id) {
+        ids = ids.appending(id)
+      }
+    }
+    normalized_scope.repository_ids = ids.sorted()
+  }
+  if raw.permissions != nil {
+    if len(raw.permissions) == 0 {
+      return __err(
+        "invalid_installation_scope",
+        "permission restriction requires at least one permission",
+      )
+    }
+    let normalized: dict<string, GithubInstallationPermission> = {}
+    for name in raw.permissions.keys().sorted() {
+      if regex_match("^[a-z][a-z_]*$", name) == nil {
+        return __err(
+          "invalid_installation_scope",
+          "permission names must use GitHub API field spelling",
+        )
+      }
+      const permission = raw.permissions[name]
+      if permission == nil {
+        return __err("invalid_installation_scope", "permission restriction requires a level")
+      }
+      normalized[name] = permission
+    }
+    normalized_scope.permissions = normalized
+  }
+  if len(normalized_scope.keys()) == 0 {
+    return __err(
+      "invalid_installation_scope",
+      "explicit installation scope must restrict repositories or permissions",
+    )
+  }
+  return Ok(normalized_scope)
+}
+
+fn __repository_names(repositories: list<string>) -> GithubConnectorResult<list<string>> {
+  if len(repositories) == 0 || len(repositories) > 500 {
+    return __err("invalid_installation_scope", "repository restriction requires 1 to 500 names")
+  }
+  let names: list<string> = []
+  for name in repositories {
+    const normalized = trim(name).lower()
+    if regex_match("^[a-z0-9_.-]+$", normalized) == nil {
+      return __err(
+        "invalid_installation_scope",
+        "repository restrictions use repository names without an owner",
+      )
+    }
+    if !names.contains(normalized) {
+      names = names.appending(normalized)
+    }
+  }
+  return Ok(names.sorted())
+}
+
+/** Project only declared, non-null restrictions into the provider request. */
+pub fn __installation_scope_body(scope: GithubInstallationTokenScope?) -> dict {
+  let body = {}
+  if scope != nil {
+    for field in schema_of(GithubInstallationTokenScope).properties.keys().sorted() {
+      const value = scope.get(field)
+      if value != nil {
+        body[field] = value
+      }
+    }
+  }
+  return body
+}
+
+/** Installation identity and normalized authority jointly own cached tokens. */
+pub fn __installation_token_cache_key(config: dict) -> string {
+  const identity = [
+    to_string(config.api_base_url).trim_end("/"),
+    to_string(config.app_id),
+    to_string(config.installation_id),
+    __installation_scope_body(config.installation_scope),
+  ]
+  return to_string(config.installation_id) + ":"
+    + sha256(bytes_from_string(json_stringify(identity)))
+}

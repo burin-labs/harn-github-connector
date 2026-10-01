@@ -50,6 +50,33 @@ identity.
 
 ## Grant the narrow permissions
 
+For automation that outlives an installation token, pass renewable App
+credentials and restrict each token to the repositories and permissions it needs:
+
+```harn
+const options = {
+  app_id: 12345,
+  installation_id: 77,
+  private_key_secret: "github/app-private-key",
+  installation_scope: {
+    repositories: ["octo-repo"],
+    permissions: {contents: "write", pull_requests: "write"},
+  },
+}
+```
+
+Pass these options to a typed request's `options` field. The connector preserves
+the restrictions when refreshing an expired token or retrying a 401 response.
+Use repository names without an owner, or `repository_ids`, but don't supply
+both. Empty restrictions, unknown scope fields, and invalid permission levels
+return `invalid_installation_scope` before issuance. A supplied token can't be
+combined with `installation_scope` because the connector didn't issue it.
+
+Omitting `installation_scope` retains GitHub's installation-wide defaults.
+Omitting one restriction retains that dimension's installation-wide access.
+GitHub enforces the App's permission ceiling and validates permission names;
+see [Create an installation access token](https://docs.github.com/en/rest/apps/apps#create-an-installation-access-token-for-an-app).
+
 GitHub App permissions are independent. Grant only the rows used by the
 workflow.
 
