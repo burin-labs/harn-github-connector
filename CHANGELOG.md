@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.8.10 - 2026-10-01
+
+- Add `github_pr_file_census` for complete changed-file evidence on a stable
+  pull-request head and base. It checks GitHub's declared count, pagination,
+  unique filenames, rename sources, and the 3,000-file limit. Missing or moving
+  evidence fails explicitly; an ordinary paginated file read is unchanged.
+
 ## 0.8.9 - 2026-10-01
 
 - Add `GithubClientOptions.installation_scope` for renewable App tokens with
