@@ -1083,18 +1083,6 @@ pub fn __github_request_error(clock: HarnessClock, response: any, cfg: any = nil
 }
 
 /**
- * The lowest value that can only be an absolute instant.
- *
- * `X-RateLimit-Reset` is an epoch second; the standard `RateLimit-Reset` is a
- * delta. Both arrive as bare integers under names a reader can confuse, and
- * reading a delta as an instant yields a timestamp in 1970, which is a reset
- * already past and a caller that retries straight into the same limit. Nothing
- * below this is an epoch any more, and no delta a server would send is above
- * it, so the split is exact rather than a guess.
- */
-const RATE_LIMIT_ABSOLUTE_RESET_FLOOR = 1000000000
-
-/**
  * The budget the refused response reported, for the error record.
  *
  * Read from the response's own headers so a caller learns the state at the
@@ -1114,11 +1102,13 @@ pub fn __rate_limit_error_fields(clock: HarnessClock, response: any, cfg: any = 
   if limit != nil {
     fields["rate_limit_limit"] = unwrap(limit)
   }
-  const reset = to_int(rate_limit.x_ratelimit_reset ?? rate_limit.reset)
+  const reset = to_int(rate_limit.x_ratelimit_reset ?? rate_limit.ratelimit_reset)
   if reset == nil {
     return fields
   }
-  const epoch = if unwrap(reset) >= RATE_LIMIT_ABSOLUTE_RESET_FLOOR {
+  // The header name decides the unit: X-RateLimit-Reset is an epoch second,
+  // while RateLimit-Reset is a delta. Its magnitude cannot establish the unit.
+  const epoch = if rate_limit.x_ratelimit_reset != nil {
     unwrap(reset)
   } else {
     __now_seconds(clock, cfg ?? {}) + unwrap(reset)

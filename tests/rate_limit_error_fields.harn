@@ -129,6 +129,13 @@ pipeline test_a_delta_reset_becomes_an_instant_not_nineteen_seventy(harness: Har
   assert_eq(error.rate_limit_limit, 5000)
 }
 
+pipeline test_reset_header_kind_decides_epoch_or_delta(harness: Harness) {
+  const epoch_error = unwrap_err(refuse(harness, {"x-ratelimit-reset": "999999999"}, 429))
+  assert_eq(epoch_error.rate_limit_reset, date_format(999999999, "%Y-%m-%dT%H:%M:%SZ"))
+  const delta_error = unwrap_err(refuse(harness, {"ratelimit-reset": "1000000000"}, 429))
+  assert_eq(delta_error.rate_limit_reset, date_format(NOW + 1000000000, "%Y-%m-%dT%H:%M:%SZ"))
+}
+
 /**
  * A refusal that is not a rate limit carries none of this.
  *
