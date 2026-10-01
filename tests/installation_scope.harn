@@ -1,0 +1,180 @@
+import { call, installation_token, reset_token_cache } from "../src/facade"
+
+fn config(fs: HarnessFs) {
+  return {
+    app_id: 12345,
+    installation_id: 77,
+    api_base_url: "https://api.github.test",
+    private_key_pem: fs.read_text(path_join(fs.source_dir(), "fixtures/github_app_test_key.pem")),
+    now: 1700000000,
+  }
+}
+
+fn mock_tokens(testing: HarnessTesting, url: string) {
+  testing.http_mock(
+    "POST",
+    url,
+    {
+      responses: [
+        {status: 201, body: "{\"token\":\"token-a\",\"expires_at\":\"2023-11-14T23:13:20Z\"}"},
+        {status: 201, body: "{\"token\":\"token-b\",\"expires_at\":\"2023-11-15T00:13:20Z\"}"},
+        {status: 201, body: "{\"token\":\"token-c\",\"expires_at\":\"2023-11-15T00:13:20Z\"}"},
+        {status: 201, body: "{\"token\":\"token-d\",\"expires_at\":\"2023-11-15T00:13:20Z\"}"},
+        {status: 201, body: "{\"token\":\"token-e\",\"expires_at\":\"2023-11-15T00:13:20Z\"}"},
+      ],
+    },
+  )
+}
+
+pipeline test_scoped_token_cache_and_expiry(harness: Harness, task: any) {
+  reset_token_cache(harness.runtime)
+  harness.testing.http_mock_clear()
+  mock_tokens(harness.testing, "https://api.github.test/app/installations/77/access_tokens")
+  const base = config(harness.fs)
+  const scope = {
+    repositories: ["Demo", "demo"],
+    permissions: {pull_requests: "write", contents: "write"},
+  }
+  assert_eq(installation_token(harness, base + {installation_scope: scope}), "token-a")
+  let calls = harness.testing.http_mock_calls()
+  assert_eq(len(calls), 1)
+  assert_eq(
+    json_parse(calls[0].body),
+    {repositories: ["demo"], permissions: {contents: "write", pull_requests: "write"}},
+  )
+  const reordered = {
+    permissions: {contents: "write", pull_requests: "write"},
+    repositories: [" demo "],
+  }
+  assert_eq(installation_token(harness, base + {installation_scope: reordered}), "token-a")
+  assert_eq(
+    len(harness.testing.http_mock_calls()),
+    1,
+    "equivalent normalized scopes share a cache entry",
+  )
+  assert_eq(
+    installation_token(harness, base),
+    "token-b",
+    "unrestricted token cannot reuse restricted authority",
+  )
+  assert_eq(
+    installation_token(harness, base + {installation_scope: {repository_ids: [9, 2, 9]}}),
+    "token-c",
+  )
+  calls = harness.testing.http_mock_calls()
+  assert_eq(calls[1].body, "", "omitted restrictions preserve existing provider behavior")
+  assert_eq(json_parse(calls[2].body), {repository_ids: [2, 9]})
+  assert_eq(
+    installation_token(
+      harness,
+      base + {installation_scope: {repositories: ["demo"], permissions: {contents: "read"}}},
+    ),
+    "token-d",
+    "permission restrictions partition cache",
+  )
+  assert_eq(
+    installation_token(harness, base + {installation_scope: reordered}),
+    "token-a",
+    "broader cached token cannot replace this scope",
+  )
+  assert_eq(
+    installation_token(harness, base + {installation_scope: reordered, now: 1700003700}),
+    "token-e",
+  )
+  calls = harness.testing.http_mock_calls()
+  assert_eq(len(calls), 5)
+  assert_eq(
+    json_parse(calls[4].body),
+    json_parse(calls[0].body),
+    "expiry renewal keeps the same authority",
+  )
+}
+
+pipeline test_invalid_scope_never_mints(harness: Harness, task: any) {
+  reset_token_cache(harness.runtime)
+  harness.testing.http_mock_clear()
+  const invalid = [
+    {},
+    {repositories: []},
+    {repository_ids: []},
+    {permissions: {}},
+    {repositories: ["owner/demo"]},
+    {repository_ids: [0]},
+    {repositories: ["demo"], repository_ids: [9]},
+    {permissions: {contents: "root"}},
+    {permissions: {"pull-requests": "write"}},
+    {repositories: ["demo"], unexpected: true},
+  ]
+  for scope in invalid {
+    const result = installation_token(harness, config(harness.fs) + {installation_scope: scope})
+    assert(is_err(result), "invalid restrictions must not become unrestricted authority")
+    assert_eq(unwrap_err(result).code, "invalid_installation_scope")
+  }
+  assert_eq(
+    len(harness.testing.http_mock_calls()),
+    0,
+    "validation runs before signing or token issuance",
+  )
+  const supplied = call(
+    harness,
+    "pulls.get",
+    {
+      installation_token: "test-token",
+      installation_scope: {repositories: ["demo"]},
+      owner: "octo",
+      repo: "demo",
+      pull_number: 5,
+    },
+  )
+  assert(is_err(supplied), "a supplied token cannot pretend to honor mint-time restrictions")
+  assert_eq(unwrap_err(supplied).code, "invalid_installation_scope")
+  assert_eq(len(harness.testing.http_mock_calls()), 0)
+}
+
+pipeline test_scoped_401_renewal_and_identity(harness: Harness, task: any) {
+  reset_token_cache(harness.runtime)
+  harness.testing.http_mock_clear()
+  mock_tokens(harness.testing, "https://api.github.test/app/installations/77/access_tokens")
+  const base = config(harness.fs)
+  const scope = {repositories: [" Demo "], permissions: {contents: "read"}}
+  harness.testing.http_mock(
+    "GET",
+    "https://api.github.test/repos/octo/demo/pulls/5",
+    {
+      responses: [
+        {status: 401, body: "{\"message\":\"expired\"}"},
+        {status: 200, body: "{\"number\":5}"},
+      ],
+    },
+  )
+  const result = call(
+    harness,
+    "pulls.get",
+    base + {installation_scope: scope, owner: "octo", repo: "demo", pull_number: 5},
+  )
+  assert_eq(unwrap(result).number, 5)
+  let calls = harness.testing.http_mock_calls()
+  assert_eq(len(calls), 4, "401 must reach a new token exchange and the retried product request")
+  assert_eq(json_parse(calls[0].body), json_parse(calls[2].body))
+  assert_eq(installation_token(harness, base + {installation_scope: scope}), "token-b")
+  assert_eq(len(harness.testing.http_mock_calls()), 4, "renewed normalized scope remains cached")
+  assert_eq(
+    installation_token(harness, base + {app_id: 54321, installation_scope: scope}),
+    "token-c",
+    "app identity partitions cache",
+  )
+  mock_tokens(
+    harness.testing,
+    "https://github.enterprise.test/api/v3/app/installations/77/access_tokens",
+  )
+  assert_eq(
+    installation_token(
+      harness,
+      base + {api_base_url: "https://github.enterprise.test/api/v3", installation_scope: scope},
+    ),
+    "token-a",
+    "API host partitions cache",
+  )
+  calls = harness.testing.http_mock_calls()
+  assert_eq(len(calls), 6)
+}

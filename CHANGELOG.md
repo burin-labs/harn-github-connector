@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.8.9 - 2026-10-01
+
+- Add `GithubClientOptions.installation_scope` for renewable App tokens with
+  repository and permission restrictions. Renewal retains the restrictions,
+  and the cache separates authority scopes, App identities, and API hosts.
+  Invalid or empty restrictions fail before issuance; supplied tokens can't
+  claim mint-time restrictions.
+
 - Resolve an Actions run by id when a commit's check names one the
   `head_sha`-filtered run listing has not indexed yet, so `github.pr.checks`
   stops refusing complete evidence on a commit whose run was created seconds

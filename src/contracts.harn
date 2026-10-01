@@ -70,6 +70,16 @@ pub type GithubRetryPolicy = {
   respect_retry_after?: bool,
 }
 
+/** Permission levels accepted by GitHub installation-token issuance. */
+pub type GithubInstallationPermission = "read" | "write" | "admin"
+
+/** Optional restrictions on a renewable installation token, enforced by GitHub. */
+pub type GithubInstallationTokenScope = {
+  repositories?: list<string>,
+  repository_ids?: list<int>,
+  permissions?: dict<string, GithubInstallationPermission>,
+}
+
 /** Authentication, transport, and retry policy shared by typed requests. */
 pub type GithubClientOptions = {
   api_base_url?: string,
@@ -79,6 +89,7 @@ pub type GithubClientOptions = {
   secrets?: dict,
   app_id?: string | int,
   installation_id?: string | int,
+  installation_scope?: GithubInstallationTokenScope,
   private_key_pem?: string,
   private_key_secret?: string,
   jwt_alg?: string,
