@@ -1,0 +1,547 @@
+import { connector_http_header, connector_http_rate_limit } from "std/connectors/shared"
+import { __err } from "./errors"
+
+/**
+ * Self-pacing budget for one GitHub credential.
+ *
+ * Every response's `x-ratelimit-*` headers feed a per-credential ledger. Before
+ * a request goes out, the ledger decides whether its priority may spend what
+ * is left. A refusal is the ordinary `rate_limited` error, so a caller handles
+ * the client's own refusal and GitHub's the same way, and neither can be read
+ * as an authentication or permission failure.
+ *
+ * The ledger has one shape, `gh-budget-ledger/v1`, in memory and on disk. When
+ * a state directory is configured, every update is a read-merge-write of
+ * `<state_dir>/<credential>.json`, which other processes using the same
+ * contract read too. Without one, or when the file system is unavailable, the
+ * budget lives only in this process.
+ */
+const BUDGET_STORE_KEY = "harn-github-connector.budget"
+
+pub const GH_BUDGET_LEDGER_SCHEMA = "gh-budget-ledger/v1"
+
+const CALL_WINDOW_SECONDS = 120
+
+const PACING_WINDOW_SECONDS = 60
+
+const SECONDARY_BLOCK_SECONDS = 60
+
+const DEFAULT_BULK_FLOOR = 1500
+
+const DEFAULT_BULK_FLOOR_PERCENT = 30
+
+const DEFAULT_NORMAL_FLOOR = 250
+
+const DEFAULT_NORMAL_FLOOR_PERCENT = 5
+
+const DEFAULT_BULK_PER_MINUTE = 30
+
+const DEFAULT_CALLER = "harn-github-connector"
+
+/** Decide one request's priority: explicit, else `bulk` past the first page. */
+pub fn __budget_priority(cfg: any, url: any) {
+  const raw = cfg?.priority
+  if raw == nil {
+    if __url_page(url) >= 2 {
+      return Ok("bulk")
+    }
+    return Ok("normal")
+  }
+  const priority = lowercase(trim(to_string(raw)))
+  if priority == "critical" || priority == "normal" || priority == "bulk" {
+    return Ok(priority)
+  }
+  return __err("invalid_priority", "priority must be `critical`, `normal`, or `bulk`")
+}
+
+fn __url_page(url: any) -> int {
+  const text = to_string(url ?? "")
+  const question = text.index_of("?")
+  if question < 0 {
+    return 0
+  }
+  for part in split(text[question + 1:len(text)], "&") {
+    if starts_with(part, "page=") {
+      return to_int(part[5:len(part)]) ?? 0
+    }
+  }
+  return 0
+}
+
+/** The GitHub rate-limit resource a request will be charged to. */
+pub fn __budget_resource(url: any) -> string {
+  const text = to_string(url ?? "")
+  const question = text.index_of("?")
+  const path = if question >= 0 {
+    text[0:question]
+  } else {
+    text
+  }
+  if ends_with(path, "/graphql") {
+    return "graphql"
+  }
+  if contains(path, "/search/code") {
+    return "code_search"
+  }
+  if contains(path, "/search/") {
+    return "search"
+  }
+  return "core"
+}
+
+/**
+ * The ledger key for the credential behind `cfg`. Never contains token text.
+ *
+ * App installations share one budget across every token minted for them, so
+ * they key by installation id. A `gh` account resolved by login keys by that
+ * login. Any other token keys by the first 16 hex digits of its SHA-256.
+ */
+pub fn __budget_credential_key(cfg: any) -> string {
+  if cfg?.token_mode == "gh_auth" && cfg?.gh_auth_user != nil {
+    return "user-" + __safe_component(cfg.gh_auth_user)
+  }
+  if cfg?.auth_identity == "github_app" && cfg?.installation_id != nil {
+    return "installation-" + __safe_component(cfg.installation_id)
+  }
+  const digest = sha256(bytes_from_string(to_string(cfg?.installation_token ?? "")))
+  return "token-" + digest[0:16]
+}
+
+fn __safe_component(value: any) -> string {
+  const text = lowercase(trim(to_string(value)))
+  let out = ""
+  for ch in text.chars() {
+    if ("a" <= ch && ch <= "z") || ("0" <= ch && ch <= "9") || ch == "-" || ch == "_" {
+      out = out + ch
+    } else {
+      out = out + "_"
+    }
+  }
+  return out
+}
+
+fn __policy_int(policy: any, key: string, fallback: int) -> int {
+  const value = to_int(policy?.get(key))
+  if value == nil || value < 0 {
+    return fallback
+  }
+  return value
+}
+
+/** The remaining-budget floor below which `priority` is refused locally. */
+pub fn __budget_floor(priority: string, limit: any, policy: any) -> int {
+  if priority == "critical" {
+    return 0
+  }
+  const is_bulk = priority == "bulk"
+  const floor = if is_bulk {
+    __policy_int(policy, "bulk_floor", DEFAULT_BULK_FLOOR)
+  } else {
+    __policy_int(policy, "normal_floor", DEFAULT_NORMAL_FLOOR)
+  }
+  const percent = if is_bulk {
+    __policy_int(policy, "bulk_floor_percent", DEFAULT_BULK_FLOOR_PERCENT)
+  } else {
+    __policy_int(policy, "normal_floor_percent", DEFAULT_NORMAL_FLOOR_PERCENT)
+  }
+  const limit_value = to_int(limit)
+  if limit_value == nil {
+    return floor
+  }
+  return max(floor, limit_value * percent / 100)
+}
+
+fn __state_path(env: HarnessEnv, cfg: any, key: string) {
+  const dir = cfg?.budget?.state_dir ?? env.get("GH_BUDGET_STATE_DIR")
+  if dir == nil || trim(to_string(dir)) == "" {
+    return nil
+  }
+  const base = trim(to_string(dir))
+  if ends_with(base, "/") {
+    return base + key + ".json"
+  }
+  return base + "/" + key + ".json"
+}
+
+pub fn __budget_empty_ledger(key: string) -> dict {
+  return {
+    schema: GH_BUDGET_LEDGER_SCHEMA,
+    credential: key,
+    resources: {},
+    blocked_until: {},
+    calls: [],
+  }
+}
+
+fn __store_ledger(runtime: HarnessRuntime, key: string) {
+  const all = runtime.store_get(BUDGET_STORE_KEY) ?? {}
+  return all?.get(key) ?? __budget_empty_ledger(key)
+}
+
+fn __file_ledger(fs: HarnessFs, path: string, key: string) {
+  const read = try {
+    if !fs.exists(path) {
+      return nil
+    }
+    json_parse(fs.read_text(path))
+  }
+  if is_err(read) {
+    return nil
+  }
+  const ledger = unwrap(read)
+  if type_of(ledger) != "dict" || ledger?.schema != GH_BUDGET_LEDGER_SCHEMA
+    || ledger?.credential != key {
+    return nil
+  }
+  return ledger
+}
+
+fn __newer_observation(candidate: any, current: any) -> bool {
+  if current == nil {
+    return true
+  }
+  const candidate_reset = to_int(candidate?.reset) ?? 0
+  const current_reset = to_int(current?.reset) ?? 0
+  if candidate_reset != current_reset {
+    return candidate_reset > current_reset
+  }
+  return (to_int(candidate?.observed_at) ?? 0) >= (to_int(current?.observed_at) ?? 0)
+}
+
+fn __entries(value: any) {
+  if type_of(value) != "dict" {
+    return []
+  }
+  return value.entries()
+}
+
+fn __list(value: any) {
+  if type_of(value) != "list" {
+    return []
+  }
+  return value
+}
+
+/**
+ * Merge two ledgers for one credential: the newest observation per resource,
+ * the newest block per scope, and every call inside the call window.
+ */
+pub fn __budget_merge(base: dict, other: any, now: int) -> dict {
+  let resources = {}
+  for entry in __entries(base?.resources) + __entries(other?.resources) {
+    if __newer_observation(entry.value, resources.get(entry.key)) {
+      resources[entry.key] = entry.value
+    }
+  }
+  let blocked = {}
+  for entry in __entries(base?.blocked_until) + __entries(other?.blocked_until) {
+    if (to_int(entry.value?.until) ?? 0) <= now {
+      continue
+    }
+    const current = blocked.get(entry.key)
+    if current == nil
+      || (to_int(entry.value?.observed_at) ?? 0) >= (to_int(current?.observed_at) ?? 0) {
+      blocked[entry.key] = entry.value
+    }
+  }
+  return {
+    schema: GH_BUDGET_LEDGER_SCHEMA,
+    credential: base.credential,
+    resources: resources,
+    blocked_until: blocked,
+    calls: __dedupe_calls(__list(base?.calls), __list(other?.calls), now),
+  }
+}
+
+/**
+ * Union two call lists without double counting the records both sides hold.
+ *
+ * The same call appears in both the in-process copy and the file this process
+ * wrote, so a plain concatenation would count it twice. A record repeated on
+ * one side is kept as many times as the side that repeats it most.
+ */
+fn __dedupe_calls(left: list, right: list, now: int) -> list {
+  let counts_left = {}
+  for call in left {
+    const identity = json_stringify(call)
+    counts_left[identity] = (counts_left.get(identity) ?? 0) + 1
+  }
+  let counts_right = {}
+  for call in right {
+    const identity = json_stringify(call)
+    counts_right[identity] = (counts_right.get(identity) ?? 0) + 1
+  }
+  let out = []
+  let emitted = {}
+  for call in left + right {
+    const t = to_int(call?.t)
+    if t == nil || t <= now - CALL_WINDOW_SECONDS {
+      continue
+    }
+    const identity = json_stringify(call)
+    const wanted = max(counts_left.get(identity) ?? 0, counts_right.get(identity) ?? 0)
+    const done = emitted.get(identity) ?? 0
+    if done < wanted {
+      emitted[identity] = done + 1
+      out = out + [call]
+    }
+  }
+  return out
+}
+
+fn __load(harness: Harness, ctx: dict) -> dict {
+  const local = __store_ledger(harness.runtime, ctx.key)
+  if ctx.state_path == nil {
+    return __budget_merge(local, nil, ctx.now)
+  }
+  return __budget_merge(local, __file_ledger(harness.fs, ctx.state_path, ctx.key), ctx.now)
+}
+
+fn __save(harness: Harness, ctx: dict, ledger: dict) {
+  const pruned = __budget_merge(ledger, nil, ctx.now)
+  const all = harness.runtime.store_get(BUDGET_STORE_KEY) ?? {}
+  harness.runtime.store_set(BUDGET_STORE_KEY, all + {[ctx.key]: pruned})
+  if ctx.state_path == nil {
+    return
+  }
+  // Merge with whatever another process wrote since this one read, then
+  // publish through a rename so a reader never sees half a file. A failure
+  // leaves the in-process budget in force, which is the documented fallback.
+  const path = ctx.state_path
+  const written = try {
+    const merged = __budget_merge(pruned, __file_ledger(harness.fs, path, ctx.key), ctx.now)
+    const dir = path[0:path.last_index_of("/")]
+    if !harness.fs.exists(dir) {
+      harness.fs.mkdir(dir)
+    }
+    const temp = path + ".tmp-" + to_string(harness.system.identity().pid)
+    harness.fs.write_text(temp, json_stringify(merged))
+    harness.fs.rename(temp, path)
+    true
+  }
+  if is_err(written) {
+    return
+  }
+}
+
+fn __without_nil(fields: dict) -> dict {
+  let out = {}
+  for entry in fields.entries() {
+    if entry.value != nil {
+      out[entry.key] = entry.value
+    }
+  }
+  return out
+}
+
+fn __iso(epoch: any) {
+  const value = to_int(epoch)
+  if value == nil {
+    return nil
+  }
+  return date_format(value, "%Y-%m-%dT%H:%M:%SZ")
+}
+
+fn __live_observation(ledger: dict, resource: string, now: int) {
+  const observation = ledger.resources?.get(resource)
+  if observation == nil || (to_int(observation?.reset) ?? 0) <= now {
+    return nil
+  }
+  return observation
+}
+
+fn __refusal(ctx: dict, source: string, until: int, observation: any, message: string) {
+  return __err(
+    "rate_limited",
+    message,
+    __without_nil(
+      {
+        rate_limit_source: source,
+        rate_limit_resource: ctx.resource,
+        rate_limit_priority: ctx.priority,
+        rate_limit_until: __iso(until),
+        rate_limit_reset: __iso(observation?.reset),
+        rate_limit_remaining: to_int(observation?.remaining),
+        rate_limit_limit: to_int(observation?.limit),
+      },
+    ),
+  )
+}
+
+fn __active_block(ledger: dict, resource: string, now: int) {
+  let found = nil
+  for scope in [resource, "*"] {
+    const block = ledger.blocked_until?.get(scope)
+    if block != nil && (to_int(block?.until) ?? 0) > now
+      && (found == nil || to_int(block.until) > to_int(found.until)) {
+      found = block
+    }
+  }
+  return found
+}
+
+/**
+ * Admit one request against its credential's budget, or refuse it without a
+ * network request. `critical` is always admitted. Bulk requests over the
+ * per-minute pace wait for a slot when the wait fits `rate_limit_max_sleep_seconds`.
+ */
+@complexity(allow)
+pub fn __budget_admit(harness: Harness, cfg: any, url: any, now: int) {
+  const priority = __budget_priority(cfg, url)
+  if is_err(priority) {
+    return priority
+  }
+  const key = __budget_credential_key(cfg)
+  const ctx = {
+    key: key,
+    resource: __budget_resource(url),
+    priority: unwrap(priority),
+    policy: cfg?.budget ?? {},
+    caller: to_string(cfg?.budget?.caller ?? DEFAULT_CALLER),
+    now: now,
+    state_path: __state_path(harness.env, cfg, key),
+  }
+  let ledger = __load(harness, ctx)
+  if ctx.priority != "critical" {
+    const observation = __live_observation(ledger, ctx.resource, now)
+    const block = __active_block(ledger, ctx.resource, now)
+    if block != nil {
+      return __refusal(
+        ctx,
+        "github_" + to_string(block?.kind ?? "primary"),
+        to_int(block.until),
+        observation,
+        "GitHub refused this credential earlier in the current rate-limit window; no request was sent",
+      )
+    }
+    if observation != nil && to_int(observation?.remaining) != nil {
+      const floor = __budget_floor(ctx.priority, observation?.limit, ctx.policy)
+      if to_int(observation.remaining) < floor {
+        return __refusal(
+          ctx,
+          "local_budget",
+          to_int(observation.reset),
+          observation,
+          ctx.priority + " request refused locally: " + to_string(observation.remaining)
+            + " requests left is below the reserve of "
+            + to_string(floor)
+            + "; no request was sent",
+        )
+      }
+    }
+  }
+  if ctx.priority == "bulk" {
+    const pace = __policy_int(ctx.policy, "bulk_per_minute", DEFAULT_BULK_PER_MINUTE)
+    let recent = []
+    for call in ledger.calls {
+      if call?.priority == "bulk" && to_int(call?.t) > now - PACING_WINDOW_SECONDS {
+        recent = recent + [to_int(call.t)]
+      }
+    }
+    if pace == 0 || len(recent) >= pace {
+      const sorted = recent.sorted()
+      const opens_at = if pace == 0 || len(sorted) == 0 {
+        now + PACING_WINDOW_SECONDS
+      } else {
+        sorted[len(sorted) - pace] + PACING_WINDOW_SECONDS
+      }
+      const wait = max(0, opens_at - now)
+      const max_sleep = max(0, to_int(cfg?.rate_limit_max_sleep_seconds ?? 60) ?? 60)
+      if pace == 0 || wait > max_sleep {
+        return __refusal(
+          ctx,
+          "local_budget",
+          opens_at,
+          __live_observation(ledger, ctx.resource, now),
+          "bulk request refused locally: the pace of " + to_string(pace)
+            + " bulk requests per minute is used; no request was sent",
+        )
+      }
+      if wait > 0 {
+        harness.clock.sleep_ms(wait * 1000)
+      }
+    }
+  }
+  ledger["calls"] = ledger.calls + [{t: now, caller: ctx.caller, priority: ctx.priority}]
+  __save(harness, ctx, ledger)
+  return Ok(ctx)
+}
+
+/** Record the budget a response reported. Responses without the headers change nothing. */
+pub fn __budget_observe(harness: Harness, ctx: dict, response: any, now: int) {
+  const remaining = to_int(connector_http_header(response, "X-RateLimit-Remaining"))
+  const reset = to_int(connector_http_header(response, "X-RateLimit-Reset"))
+  if remaining == nil || reset == nil {
+    return
+  }
+  const resource = trim(
+    to_string(connector_http_header(response, "X-RateLimit-Resource") ?? ctx.resource),
+  )
+  const observation = __without_nil(
+    {
+      limit: to_int(connector_http_header(response, "X-RateLimit-Limit")),
+      remaining: remaining,
+      used: to_int(connector_http_header(response, "X-RateLimit-Used")),
+      reset: reset,
+      observed_at: now,
+    },
+  )
+  let ledger = __load(harness, ctx + {now: now})
+  if !__newer_observation(observation, ledger.resources?.get(resource)) {
+    return
+  }
+  ledger["resources"] = ledger.resources + {[resource]: observation}
+  __save(harness, ctx + {now: now}, ledger)
+}
+
+/**
+ * Turn GitHub's own rate-limit refusal into the shared refusal shape and
+ * remember it, so later non-critical calls on this credential fail fast until
+ * the window ends.
+ */
+pub fn __budget_record_refusal(harness: Harness, ctx: dict, response: any, error: any, now: int) {
+  const rate_limit = connector_http_rate_limit(harness.clock, response)
+  const primary = trim(to_string(rate_limit.remaining ?? "")) == "0"
+  const resource = trim(
+    to_string(connector_http_header(response, "X-RateLimit-Resource") ?? ctx.resource),
+  )
+  const reset = to_int(rate_limit.x_ratelimit_reset)
+  const retry_after_ms = to_int(rate_limit.retry_after_ms)
+  const until = if primary && reset != nil {
+    reset
+  } else if retry_after_ms != nil {
+    now + max(1, (retry_after_ms + 999) / 1000)
+  } else {
+    now + SECONDARY_BLOCK_SECONDS
+  }
+  const kind = if primary {
+    "primary"
+  } else {
+    "secondary"
+  }
+  // A primary limit is per resource. A secondary limit throttles the whole
+  // credential, so it blocks every resource.
+  const scope = if primary {
+    resource
+  } else {
+    "*"
+  }
+  let ledger = __load(harness, ctx + {now: now})
+  ledger["blocked_until"] = ledger.blocked_until
+    + {[scope]: {until: until, kind: kind, observed_at: now}}
+  __save(harness, ctx + {now: now}, ledger)
+  return Err(
+    unwrap_err(error)
+      + {
+        rate_limit_source: "github_" + kind,
+        rate_limit_resource: resource,
+        rate_limit_priority: ctx.priority,
+        rate_limit_until: __iso(until),
+      },
+  )
+}
+
+/** Clear every in-process budget ledger. Files under a state directory are left alone. */
+pub fn reset_budget(runtime: HarnessRuntime) {
+  runtime.store_delete(BUDGET_STORE_KEY)
+}

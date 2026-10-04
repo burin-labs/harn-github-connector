@@ -3,8 +3,9 @@ import {
   connector_http_rate_limit,
   connector_http_request,
 } from "std/connectors/shared"
-import { process_run } from "std/runtime"
+import { __budget_admit, __budget_observe, __budget_record_refusal } from "./budget"
 import { __err } from "./errors"
+import { __gh_auth_token } from "./gh_auth"
 import {
   __installation_scope_body,
   __installation_token_cache_key,
@@ -162,14 +163,16 @@ pub fn __outbound_config(harness: Harness, args: any) {
     || trim(to_string(installation_id))
       == "" {
     if args?.installation_scope == nil && __allow_gh_auth_fallback(harness.env, args) {
-      const gh_token = __gh_auth_token(harness.env, harness.process, args)
+      const gh_token = __gh_auth_token(harness.env, harness.process, args, api_base_url)
       if is_err(gh_token) {
         return gh_token
       }
+      const resolved_gh = unwrap(gh_token)
       return Ok(
         {
           api_base_url: to_string(api_base_url),
-          installation_token: to_string(unwrap(gh_token)),
+          installation_token: resolved_gh.token,
+          gh_auth_user: resolved_gh.user,
           token_mode: "gh_auth",
           auth_identity: "user",
           installation_id: nil,
@@ -228,6 +231,8 @@ pub fn __http_policy_config(args: any) {
     retry: args?.retry,
     retry_unsafe: args?.retry_unsafe,
     idempotency_key: args?.idempotency_key,
+    priority: args?.priority,
+    budget: args?.budget,
   }
 }
 
@@ -250,31 +255,6 @@ pub fn __allow_gh_auth_fallback(env: HarnessEnv, args: any) {
     args,
     env.get_or("HARN_GITHUB_ALLOW_GH_AUTH_FALLBACK", "") == "1",
   )
-}
-
-pub fn __gh_auth_token(env: HarnessEnv, process: HarnessProcess, args: any) {
-  const env_token = args?.gh_token ?? env.get("GH_TOKEN") ?? env.get("GITHUB_TOKEN")
-  if env_token != nil && trim(to_string(env_token)) != "" {
-    return Ok(to_string(env_token))
-  }
-  const output = try {
-    process_run(process, ["gh", "auth", "token"], {stdin: "", timeout_ms: 10000})
-  }
-  if is_err(output) {
-    return __err(
-      "auth",
-      "gh auth fallback is enabled, but `gh auth token` failed: " + to_string(unwrap_err(output)),
-    )
-  }
-  const result = unwrap(output)
-  if !(result?.success ?? false) {
-    return __err("auth", "gh auth fallback is enabled, but `gh auth token` exited non-zero")
-  }
-  const token = trim(to_string(result?.stdout ?? ""))
-  if token == "" {
-    return __err("auth", "gh auth fallback is enabled, but `gh auth token` returned an empty token")
-  }
-  return Ok(token)
 }
 
 pub fn __body_without(args: any, keys: any) {
@@ -913,6 +893,11 @@ pub fn __github_request(
   accept: any,
   parse_json: any,
 ) {
+  const admitted = __budget_admit(harness, cfg, url, __now_seconds(harness.clock, cfg))
+  if is_err(admitted) {
+    return admitted
+  }
+  const budget = unwrap(admitted)
   let current_token = cfg.installation_token
   let retried_rate_limit = false
   let retried_auth = false
@@ -928,6 +913,7 @@ pub fn __github_request(
       accept,
       parse_json,
     )
+    __budget_observe(harness, budget, response, __now_seconds(harness.clock, cfg))
     if response.status == 401 && cfg.token_mode == "jwt" && !retried_auth {
       retried_auth = true
       __invalidate_token_config(harness.runtime, cfg)
@@ -940,7 +926,13 @@ pub fn __github_request(
     }
     const limited = __maybe_wait_for_rate_limit(harness.clock, response, cfg)
     if is_err(limited) {
-      return limited
+      return __budget_record_refusal(
+        harness,
+        budget,
+        response,
+        limited,
+        __now_seconds(harness.clock, cfg),
+      )
     }
     if (response.status == 403 || response.status == 429) && unwrap(limited)
       && !retried_rate_limit {
@@ -948,7 +940,17 @@ pub fn __github_request(
       continue
     }
     if !(response.ok ?? false) {
-      return __github_request_error(harness.clock, response, cfg)
+      const failed = __github_request_error(harness.clock, response, cfg)
+      if unwrap_err(failed)?.code == "rate_limited" {
+        return __budget_record_refusal(
+          harness,
+          budget,
+          response,
+          failed,
+          __now_seconds(harness.clock, cfg),
+        )
+      }
+      return failed
     }
     if trim(response.body ?? "") == "" {
       return {status: response.status, headers: response.headers, body: ""}
@@ -1187,7 +1189,17 @@ pub fn __is_rate_limit_response(clock: HarnessClock, response: any) {
   if response.status == 429 {
     return true
   }
-  return trim(to_string(connector_http_rate_limit(clock, response).remaining ?? "")) == "0"
+  const rate_limit = connector_http_rate_limit(clock, response)
+  if trim(to_string(rate_limit.remaining ?? "")) == "0" {
+    return true
+  }
+  // A secondary limit arrives as a 403 with budget left. GitHub marks it with
+  // Retry-After or names it in the message; without this it reads as a
+  // permission failure.
+  if rate_limit.retry_after != nil {
+    return true
+  }
+  return contains(lowercase(__github_error_message(response)), "rate limit")
 }
 
 pub fn __maybe_wait_for_rate_limit(clock: HarnessClock, response: any, cfg: any) {
