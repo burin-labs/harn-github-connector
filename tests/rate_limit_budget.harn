@@ -8,6 +8,13 @@ const RESET: int = 1700003600
 
 const RESET_RFC3339 = "2023-11-14T23:13:20Z"
 
+type SharedLedger = {
+  schema: string,
+  credential: string,
+  resources: {core: {remaining: int, reset: int}},
+  calls: list<dict>,
+}
+
 fn content_url(path: string) -> string {
   return BASE + "/repos/octo-org/octo-repo/contents/" + path
 }
@@ -197,7 +204,11 @@ pipeline test_a_state_directory_shares_the_budget_across_processes(harness: Harn
   mock_ok(harness.testing, "first", 1000)
   assert(!is_err(read(harness, "budget-shared", "first", budget)))
   const key = "token-" + sha256(bytes_from_string("budget-shared"))[0:16]
-  const ledger = json_parse(harness.fs.read_text(dir + "/" + key + ".json"))
+  const parsed = json_parse(harness.fs.read_text(dir + "/" + key + ".json"))
+  guard schema_is(parsed, SharedLedger) else {
+    throw "the shared ledger does not match gh-budget-ledger/v1"
+  }
+  const ledger: SharedLedger = parsed
   assert_eq(ledger.schema, "gh-budget-ledger/v1")
   assert_eq(ledger.credential, key)
   assert_eq(ledger.resources.core.remaining, 1000)
