@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- Pace every REST call against a per-credential budget fed from GitHub's
+  `x-ratelimit-*` response headers. Requests carry `priority`: `critical`
+  (merges, queue entry, releases) is never refused locally, `normal` (the
+  default) is refused below max(250, 5% of the limit) remaining, and `bulk`
+  is refused below max(1500, 30%) and paced at 30 requests a minute. A page
+  read past page 1 defaults to `bulk`. `budget` overrides every threshold.
+- A local refusal and GitHub's own are the same `rate_limited` error, now with
+  `rate_limit_until`, `rate_limit_resource`, `rate_limit_priority`, and
+  `rate_limit_source` (`local_budget`, `github_primary`, or
+  `github_secondary`). A local refusal sends no request. After GitHub refuses,
+  later non-critical calls on that credential fail fast until the window ends.
+- Classify a 403 secondary rate limit (Retry-After, or a rate-limit message
+  with budget left) as `rate_limited` instead of `permission`.
+- `budget.state_dir` or `GH_BUDGET_STATE_DIR` shares the budget across
+  processes as `gh-budget-ledger/v1` files keyed by installation, login, or a
+  token hash; token text is never stored.
+- `gh_auth_user` (or `HARN_GITHUB_GH_AUTH_USER`) pins the `gh auth token`
+  fallback to one login with ambient token variables blanked, so switching
+  the active `gh` account cannot change who the client acts as. The fallback
+  now passes `--hostname` from `api_base_url`.
+- Behavior change: a caller that reused one credential after a rate limit now
+  receives a fast local `rate_limited` until the window ends.
+
 ## 0.8.10 - 2026-10-01
 
 - Add `github_pr_file_census` for complete changed-file evidence on a stable

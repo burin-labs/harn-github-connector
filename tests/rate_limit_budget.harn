@@ -1,0 +1,265 @@
+import { call, reset_budget } from "../src/facade"
+
+const BASE = "https://budget.test"
+
+const NOW: int = 1700000000
+
+const RESET: int = 1700003600
+
+const RESET_RFC3339 = "2023-11-14T23:13:20Z"
+
+fn content_url(path: string) -> string {
+  return BASE + "/repos/octo-org/octo-repo/contents/" + path
+}
+
+fn mock_ok(testing: HarnessTesting, path: string, remaining: int) {
+  testing.http_mock(
+    "GET",
+    content_url(path),
+    {
+      status: 200,
+      body: json_stringify({name: path}),
+      headers: {
+        "x-ratelimit-limit": "5000",
+        "x-ratelimit-remaining": to_string(remaining),
+        "x-ratelimit-used": to_string(5000 - remaining),
+        "x-ratelimit-reset": to_string(RESET),
+        "x-ratelimit-resource": "core",
+      },
+    },
+  )
+}
+
+fn read(harness: Harness, token: string, path: string, extra: dict = {}) {
+  return call(
+    harness,
+    "repos.get_content",
+    {
+      api_base_url: BASE,
+      installation_token: token,
+      owner: "octo-org",
+      repo: "octo-repo",
+      path: path,
+      rate_limit_max_sleep_seconds: 0,
+      now: NOW,
+    }
+      + extra,
+  )
+}
+
+fn requests(testing: HarnessTesting) -> int {
+  return len(testing.http_mock_calls())
+}
+
+fn start(harness: Harness) {
+  harness.testing.http_mock_clear()
+  reset_budget(harness.runtime)
+}
+
+/**
+ * A bulk read is refused locally once GitHub has reported the credential's
+ * budget below the bulk reserve, and the refusal never reaches the network.
+ *
+ * Falsifier: without the budget, the second request goes out and the mocked
+ * 200 comes back as a success.
+ */
+pipeline test_bulk_is_refused_locally_below_its_floor_without_a_request(harness: Harness) {
+  start(harness)
+  mock_ok(harness.testing, "first", 1000)
+  mock_ok(harness.testing, "second", 1000)
+  assert(!is_err(read(harness, "budget-bulk", "first")), "the priming read succeeds")
+  assert_eq(requests(harness.testing), 1)
+  const refused = read(harness, "budget-bulk", "second", {priority: "bulk"})
+  assert(is_err(refused), "1000 left is below max(1500, 30% of 5000)")
+  const error = unwrap_err(refused)
+  assert_eq(error.code, "rate_limited")
+  assert_eq(error.category, "rate_limit")
+  assert_eq(error.rate_limit_source, "local_budget")
+  assert_eq(error.rate_limit_priority, "bulk")
+  assert_eq(error.rate_limit_resource, "core")
+  assert_eq(error.rate_limit_remaining, 1000)
+  assert_eq(error.rate_limit_limit, 5000)
+  assert_eq(error.rate_limit_until, RESET_RFC3339)
+  assert_eq(error.http_status, nil, "a local refusal has no HTTP status")
+  assert_eq(requests(harness.testing), 1, "the refused bulk read sent nothing")
+  assert(!is_err(read(harness, "budget-bulk", "second")), "normal still clears its smaller floor")
+  assert_eq(requests(harness.testing), 2)
+}
+
+/** A page walk past its first page is bulk unless the caller says otherwise. */
+pipeline test_a_later_page_defaults_to_bulk(harness: Harness) {
+  start(harness)
+  mock_ok(harness.testing, "first", 1000)
+  assert(!is_err(read(harness, "budget-pages", "first")))
+  const page_two = call(
+    harness,
+    "api_call",
+    {
+      api_base_url: BASE,
+      installation_token: "budget-pages",
+      path: "/repos/octo-org/octo-repo/actions/runs?per_page=100&page=2",
+      now: NOW,
+    },
+  )
+  assert_eq(unwrap_err(page_two).rate_limit_priority, "bulk")
+  assert_eq(requests(harness.testing), 1)
+}
+
+/**
+ * Critical work is never refused locally: a merge still reaches GitHub when
+ * the budget is below every floor.
+ */
+pipeline test_critical_still_goes_out_under_the_floor(harness: Harness) {
+  start(harness)
+  mock_ok(harness.testing, "first", 10)
+  mock_ok(harness.testing, "merge", 9)
+  assert(!is_err(read(harness, "budget-critical", "first")))
+  const normal = read(harness, "budget-critical", "merge")
+  assert_eq(unwrap_err(normal).rate_limit_source, "local_budget", "normal is held at 10 left")
+  assert_eq(requests(harness.testing), 1)
+  const critical = read(harness, "budget-critical", "merge", {priority: "critical"})
+  assert(!is_err(critical), "critical is sent and GitHub answers")
+  assert_eq(requests(harness.testing), 2, "the critical read reached the network")
+}
+
+/** Budgets are per credential: another token is not held by this one's floor. */
+pipeline test_the_budget_is_per_credential(harness: Harness) {
+  start(harness)
+  mock_ok(harness.testing, "first", 10)
+  assert(!is_err(read(harness, "budget-a", "first")))
+  assert(!is_err(read(harness, "budget-b", "first")), "a different credential is unaffected")
+}
+
+/**
+ * GitHub's secondary limit arrives as a 403 with budget left. It is a
+ * rate limit, not a permission failure, and later calls fail fast.
+ */
+pipeline test_a_github_403_rate_limit_is_rate_limited_not_auth(harness: Harness) {
+  start(harness)
+  harness.testing.http_mock(
+    "GET",
+    content_url("secondary"),
+    {
+      status: 403,
+      body: json_stringify({message: "You have exceeded a secondary rate limit."}),
+      headers: {"retry-after": "120", "x-ratelimit-remaining": "4000", "x-ratelimit-limit": "5000"},
+    },
+  )
+  const refused = read(harness, "budget-secondary", "secondary")
+  const error = unwrap_err(refused)
+  assert_eq(error.code, "rate_limited")
+  assert_eq(error.category, "rate_limit", "not auth and not permission")
+  assert_eq(error.http_status, 403)
+  assert_eq(error.rate_limit_source, "github_secondary")
+  assert_eq(error.rate_limit_until, date_format(NOW + 120, "%Y-%m-%dT%H:%M:%SZ"))
+  assert_eq(requests(harness.testing), 1)
+  mock_ok(harness.testing, "after", 3999)
+  const fast = read(harness, "budget-secondary", "after")
+  assert_eq(unwrap_err(fast).rate_limit_source, "github_secondary")
+  assert_eq(requests(harness.testing), 1, "the remembered limit refused without a request")
+}
+
+/** A primary 403 records the reset and is reported as GitHub's refusal. */
+pipeline test_a_github_primary_limit_is_remembered_until_reset(harness: Harness) {
+  start(harness)
+  harness.testing.http_mock(
+    "GET",
+    content_url("primary"),
+    {
+      status: 403,
+      body: json_stringify({message: "API rate limit exceeded for installation"}),
+      headers: {
+        "x-ratelimit-limit": "5000",
+        "x-ratelimit-remaining": "0",
+        "x-ratelimit-reset": to_string(RESET),
+        "x-ratelimit-resource": "core",
+      },
+    },
+  )
+  const error = unwrap_err(read(harness, "budget-primary", "primary"))
+  assert_eq(error.code, "rate_limited")
+  assert_eq(error.rate_limit_source, "github_primary")
+  assert_eq(error.rate_limit_until, RESET_RFC3339)
+  const again = unwrap_err(read(harness, "budget-primary", "primary"))
+  assert_eq(again.rate_limit_source, "github_primary")
+  assert_eq(requests(harness.testing), 1)
+}
+
+/**
+ * With a state directory, a second process learns the budget from the shared
+ * `gh-budget-ledger/v1` file. Clearing the in-process budget stands in for
+ * the second process.
+ */
+pipeline test_a_state_directory_shares_the_budget_across_processes(harness: Harness) {
+  start(harness)
+  const dir = harness.fs.mkdtemp_in_workspace("gh-budget-")
+  const budget = {budget: {state_dir: dir}}
+  mock_ok(harness.testing, "first", 1000)
+  assert(!is_err(read(harness, "budget-shared", "first", budget)))
+  const key = "token-" + sha256(bytes_from_string("budget-shared"))[0:16]
+  const ledger = json_parse(harness.fs.read_text(dir + "/" + key + ".json"))
+  assert_eq(ledger.schema, "gh-budget-ledger/v1")
+  assert_eq(ledger.credential, key)
+  assert_eq(ledger.resources.core.remaining, 1000)
+  assert_eq(ledger.resources.core.reset, RESET)
+  assert_eq(len(ledger.calls), 1)
+  assert(!contains(json_stringify(ledger), "budget-shared"), "the ledger never holds token text")
+  reset_budget(harness.runtime)
+  const refused = read(harness, "budget-shared", "first", budget + {priority: "bulk"})
+  assert_eq(unwrap_err(refused).rate_limit_source, "local_budget")
+  assert_eq(requests(harness.testing), 1)
+  harness.fs.delete(dir)
+}
+
+fn gh_read(harness: Harness) {
+  return call(
+    harness,
+    "repos.get_content",
+    {
+      api_base_url: BASE,
+      allow_gh_auth_fallback: true,
+      gh_auth_user: "octo-bot",
+      owner: "octo-org",
+      repo: "octo-repo",
+      path: "first",
+      now: NOW,
+    },
+  )
+}
+
+fn process_runs(testing: HarnessTesting) -> list {
+  return testing.calls().filter({ entry -> entry.capability == "process" }).to_list()
+}
+
+/**
+ * The gh fallback pinned to a login asks gh for that account only, with every
+ * ambient token variable blanked, so `gh auth switch` or an exported
+ * GH_TOKEN for someone else cannot change who the client acts as.
+ */
+pipeline test_gh_fallback_asks_for_the_requested_account_only(harness: Harness) {
+  start(harness)
+  harness.testing.clear()
+  harness.testing.respond("process", "run", {success: true, status: 0, stdout: "gho_fixture\n"})
+  mock_ok(harness.testing, "first", 4000)
+  assert(!is_err(gh_read(harness)), "the pinned account's token reaches the API")
+  const runs = process_runs(harness.testing)
+  assert_eq(len(runs), 1)
+  const params = runs[0].params
+  assert_eq(params.program, "gh")
+  assert_eq(params.args, ["auth", "token", "--hostname", "budget.test", "--user", "octo-bot"])
+  assert_eq(params.env.GH_TOKEN, "", "an ambient GH_TOKEN cannot substitute another account")
+  assert_eq(params.env.GITHUB_TOKEN, "")
+}
+
+/** A pinned login gh cannot produce is an auth error, never the active account. */
+pipeline test_gh_fallback_does_not_switch_accounts_when_the_login_is_missing(harness: Harness) {
+  start(harness)
+  harness.testing.clear()
+  harness.testing.respond("process", "run", {success: false, status: 1, stdout: ""})
+  const refused = gh_read(harness)
+  const error = unwrap_err(refused)
+  assert_eq(error.code, "auth")
+  assert(contains(error.message, "octo-bot"), "the error names the requested account")
+  assert_eq(len(process_runs(harness.testing)), 1, "no second attempt against the active account")
+  assert_eq(requests(harness.testing), 0)
+}

@@ -1,4 +1,4 @@
-import { call } from "../src/facade"
+import { call, reset_budget } from "../src/facade"
 
 const BASE = "https://github-api.test"
 
@@ -496,6 +496,9 @@ pipeline test_canonical_http_failures_and_malformed_payloads_fail_closed(
     {path: "server", status: 500, code: "network", message: "server error", headers: {}},
   ]
   for item in cases {
+    // Each case is an independent first contact; a remembered limit from the
+    // previous case would refuse it locally before the mocked status is read.
+    reset_budget(harness.runtime)
     harness.testing.http_mock(
       "GET",
       BASE + "/repos/octo-org/octo-repo/contents/" + item.path + "?ref=main",

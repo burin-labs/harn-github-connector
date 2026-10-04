@@ -62,6 +62,14 @@ explicitly enables `retry_unsafe`.
 Short primary-rate-limit resets may be retried once. Longer waits return
 `rate_limited` instead of sleeping inside a webhook or CI job.
 
+Every response's rate-limit headers feed a budget for its credential. A
+`normal` request is refused locally when the last reported remaining budget is
+below max(250, 5% of the limit), a `bulk` request below max(1500, 30%), and a
+`critical` request never. Bulk requests are also paced per credential. A local
+refusal sends nothing and returns the same `rate_limited` error as GitHub's
+own refusal, with `rate_limit_source` saying which one it was, so one caller's
+crawl cannot spend the budget every other caller on the credential depends on.
+
 ## Identity is explicit
 
 GitHub App authentication produces the installed App identity. User OAuth

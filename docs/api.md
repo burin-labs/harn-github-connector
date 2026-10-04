@@ -201,6 +201,27 @@ pub type GithubBranchTreeComparison = {
 }
 ```
 
+### type `GithubBudgetPolicy`
+
+Thresholds for the per-credential budget. A request is refused locally when
+the remaining budget GitHub last reported for its resource, inside the
+current reset window, is below max(floor, floor_percent% of the limit).
+`bulk_per_minute` paces bulk requests per credential. `state_dir` shares the
+budget with other processes through `gh-budget-ledger/v1` files; it defaults
+to `GH_BUDGET_STATE_DIR` and is off when neither is set.
+
+```harn
+pub type GithubBudgetPolicy = {
+  bulk_floor?: int,
+  bulk_floor_percent?: int,
+  normal_floor?: int,
+  normal_floor_percent?: int,
+  bulk_per_minute?: int,
+  state_dir?: string,
+  caller?: string,
+}
+```
+
 ### type `GithubCheckGeneration`
 
 One selected GitHub Actions generation and the check evidence attributed to it.
@@ -357,6 +378,15 @@ pub type GithubClientOptions = {
   allow_gh_auth_fallback?: bool,
   gh_auth_fallback?: bool,
   gh_token?: string,
+  /**
+   * The GitHub login the `gh auth token` fallback must resolve. When set, the
+   * fallback asks `gh` for that account's token and ignores ambient
+   * `GH_TOKEN`/`GITHUB_TOKEN`, so switching the active `gh` account cannot
+   * change who the client acts as.
+   */
+  gh_auth_user?: string,
+  priority?: GithubRequestPriority,
+  budget?: GithubBudgetPolicy,
   oauth_base_url?: string,
   device_code_url?: string,
   access_token_url?: string,
@@ -449,6 +479,16 @@ pub type GithubConnectorError = {
   rate_limit_reset?: string,
   rate_limit_remaining?: int,
   rate_limit_limit?: int,
+  /**
+   * The earliest instant a retry of a `rate_limited` request can succeed, and
+   * who refused it. `local_budget` means the client refused before sending a
+   * request; `github_primary` and `github_secondary` mean GitHub refused, now
+   * or earlier in the window the client remembers.
+   */
+  rate_limit_until?: string,
+  rate_limit_resource?: string,
+  rate_limit_priority?: GithubRequestPriority,
+  rate_limit_source?: GithubRateLimitSource,
   graphql_error_kind?: GithubGraphqlErrorKind,
   expected_head_oid?: string,
   observed_head_oid?: string,
@@ -1105,6 +1145,14 @@ pub type GithubPullsWithChecksRequest = GithubRepositoryRequest \
   & {state?: "open" | "closed", limit?: int, check_limit?: int}
 ```
 
+### type `GithubRateLimitSource`
+
+Who refused a `rate_limited` request.
+
+```harn
+pub type GithubRateLimitSource = "local_budget" | "github_primary" | "github_secondary"
+```
+
 ### type `GithubRawApiRequest`
 
 One low-level REST request for an endpoint without a typed helper.
@@ -1372,6 +1420,17 @@ Read one repository file, optionally at an exact ref.
 ```harn
 pub type GithubRepositoryTextRequest = GithubRepositoryRequest \
   & {path: string, ref?: string, include_raw?: bool}
+```
+
+### type `GithubRequestPriority`
+
+How much of a credential's shared rate-limit budget a request may spend.
+`critical` (merges, queue entry, releases) is never refused locally,
+`normal` keeps a small reserve, and `bulk` (enumeration, audits, page walks)
+keeps a large one and is paced.
+
+```harn
+pub type GithubRequestPriority = "critical" | "normal" | "bulk"
 ```
 
 ### type `GithubResolvePullRequestRequest`
@@ -2730,6 +2789,15 @@ pub fn repos_list_release_assets(
 }
 ```
 
+### fn `reset_budget`
+
+Clear every in-process budget ledger. Files under a state directory are left alone.
+
+```harn
+pub fn reset_budget(runtime: HarnessRuntime) {
+}
+```
+
 ### fn `reset_token_cache`
 
 Clear all cached installation tokens.
@@ -2887,6 +2955,15 @@ pub type GithubClientOptions = {
   allow_gh_auth_fallback?: bool,
   gh_auth_fallback?: bool,
   gh_token?: string,
+  /**
+   * The GitHub login the `gh auth token` fallback must resolve. When set, the
+   * fallback asks `gh` for that account's token and ignores ambient
+   * `GH_TOKEN`/`GITHUB_TOKEN`, so switching the active `gh` account cannot
+   * change who the client acts as.
+   */
+  gh_auth_user?: string,
+  priority?: GithubRequestPriority,
+  budget?: GithubBudgetPolicy,
   oauth_base_url?: string,
   device_code_url?: string,
   access_token_url?: string,
@@ -2932,6 +3009,16 @@ pub type GithubConnectorError = {
   rate_limit_reset?: string,
   rate_limit_remaining?: int,
   rate_limit_limit?: int,
+  /**
+   * The earliest instant a retry of a `rate_limited` request can succeed, and
+   * who refused it. `local_budget` means the client refused before sending a
+   * request; `github_primary` and `github_secondary` mean GitHub refused, now
+   * or earlier in the window the client remembers.
+   */
+  rate_limit_until?: string,
+  rate_limit_resource?: string,
+  rate_limit_priority?: GithubRequestPriority,
+  rate_limit_source?: GithubRateLimitSource,
   graphql_error_kind?: GithubGraphqlErrorKind,
   expected_head_oid?: string,
   observed_head_oid?: string,
