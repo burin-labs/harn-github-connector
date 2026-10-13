@@ -1037,7 +1037,7 @@ pub fn __github_authenticated_redirect_url(harness: Harness, url: string, cfg: a
     if response.status < 300 || response.status > 399 {
       return __github_request_error(harness.clock, response)
     }
-    const location = trim(to_string(response?.headers?.location ?? ""))
+    const location = trim(to_string(response.headers?.location ?? ""))
     if location == "" {
       return __err("invalid_response", "GitHub artifact download redirect omitted Location")
     }
