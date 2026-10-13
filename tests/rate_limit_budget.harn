@@ -58,7 +58,7 @@ fn requests(testing: HarnessTesting) -> int {
   return len(testing.http_mock_calls())
 }
 
-fn start(harness: Harness) {
+fn start(harness: {runtime: HarnessRuntime, testing: HarnessTesting}) {
   harness.testing.http_mock_clear()
   reset_budget(harness.runtime)
 }
@@ -71,7 +71,7 @@ fn start(harness: Harness) {
  * 200 comes back as a success.
  */
 pipeline test_bulk_is_refused_locally_below_its_floor_without_a_request(harness: Harness) {
-  start(harness)
+  start(pick(harness, ["runtime", "testing"]))
   mock_ok(harness.testing, "first", 1000)
   mock_ok(harness.testing, "second", 1000)
   assert(!is_err(read(harness, "budget-bulk", "first")), "the priming read succeeds")
@@ -95,7 +95,7 @@ pipeline test_bulk_is_refused_locally_below_its_floor_without_a_request(harness:
 
 /** A page walk past its first page is bulk unless the caller says otherwise. */
 pipeline test_a_later_page_defaults_to_bulk(harness: Harness) {
-  start(harness)
+  start(pick(harness, ["runtime", "testing"]))
   mock_ok(harness.testing, "first", 1000)
   assert(!is_err(read(harness, "budget-pages", "first")))
   const page_two = call(
@@ -117,7 +117,7 @@ pipeline test_a_later_page_defaults_to_bulk(harness: Harness) {
  * the budget is below every floor.
  */
 pipeline test_critical_still_goes_out_under_the_floor(harness: Harness) {
-  start(harness)
+  start(pick(harness, ["runtime", "testing"]))
   mock_ok(harness.testing, "first", 10)
   mock_ok(harness.testing, "merge", 9)
   assert(!is_err(read(harness, "budget-critical", "first")))
@@ -131,7 +131,7 @@ pipeline test_critical_still_goes_out_under_the_floor(harness: Harness) {
 
 /** Budgets are per credential: another token is not held by this one's floor. */
 pipeline test_the_budget_is_per_credential(harness: Harness) {
-  start(harness)
+  start(pick(harness, ["runtime", "testing"]))
   mock_ok(harness.testing, "first", 10)
   assert(!is_err(read(harness, "budget-a", "first")))
   assert(!is_err(read(harness, "budget-b", "first")), "a different credential is unaffected")
@@ -142,7 +142,7 @@ pipeline test_the_budget_is_per_credential(harness: Harness) {
  * rate limit, not a permission failure, and later calls fail fast.
  */
 pipeline test_a_github_403_rate_limit_is_rate_limited_not_auth(harness: Harness) {
-  start(harness)
+  start(pick(harness, ["runtime", "testing"]))
   harness.testing.http_mock(
     "GET",
     content_url("secondary"),
@@ -168,7 +168,7 @@ pipeline test_a_github_403_rate_limit_is_rate_limited_not_auth(harness: Harness)
 
 /** A primary 403 records the reset and is reported as GitHub's refusal. */
 pipeline test_a_github_primary_limit_is_remembered_until_reset(harness: Harness) {
-  start(harness)
+  start(pick(harness, ["runtime", "testing"]))
   harness.testing.http_mock(
     "GET",
     content_url("primary"),
@@ -198,7 +198,7 @@ pipeline test_a_github_primary_limit_is_remembered_until_reset(harness: Harness)
  * the second process.
  */
 pipeline test_a_state_directory_shares_the_budget_across_processes(harness: Harness) {
-  start(harness)
+  start(pick(harness, ["runtime", "testing"]))
   const dir = harness.fs.mkdtemp_in_workspace("gh-budget-")
   const budget = {budget: {state_dir: dir}}
   mock_ok(harness.testing, "first", 1000)
@@ -248,7 +248,7 @@ fn process_runs(testing: HarnessTesting) -> list {
  * GH_TOKEN for someone else cannot change who the client acts as.
  */
 pipeline test_gh_fallback_asks_for_the_requested_account_only(harness: Harness) {
-  start(harness)
+  start(pick(harness, ["runtime", "testing"]))
   harness.testing.clear()
   harness.testing.respond("process", "run", {success: true, status: 0, stdout: "gho_fixture\n"})
   mock_ok(harness.testing, "first", 4000)
@@ -264,7 +264,7 @@ pipeline test_gh_fallback_asks_for_the_requested_account_only(harness: Harness) 
 
 /** A pinned login gh cannot produce is an auth error, never the active account. */
 pipeline test_gh_fallback_does_not_switch_accounts_when_the_login_is_missing(harness: Harness) {
-  start(harness)
+  start(pick(harness, ["runtime", "testing"]))
   harness.testing.clear()
   harness.testing.respond("process", "run", {success: false, status: 1, stdout: ""})
   const refused = gh_read(harness)

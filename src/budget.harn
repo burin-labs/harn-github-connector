@@ -289,7 +289,7 @@ fn __dedupe_calls(left: list, right: list, now: int) -> list {
   return out
 }
 
-fn __load(harness: Harness, ctx: dict) -> dict {
+fn __load(harness: {fs: HarnessFs, runtime: HarnessRuntime}, ctx: dict) -> dict {
   const local = __store_ledger(harness.runtime, ctx.key)
   if ctx.state_path == nil {
     return __budget_merge(local, nil, ctx.now)
@@ -401,7 +401,7 @@ pub fn __budget_admit(harness: Harness, cfg: any, url: any, now: int) {
     now: now,
     state_path: __state_path(harness.env, cfg, key),
   }
-  let ledger = __load(harness, ctx)
+  let ledger = __load(pick(harness, ["fs", "runtime"]), ctx)
   if ctx.priority != "critical" {
     const observation = __live_observation(ledger, ctx.resource, now)
     const block = __active_block(ledger, ctx.resource, now)
@@ -486,7 +486,7 @@ pub fn __budget_observe(harness: Harness, ctx: dict, response: any, now: int) {
       observed_at: now,
     },
   )
-  let ledger = __load(harness, ctx + {now: now})
+  let ledger = __load(pick(harness, ["fs", "runtime"]), ctx + {now: now})
   if !__newer_observation(observation, ledger.resources?.get(resource)) {
     return
   }
@@ -526,7 +526,7 @@ pub fn __budget_record_refusal(harness: Harness, ctx: dict, response: any, error
   } else {
     "*"
   }
-  let ledger = __load(harness, ctx + {now: now})
+  let ledger = __load(pick(harness, ["fs", "runtime"]), ctx + {now: now})
   ledger["blocked_until"] = ledger.blocked_until
     + {[scope]: {until: until, kind: kind, observed_at: now}}
   __save(harness, ctx + {now: now}, ledger)
