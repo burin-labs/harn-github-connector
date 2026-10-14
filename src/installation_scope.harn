@@ -46,7 +46,7 @@ pub fn __normalize_installation_scope(
         return __err("invalid_installation_scope", "repository IDs must be positive integers")
       }
       if !ids.contains(id) {
-        ids = ids.appending(id)
+        ids = ids + [id]
       }
     }
     normalized_scope.repository_ids = ids.sorted()
@@ -97,7 +97,7 @@ fn __repository_names(repositories: list<string>) -> GithubConnectorResult<list<
       )
     }
     if !names.contains(normalized) {
-      names = names.appending(normalized)
+      names = names + [normalized]
     }
   }
   return Ok(names.sorted())
@@ -120,7 +120,7 @@ pub fn __installation_scope_body(scope: GithubInstallationTokenScope?) -> dict {
 /** Installation identity and normalized authority jointly own cached tokens. */
 pub fn __installation_token_cache_key(config: dict) -> string {
   const identity = [
-    to_string(config.api_base_url).trim_end("/"),
+    regex_replace("/+$", "", to_string(config.api_base_url)),
     to_string(config.app_id),
     to_string(config.installation_id),
     __installation_scope_body(config.installation_scope),

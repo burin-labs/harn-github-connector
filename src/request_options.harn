@@ -1,3 +1,4 @@
+import { omit } from "std/json"
 import { GithubAuthorPolicy, GithubClientOptions } from "./contracts"
 
 /** Project the client-policy field names from their owning type contract. */
@@ -35,7 +36,7 @@ pub fn __request_args(request: unknown) -> dict {
   if type_of(request) != "dict" {
     return {}
   }
-  const args = request.removing("options")
+  const args = omit(request, ["options"])
   return __client_options(request?.options ?? {}) + args
 }
 

@@ -1,3 +1,4 @@
+import { omit } from "std/json"
 import { call_typed } from "../api"
 import {
   GithubConnectorResult,
@@ -47,7 +48,7 @@ pub fn github_release_edit_body(
   harness: Harness,
   request: GithubReleaseEditRequest,
 ) -> GithubConnectorResult<GithubReleaseEditReceipt> {
-  const args = __request_args(request).removing("lease")
+  const args = omit(__request_args(request), ["lease"])
     + {
       expected_release_id: request.lease.release_id,
       expected_tag_ref_oid: request.lease.tag_ref_oid,

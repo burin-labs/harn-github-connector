@@ -48,6 +48,7 @@ pub import {
   github_merge_queue_entries,
   github_pr_commits,
   github_pr_file_census,
+  github_pr_review_census,
   github_resolve_mergeable,
   github_upsert_pull_request,
   pulls_disable_auto_merge,

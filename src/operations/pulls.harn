@@ -1,3 +1,4 @@
+import { omit } from "std/json"
 import { __nonnegative_decimal, __positive_decimal } from "../actions/normalization"
 import "../client"
 import "../contracts"
@@ -347,7 +348,7 @@ pub fn __github_pr_comment(harness: Harness, args: any, cfg: any) {
   if is_err(commented) {
     return commented
   }
-  return (commented + {pull_number: commented.issue_number}).removing("issue_number")
+  return omit(commented + {pull_number: commented.issue_number}, ["issue_number"])
 }
 
 pub fn __github_pr_checks(harness: Harness, args: any, cfg: any) {

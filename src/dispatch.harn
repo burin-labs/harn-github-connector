@@ -6,6 +6,7 @@ import "./operations/branches"
 import "./operations/commits"
 import "./operations/oauth"
 import "./operations/pull_files"
+import "./operations/pull_reviews"
 import "./operations/pull_upsert"
 import "./operations/pulls"
 import "./operations/refs"
@@ -20,6 +21,7 @@ const GITHUB_OUTBOUND_METHODS = [
   "github.pr.edit",
   "github.pr.files",
   "github.pr.file_census",
+  "github.pr.review_census",
   "github.pr.commits",
   "github.pr.checks",
   "github.pr.merge",
@@ -160,6 +162,9 @@ pub fn __call_raw(harness: Harness, method: any, args: any = {}) {
   }
   if method == "github.pr.file_census" {
     return __github_pr_file_census(harness, args, cfg)
+  }
+  if method == "github.pr.review_census" {
+    return __github_pr_review_census(harness, args, cfg)
   }
   if method == "github.pr.commits" {
     return __github_pr_commits(harness, args, cfg)

@@ -275,6 +275,49 @@ pub type GithubPullRequestWithChecks = {
 /** Ordered pull requests returned by the merge-captain view. */
 pub type GithubPullRequestsWithChecks = list<GithubPullRequestWithChecks>
 
+/** Complete review evidence is read for the caller's exact pull-request head. */
+pub type GithubPullRequestReviewCensusRequest = GithubPullRequestRequest \
+  & {expected_head_oid: string, per_page?: int, max_pages?: int, maximum_count?: int}
+
+/** A missing or deleted actor stays unknown; consumers decide who may approve. */
+pub type GithubReviewActor = {id: string, login: string, type: string}
+
+/** GitHub's closed review lifecycle, without deriving admission from its wording. */
+pub type GithubReviewState = "APPROVED" \
+  | "CHANGES_REQUESTED" \
+  | "COMMENTED" \
+  | "DISMISSED" \
+  | "PENDING"
+
+/** GitHub's aggregate decision may be absent when no applicable rule supplies it. */
+pub type GithubReviewDecision = "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED"
+
+/** Review state retains its exact commit and actor rather than implying a current-head approval. */
+pub type GithubPullRequestReview = {
+  id: string,
+  state: GithubReviewState,
+  commit_oid: string?,
+  author: GithubReviewActor?,
+  updated_at: string,
+}
+
+/** Resolution and outdated-source status remain separate observable facts. */
+pub type GithubReviewThread = {id: string, resolved: bool, outdated: bool}
+
+/** Declared and observed inventories must agree for both connections before this record exists. */
+pub type GithubPullRequestReviewCensus = {
+  repository: string,
+  number: int,
+  head_oid: string,
+  base_oid: string,
+  review_decision: GithubReviewDecision?,
+  total_reviews: int,
+  total_threads: int,
+  reviews: list<GithubPullRequestReview>,
+  threads: list<GithubReviewThread>,
+  pages_fetched: int,
+}
+
 /** Request for editing one pull request through the canonical typed operation. */
 pub type GithubPullRequestEditRequest = GithubPullRequestRequest \
   & {edits: GithubPullRequestEditInput}

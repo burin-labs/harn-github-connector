@@ -1,3 +1,4 @@
+import { omit } from "std/json"
 import {
   actions_artifact_delete,
   actions_artifacts_list,
@@ -39,7 +40,7 @@ pipeline test_storage_inventory_reaches_second_page(harness: Harness, task: any)
   harness.testing.http_mock_clear()
   let first = []
   for id in range(1, 101) {
-    first = first.appending(cache(id))
+    first = first + [cache(id)]
   }
   mock_page(harness.testing, 1, 101, first)
   mock_page(harness.testing, 2, 101, [cache(101)])
@@ -74,7 +75,7 @@ pipeline test_storage_inventory_rejects_changing_counts_and_page_limit(
   harness.testing.http_mock_clear()
   let first = []
   for id in range(1, 101) {
-    first = first.appending(cache(id))
+    first = first + [cache(id)]
   }
   mock_page(harness.testing, 1, 101, first)
   mock_page(harness.testing, 2, 100, [])
@@ -91,7 +92,7 @@ pipeline test_storage_inventory_rejects_changing_counts_and_page_limit(
 
 pipeline test_storage_inventory_rejects_invalid_and_duplicate_records(harness: Harness, task: any) {
   harness.testing.http_mock_clear()
-  mock_page(harness.testing, 1, 1, [cache(1).removing("last_accessed_at")])
+  mock_page(harness.testing, 1, 1, [omit(cache(1), ["last_accessed_at"])])
   assert(is_err(actions_caches_list(harness, request())), "missing retention field fails")
   harness.testing.http_mock_clear()
   mock_page(harness.testing, 1, 2, [cache(1), cache(1)])
