@@ -3,8 +3,14 @@ import {
   connector_http_rate_limit,
   connector_http_request,
 } from "std/connectors/shared"
-import { process_run } from "std/runtime"
+import { __budget_admit, __budget_observe, __budget_record_refusal } from "./budget"
 import { __err } from "./errors"
+import { __gh_auth_token } from "./gh_auth"
+import {
+  __installation_scope_body,
+  __installation_token_cache_key,
+  __normalize_installation_scope,
+} from "./installation_scope"
 import { pr_edit_body } from "./pr_edit"
 import { __request_context_keys } from "./request_options"
 
@@ -50,7 +56,11 @@ pub fn installation_token(harness: Harness, config: any) {
     return resolved_result
   }
   const resolved = unwrap(resolved_result)
-  const key = to_string(resolved.installation_id)
+  return __installation_token_resolved(harness, resolved)
+}
+
+fn __installation_token_resolved(harness: Harness, resolved: dict) {
+  const key = __installation_token_cache_key(resolved)
   const now = __now_seconds(harness.clock, resolved)
   const cached = __token_cache(harness.runtime)[key]
   if cached != nil && cached.refresh_at > now {
@@ -89,10 +99,20 @@ pub fn reset_token_cache(runtime: HarnessRuntime) {
   runtime.store_delete(TOKEN_CACHE_KEY)
 }
 
-/** Invalidate one cached installation token by installation id. */
+/** Invalidate every cached scope for one installation, retaining the public API. */
 pub fn invalidate_installation_token(runtime: HarnessRuntime, installation_id: any) {
   const key = to_string(installation_id)
-  const cache = __token_cache(runtime).removing(key)
+  let cache = __token_cache(runtime)
+  for cached_key in cache.keys() {
+    if cached_key == key || cached_key.starts_with(key + ":") {
+      cache = cache.removing(cached_key)
+    }
+  }
+  runtime.store_set(TOKEN_CACHE_KEY, cache)
+}
+
+fn __invalidate_token_config(runtime: HarnessRuntime, config: dict) {
+  const cache = __token_cache(runtime).removing(__installation_token_cache_key(config))
   runtime.store_set(TOKEN_CACHE_KEY, cache)
 }
 
@@ -109,6 +129,12 @@ pub fn __outbound_config(harness: Harness, args: any) {
     ?? harness.env.get("GITHUB_INSTALLATION_TOKEN")
   const direct_token = configured_installation_token ?? args?.token
   if direct_token != nil && trim(to_string(direct_token)) != "" {
+    if args?.installation_scope != nil {
+      return __err(
+        "invalid_installation_scope",
+        "installation scope requires renewable App credentials, not a supplied token",
+      )
+    }
     const auth_identity = if configured_installation_token != nil
       && trim(to_string(configured_installation_token))
         != "" {
@@ -136,15 +162,17 @@ pub fn __outbound_config(harness: Harness, args: any) {
   if app_id == nil || trim(to_string(app_id)) == "" || installation_id == nil
     || trim(to_string(installation_id))
       == "" {
-    if __allow_gh_auth_fallback(harness.env, args) {
-      const gh_token = __gh_auth_token(harness.env, harness.process, args)
+    if args?.installation_scope == nil && __allow_gh_auth_fallback(harness.env, args) {
+      const gh_token = __gh_auth_token(harness.env, harness.process, args, api_base_url)
       if is_err(gh_token) {
         return gh_token
       }
+      const resolved_gh = unwrap(gh_token)
       return Ok(
         {
           api_base_url: to_string(api_base_url),
-          installation_token: to_string(unwrap(gh_token)),
+          installation_token: resolved_gh.token,
+          gh_auth_user: resolved_gh.user,
           token_mode: "gh_auth",
           auth_identity: "user",
           installation_id: nil,
@@ -165,6 +193,7 @@ pub fn __outbound_config(harness: Harness, args: any) {
     api_base_url: to_string(api_base_url),
     app_id: app_id,
     installation_id: installation_id,
+    installation_scope: args?.installation_scope,
     private_key_pem: args?.private_key_pem,
     private_key_secret: args?.private_key_secret ?? args?.secrets?.private_key,
     jwt_alg: args?.jwt_alg ?? "RS256",
@@ -178,12 +207,17 @@ pub fn __outbound_config(harness: Harness, args: any) {
       ?? DEFAULT_RATE_LIMIT_MAX_SLEEP_SECONDS,
   }
     + __http_policy_config(args)
-  const token_result = installation_token(harness, resolved)
+  const normalized_result = __resolve_token_config(resolved)
+  if is_err(normalized_result) {
+    return normalized_result
+  }
+  const normalized = unwrap(normalized_result)
+  const token_result = __installation_token_resolved(harness, normalized)
   if is_err(token_result) {
     return token_result
   }
   return Ok(
-    resolved
+    normalized
       + {
         installation_token: to_string(token_result),
         token_mode: "jwt",
@@ -197,6 +231,8 @@ pub fn __http_policy_config(args: any) {
     retry: args?.retry,
     retry_unsafe: args?.retry_unsafe,
     idempotency_key: args?.idempotency_key,
+    priority: args?.priority,
+    budget: args?.budget,
   }
 }
 
@@ -219,31 +255,6 @@ pub fn __allow_gh_auth_fallback(env: HarnessEnv, args: any) {
     args,
     env.get_or("HARN_GITHUB_ALLOW_GH_AUTH_FALLBACK", "") == "1",
   )
-}
-
-pub fn __gh_auth_token(env: HarnessEnv, process: HarnessProcess, args: any) {
-  const env_token = args?.gh_token ?? env.get("GH_TOKEN") ?? env.get("GITHUB_TOKEN")
-  if env_token != nil && trim(to_string(env_token)) != "" {
-    return Ok(to_string(env_token))
-  }
-  const output = try {
-    process_run(process, ["gh", "auth", "token"], {stdin: "", timeout_ms: 10000})
-  }
-  if is_err(output) {
-    return __err(
-      "auth",
-      "gh auth fallback is enabled, but `gh auth token` failed: " + to_string(unwrap_err(output)),
-    )
-  }
-  const result = unwrap(output)
-  if !(result?.success ?? false) {
-    return __err("auth", "gh auth fallback is enabled, but `gh auth token` exited non-zero")
-  }
-  const token = trim(to_string(result?.stdout ?? ""))
-  if token == "" {
-    return __err("auth", "gh auth fallback is enabled, but `gh auth token` returned an empty token")
-  }
-  return Ok(token)
 }
 
 pub fn __body_without(args: any, keys: any) {
@@ -882,6 +893,11 @@ pub fn __github_request(
   accept: any,
   parse_json: any,
 ) {
+  const admitted = __budget_admit(harness, cfg, url, __now_seconds(harness.clock, cfg))
+  if is_err(admitted) {
+    return admitted
+  }
+  const budget = unwrap(admitted)
   let current_token = cfg.installation_token
   let retried_rate_limit = false
   let retried_auth = false
@@ -897,9 +913,10 @@ pub fn __github_request(
       accept,
       parse_json,
     )
+    __budget_observe(harness, budget, response, __now_seconds(harness.clock, cfg))
     if response.status == 401 && cfg.token_mode == "jwt" && !retried_auth {
       retried_auth = true
-      invalidate_installation_token(harness.runtime, cfg.installation_id)
+      __invalidate_token_config(harness.runtime, cfg)
       const refreshed = installation_token(harness, cfg)
       if is_err(refreshed) {
         return refreshed
@@ -909,7 +926,13 @@ pub fn __github_request(
     }
     const limited = __maybe_wait_for_rate_limit(harness.clock, response, cfg)
     if is_err(limited) {
-      return limited
+      return __budget_record_refusal(
+        harness,
+        budget,
+        response,
+        limited,
+        __now_seconds(harness.clock, cfg),
+      )
     }
     if (response.status == 403 || response.status == 429) && unwrap(limited)
       && !retried_rate_limit {
@@ -917,7 +940,17 @@ pub fn __github_request(
       continue
     }
     if !(response.ok ?? false) {
-      return __github_request_error(harness.clock, response)
+      const failed = __github_request_error(harness.clock, response, cfg)
+      if unwrap_err(failed)?.code == "rate_limited" {
+        return __budget_record_refusal(
+          harness,
+          budget,
+          response,
+          failed,
+          __now_seconds(harness.clock, cfg),
+        )
+      }
+      return failed
     }
     if trim(response.body ?? "") == "" {
       return {status: response.status, headers: response.headers, body: ""}
@@ -993,7 +1026,7 @@ pub fn __github_authenticated_redirect_url(harness: Harness, url: string, cfg: a
     const response = harness.net.get(url, options)
     if response.status == 401 && cfg.token_mode == "jwt" && !retried_auth {
       retried_auth = true
-      invalidate_installation_token(harness.runtime, cfg.installation_id)
+      __invalidate_token_config(harness.runtime, cfg)
       const refreshed = installation_token(harness, cfg)
       if is_err(refreshed) {
         return refreshed
@@ -1004,7 +1037,7 @@ pub fn __github_authenticated_redirect_url(harness: Harness, url: string, cfg: a
     if response.status < 300 || response.status > 399 {
       return __github_request_error(harness.clock, response)
     }
-    const location = trim(to_string(response?.headers?.location ?? ""))
+    const location = trim(to_string(response.headers?.location ?? ""))
     if location == "" {
       return __err("invalid_response", "GitHub artifact download redirect omitted Location")
     }
@@ -1038,7 +1071,7 @@ pub fn __github_generic_retry_statuses(statuses: any) {
   return out
 }
 
-pub fn __github_request_error(clock: HarnessClock, response: any) {
+pub fn __github_request_error(clock: HarnessClock, response: any, cfg: any = nil) {
   if response?.error?.category == "invalid_json" {
     return __err("invalid_response", "GitHub API returned invalid JSON")
   }
@@ -1073,8 +1106,48 @@ pub fn __github_request_error(clock: HarnessClock, response: any) {
     } else {
       message + ": " + provider_message
     },
-    {http_status: response.status},
+    {http_status: response.status}
+      + if code == "rate_limited" {
+        __rate_limit_error_fields(clock, response, cfg)
+      } else {
+        {}
+      },
   )
+}
+
+/**
+ * The budget the refused response reported, for the error record.
+ *
+ * Read from the response's own headers so a caller learns the state at the
+ * moment of the refusal rather than at the moment it thought to ask. Every
+ * field is omitted when its header is absent or unreadable: a missing budget
+ * and an exhausted one are opposite facts, and a zero default would collapse
+ * them.
+ */
+pub fn __rate_limit_error_fields(clock: HarnessClock, response: any, cfg: any = nil) {
+  const rate_limit = connector_http_rate_limit(clock, response)
+  let fields = {}
+  const remaining = to_int(rate_limit.remaining)
+  if remaining != nil {
+    fields["rate_limit_remaining"] = unwrap(remaining)
+  }
+  const limit = to_int(rate_limit.limit)
+  if limit != nil {
+    fields["rate_limit_limit"] = unwrap(limit)
+  }
+  const reset = to_int(rate_limit.x_ratelimit_reset ?? rate_limit.ratelimit_reset)
+  if reset == nil {
+    return fields
+  }
+  // The header name decides the unit: X-RateLimit-Reset is an epoch second,
+  // while RateLimit-Reset is a delta. Its magnitude cannot establish the unit.
+  const epoch = if rate_limit.x_ratelimit_reset != nil {
+    unwrap(reset)
+  } else {
+    __now_seconds(clock, cfg ?? {}) + unwrap(reset)
+  }
+  fields["rate_limit_reset"] = date_format(epoch, "%Y-%m-%dT%H:%M:%SZ")
+  return fields
 }
 
 pub fn __github_error_code(clock: HarnessClock, response: any) {
@@ -1116,7 +1189,17 @@ pub fn __is_rate_limit_response(clock: HarnessClock, response: any) {
   if response.status == 429 {
     return true
   }
-  return trim(to_string(connector_http_rate_limit(clock, response).remaining ?? "")) == "0"
+  const rate_limit = connector_http_rate_limit(clock, response)
+  if trim(to_string(rate_limit.remaining ?? "")) == "0" {
+    return true
+  }
+  // A secondary limit arrives as a 403 with budget left. GitHub marks it with
+  // Retry-After or names it in the message; without this it reads as a
+  // permission failure.
+  if rate_limit.retry_after != nil {
+    return true
+  }
+  return contains(lowercase(__github_error_message(response)), "rate limit")
 }
 
 pub fn __maybe_wait_for_rate_limit(clock: HarnessClock, response: any, cfg: any) {
@@ -1142,9 +1225,14 @@ pub fn __maybe_wait_for_rate_limit(clock: HarnessClock, response: any, cfg: any)
       ?? DEFAULT_RATE_LIMIT_MAX_SLEEP_SECONDS,
   )
   if wait_seconds > max_sleep {
+    // The same fields as the refusal below. This is the site that fires when
+    // the headers are present and the reset is far away, which is exactly the
+    // case a caller most needs them for.
     return __err(
       "rate_limited",
       "github API rate limit reset is more than " + to_string(max_sleep) + " seconds away",
+      {http_status: to_int(response?.status) ?? 403}
+        + __rate_limit_error_fields(clock, response, cfg),
     )
   }
   if wait_seconds > 0 {
@@ -1164,11 +1252,16 @@ pub fn __resolve_token_config(config: any) {
   if app_id == nil || installation_id == nil {
     return __err("missing_credentials", "installation_token requires app_id and installation_id")
   }
+  const scope = __normalize_installation_scope(config?.installation_scope)
+  if is_err(scope) {
+    return scope
+  }
   return Ok(
     {
       api_base_url: to_string(api_base_url),
       app_id: app_id,
       installation_id: installation_id,
+      installation_scope: unwrap(scope),
       private_key_pem: config?.private_key_pem,
       private_key_secret: config?.private_key_secret,
       jwt_alg: config?.jwt_alg ?? "RS256",
@@ -1218,6 +1311,7 @@ pub fn __exchange_installation_token(harness: Harness, config: any) {
     return jwt_result
   }
   const jwt = unwrap(jwt_result)
+  const scope_body = __installation_scope_body(config?.installation_scope)
   const url = __github_api_url(
     config.api_base_url,
     "/app/installations/" + to_string(config.installation_id) + "/access_tokens",
@@ -1237,7 +1331,11 @@ pub fn __exchange_installation_token(harness: Harness, config: any) {
         Authorization: "Bearer " + jwt,
         "Content-Type": "application/json",
       },
-      body: "",
+      body: if len(scope_body) == 0 {
+        ""
+      } else {
+        json_stringify(scope_body)
+      },
       timeout_ms: config?.timeout_ms ?? 30000,
       retry: __github_retry_policy(config),
     },

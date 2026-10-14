@@ -185,58 +185,6 @@ pub fn __github_pr_edit(harness: Harness, args: any, cfg: any) {
   return __typed_pr_edit(updated)
 }
 
-pub fn __github_pr_files(harness: Harness, args: any, cfg: any) {
-  const repo = __repo_parts(args)
-  if is_err(repo) {
-    return repo
-  }
-  const r = unwrap(repo)
-  const number = args?.pr_number ?? args?.number ?? args?.pull_number
-  if number == nil {
-    return __err("schema_drift", "github.pr.files requires number, pr_number, or pull_number")
-  }
-  const files = __github_json(
-    harness,
-    "GET",
-    __github_api_url(
-      cfg.api_base_url,
-      "/repos/" + r.owner + "/" + r.name + "/pulls/" + to_string(number) + "/files"
-        + __pagination_query(args),
-    ),
-    nil,
-    cfg,
-  )
-  if is_err(files) {
-    return files
-  }
-  if type_of(files) != "list" {
-    return __err("invalid_response", "github.pr.files expected GitHub to return a file list")
-  }
-  let normalized = []
-  for file in files {
-    const typed = __typed_pr_file(file)
-    if is_err(typed) {
-      return typed
-    }
-    normalized = normalized + [unwrap(typed)]
-  }
-  return {
-    repo: r.full_name,
-    pull_number: to_int(number),
-    files: normalized,
-    page: if args?.page == nil {
-      1
-    } else {
-      to_int(args.page)
-    },
-    per_page: if args?.per_page == nil {
-      30
-    } else {
-      to_int(args.per_page)
-    },
-  }
-}
-
 pub fn __github_pr_commits(harness: Harness, args: any, cfg: any) {
   const repo = __repo_parts(args)
   if is_err(repo) {

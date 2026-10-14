@@ -1,0 +1,94 @@
+import { process_run } from "std/runtime"
+import { __err } from "./errors"
+
+/**
+ * Resolve the `gh` CLI credential as `{token, user}`.
+ *
+ * With `gh_auth_user` (or `HARN_GITHUB_GH_AUTH_USER`) the token comes from
+ * `gh auth token --user <login>` with every ambient token variable blanked,
+ * so neither `gh auth switch` nor an exported `GH_TOKEN` for another account
+ * can change who the client acts as; a missing login is an auth error, never
+ * a fallback to the active account. Without a login, the ambient token or the
+ * host's active `gh` account is used and `user` is nil. The host comes from
+ * `api_base_url`, so an Enterprise base never receives a github.com token.
+ */
+pub fn __gh_auth_token(
+  env: HarnessEnv,
+  process: HarnessProcess,
+  args: any,
+  api_base_url: any = nil,
+) {
+  const explicit = args?.gh_token
+  if explicit != nil && trim(to_string(explicit)) != "" {
+    return Ok({token: to_string(explicit), user: nil})
+  }
+  const user = trim(to_string(args?.gh_auth_user ?? env.get("HARN_GITHUB_GH_AUTH_USER") ?? ""))
+  if user == "" {
+    const env_token = env.get("GH_TOKEN") ?? env.get("GITHUB_TOKEN")
+    if env_token != nil && trim(to_string(env_token)) != "" {
+      return Ok({token: to_string(env_token), user: nil})
+    }
+  }
+  let argv = ["gh", "auth", "token", "--hostname", __gh_hostname(api_base_url)]
+  let options = {stdin: "", timeout_ms: 10000}
+  if user != "" {
+    argv = argv + ["--user", user]
+    options["env"] = {
+      GH_TOKEN: "",
+      GITHUB_TOKEN: "",
+      GH_ENTERPRISE_TOKEN: "",
+      GITHUB_ENTERPRISE_TOKEN: "",
+    }
+  }
+  const account = if user == "" {
+    "the active account"
+  } else {
+    "account `" + user + "`"
+  }
+  const output = try {
+    process_run(process, argv, options)
+  }
+  if is_err(output) {
+    return __err(
+      "auth",
+      "gh auth fallback could not read a token for " + account + ": "
+        + to_string(unwrap_err(output)),
+    )
+  }
+  const result = unwrap(output)
+  if !(result?.success ?? false) {
+    return __err(
+      "auth",
+      "gh auth fallback has no token for " + account + " (`gh auth token` failed)",
+    )
+  }
+  const token = trim(to_string(result?.stdout ?? ""))
+  if token == "" {
+    return __err("auth", "gh auth fallback returned an empty token for " + account)
+  }
+  return Ok(
+    {
+      token: token,
+      user: if user == "" {
+        nil
+      } else {
+        user
+      },
+    },
+  )
+}
+
+/** The `gh` host for an API base: api.github.com is github.com, Enterprise is its own host. */
+pub fn __gh_hostname(api_base_url: any) -> string {
+  const base = lowercase(trim(to_string(api_base_url ?? "https://api.github.com")))
+  const after_scheme = if starts_with(base, "https://") {
+    base[8:len(base)]
+  } else {
+    base
+  }
+  const host = split(split(after_scheme, "/")[0], ":")[0]
+  if host == "" || host == "api.github.com" {
+    return "github.com"
+  }
+  return host
+}
