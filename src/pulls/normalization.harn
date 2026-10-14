@@ -2,6 +2,7 @@ import { __duration_seconds } from "../actions/normalization"
 import {
   GithubCheckRollup,
   GithubCheckRun,
+  GithubConnectorError,
   GithubMergeQueueEntry,
   GithubPullRequestDetails,
   GithubPullRequestEditReceipt,
@@ -13,6 +14,29 @@ import {
 } from "../contracts"
 import { __err } from "../errors"
 import { pr_edit_result } from "../pr_edit"
+
+type MergeQueueDocument = {
+  data: {
+    repository: {
+      mergeQueue: {
+        url: string,
+        entries: {totalCount: int, pageInfo: {hasNextPage: bool}, nodes: list<dict>},
+      }?,
+    },
+  },
+}
+
+/**
+ * Decode the required nullable queue field and complete inventory once at the provider boundary.
+ */
+pub fn __merge_queue_document(
+  response: unknown,
+) -> Result<MergeQueueDocument, GithubConnectorError> {
+  if !schema_is(response, schema_of(MergeQueueDocument)) {
+    return __err("invalid_response", "github merge queue response omitted complete queue evidence")
+  }
+  return Ok(schema_expect(response, schema_of(MergeQueueDocument)))
+}
 
 pub fn __normalize_graphql_pr(node: any) {
   return {

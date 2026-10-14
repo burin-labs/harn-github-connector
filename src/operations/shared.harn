@@ -2,7 +2,6 @@ import "../client"
 import { GithubConnectorResult, GithubRelease } from "../contracts"
 import { __err } from "../errors"
 import { __validate_pull_response } from "../pulls/normalization"
-import { __request_context_keys } from "../request_options"
 
 pub fn __repo_parts(args: any) {
   if args?.owner != nil && args?.repo != nil && !contains(to_string(args.repo), "/") {
@@ -180,35 +179,9 @@ pub fn __is_status_error(err: any, status: any) {
     || contains(to_string(err?.message ?? ""), "status " + to_string(status))
 }
 
-pub fn __merge_body(args: any, pull: any) {
-  let body = __body_without(
-    args,
-    __request_context_keys()
-      + [
-        "owner",
-        "repo",
-        "pull_number",
-        "admin_override",
-        "delete_branch",
-        "base_branch",
-        "check_branch_protection",
-        "method",
-        "number",
-        "options",
-        "pr_number",
-      ],
-  )
-  if body?.sha == nil && pull?.head?.sha != nil {
-    body["sha"] = pull.head.sha
-  }
-  return body
-}
-
-pub fn __merge_annotation(response: any, args: any) {
-  if args?.admin_override ?? false {
-    return response + {admin_override_requested: true}
-  }
-  return response
+pub fn __merge_body(args: any) {
+  return pick(args, ["commit_title", "commit_message"])
+    + {sha: args.expected_head_oid, merge_method: args?.method ?? args?.merge_method ?? "merge"}
 }
 
 pub fn __delete_pull_head_branch(harness: Harness, args: any, pull: any, cfg: any) {

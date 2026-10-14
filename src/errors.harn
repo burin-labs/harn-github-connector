@@ -83,11 +83,14 @@ fn __error_category(code: any) {
   if code == "rate_limit" || code == "rate_limited" {
     return "rate_limit"
   }
-  if code == "branch_protection" || code == "protected_branch_requires_admin_override" {
+  if code == "branch_protection" {
     return "branch_protection"
   }
-  if code == "merge_queue" {
+  if code == "merge_queue" || code == "incomplete_queue" {
     return "merge_queue"
+  }
+  if code == "auto_merge_not_needed" {
+    return "merge_state"
   }
   if code == "checks_pending" {
     return "checks_pending"

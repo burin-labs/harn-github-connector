@@ -498,6 +498,8 @@ pub type GithubConnectorError = {
   compensation_message?: string,
   expected_commit_count?: int,
   observed_commit_count?: int,
+  expected_queue_entry_count?: int,
+  observed_queue_entry_count?: int,
   expected_release_id?: int,
   observed_release_id?: int,
   expected_tag_ref_oid?: string,
@@ -690,6 +692,15 @@ pub type GithubMergeQueueEnqueueReceipt = {
 }
 ```
 
+### type `GithubMergeQueueEnqueueRequest`
+
+Enqueue one pull request only at the head the caller verified.
+
+```harn
+pub type GithubMergeQueueEnqueueRequest = GithubPullRequestRequest \
+  & {expected_head_oid: string, jump?: bool}
+```
+
 ### type `GithubMergeQueueEntries`
 
 Ordered merge-queue entries for one repository branch.
@@ -699,9 +710,18 @@ pub type GithubMergeQueueEntries = {
   repo: string,
   branch: string,
   configured: bool,
+  total_count: int,
   url: string?,
   entries: list<GithubMergeQueueEntry>,
 }
+```
+
+### type `GithubMergeQueueEntriesRequest`
+
+Ordered merge-queue entries for one repository branch.
+
+```harn
+pub type GithubMergeQueueEntriesRequest = GithubRepositoryRequest & {branch: string, limit?: int}
 ```
 
 ### type `GithubMergeQueueEntry`
@@ -995,31 +1015,39 @@ pub type GithubPullRequestFiles = {
 
 ### type `GithubPullRequestMergeReceipt`
 
-Protected-branch-aware merge evidence. Raw provider documents stay nested.
+Merge evidence retains the original head and the source GitHub actually integrated.
 
 ```harn
 pub type GithubPullRequestMergeReceipt = {
   pull_request: dict,
   protected: bool,
   branch_protection: dict?,
-  merge: dict,
+  merge: GithubPullRequestMergeResult,
   delete_branch?: dict,
 }
 ```
 
 ### type `GithubPullRequestMergeRequest`
 
-Request for a protected-branch-aware pull-request merge.
+Request for a pull-request merge pinned to the caller's verified head. GitHub enforces branch policy.
 
 ```harn
 pub type GithubPullRequestMergeRequest = GithubPullRequestRequest \
   & {
-  admin_override?: bool,
+  expected_head_oid: string,
   delete_branch?: bool,
   method?: "merge" | "squash" | "rebase",
   commit_title?: string,
   commit_message?: string,
 }
+```
+
+### type `GithubPullRequestMergeResult`
+
+GitHub's confirmed merge outcome and integrated commit.
+
+```harn
+pub type GithubPullRequestMergeResult = {merged: bool, sha: string, message?: string}
 ```
 
 ### type `GithubPullRequestRef`
@@ -2423,6 +2451,30 @@ pub fn github_latest_release_lookup(
 }
 ```
 
+### fn `github_merge_queue_enqueue`
+
+Enqueue one pull request under the caller's exact head lease.
+
+```harn
+pub fn github_merge_queue_enqueue(
+  harness: Harness,
+  request: GithubMergeQueueEnqueueRequest,
+) -> GithubConnectorResult<GithubMergeQueueEnqueueReceipt> {
+}
+```
+
+### fn `github_merge_queue_entries`
+
+Read the bounded complete merge queue for one branch.
+
+```harn
+pub fn github_merge_queue_entries(
+  harness: Harness,
+  request: GithubMergeQueueEntriesRequest,
+) -> GithubConnectorResult<GithubMergeQueueEntries> {
+}
+```
+
 ### fn `github_pr_commits`
 
 Read every commit on one stable pull-request head.
@@ -2731,7 +2783,7 @@ pub fn pulls_list_with_checks(
 
 ### fn `pulls_merge_safe`
 
-Merge one pull request after checking its base-branch protection.
+Merge the caller's exact verified head, subject to GitHub's effective branch policy.
 
 ```harn
 pub fn pulls_merge_safe(
@@ -3028,6 +3080,8 @@ pub type GithubConnectorError = {
   compensation_message?: string,
   expected_commit_count?: int,
   observed_commit_count?: int,
+  expected_queue_entry_count?: int,
+  observed_queue_entry_count?: int,
   expected_release_id?: int,
   observed_release_id?: int,
   expected_tag_ref_oid?: string,
