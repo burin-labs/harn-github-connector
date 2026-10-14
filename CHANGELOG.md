@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.9.0 - 2026-10-14
+
 - Breaking: every pull-request merge requires the caller's verified
   `expected_head_oid`. All merge aliases share that guard and pin GitHub's
   `sha`; a changed head receives `stale_head`. Normal protected merges rely on
