@@ -180,6 +180,8 @@ pipeline test_typed_outbound(harness: Harness, task: any) {
                   mergeQueue: {
                     url: "https://github.com/octo-org/octo-repo/queue/main",
                     entries: {
+                      totalCount: 1,
+                      pageInfo: {hasNextPage: false},
                       nodes: [
                         {
                           id: "MQE_103",
@@ -515,8 +517,8 @@ pipeline test_typed_outbound(harness: Harness, task: any) {
     "github.pr.merge",
     auth + {repo: "octo-org/octo-repo", number: 101, method: "squash"},
   )
-  assert(is_err(blocked), "protected branch blocks github.pr.merge without override")
-  assert_eq(unwrap_err(blocked).category, "branch_protection", "branch protection error category")
+  assert(is_err(blocked), "github.pr.merge requires the caller's verified head")
+  assert_eq(unwrap_err(blocked).code, "schema_drift", "missing head lease is refused")
   harness.testing.http_mock(
     "GET",
     base + "/repos/octo-org/octo-repo/pulls?state=open",

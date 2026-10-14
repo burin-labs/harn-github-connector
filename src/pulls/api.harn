@@ -5,6 +5,10 @@ import {
   GithubAutoMergeReceipt,
   GithubAutoMergeRequest,
   GithubConnectorResult,
+  GithubMergeQueueEnqueueReceipt,
+  GithubMergeQueueEnqueueRequest,
+  GithubMergeQueueEntries,
+  GithubMergeQueueEntriesRequest,
   GithubMergeability,
   GithubMergeabilityRequest,
   GithubPullRequestCommits,
@@ -62,7 +66,7 @@ pub fn pulls_update(
   return call_typed(harness, "github.pr.edit", args, GithubPullRequestEditReceipt)
 }
 
-/** Merge one pull request after checking its base-branch protection. */
+/** Merge the caller's exact verified head, subject to GitHub's effective branch policy. */
 pub fn pulls_merge_safe(
   harness: Harness,
   request: GithubPullRequestMergeRequest,
@@ -72,6 +76,32 @@ pub fn pulls_merge_safe(
     "pulls.merge_safe",
     __request_args(request),
     GithubPullRequestMergeReceipt,
+  )
+}
+
+/** Read the bounded complete merge queue for one branch. */
+pub fn github_merge_queue_entries(
+  harness: Harness,
+  request: GithubMergeQueueEntriesRequest,
+) -> GithubConnectorResult<GithubMergeQueueEntries> {
+  return call_typed(
+    harness,
+    "github.merge_queue.entries",
+    __request_args(request),
+    GithubMergeQueueEntries,
+  )
+}
+
+/** Enqueue one pull request under the caller's exact head lease. */
+pub fn github_merge_queue_enqueue(
+  harness: Harness,
+  request: GithubMergeQueueEnqueueRequest,
+) -> GithubConnectorResult<GithubMergeQueueEnqueueReceipt> {
+  return call_typed(
+    harness,
+    "github.merge_queue.enqueue",
+    __request_args(request),
+    GithubMergeQueueEnqueueReceipt,
   )
 }
 

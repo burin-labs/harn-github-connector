@@ -226,7 +226,13 @@ pipeline test_merge_captain_methods(harness: Harness, task: any) {
     base + "/repos/octo-org/octo-repo/pulls/101/merge",
     {
       status: 200,
-      body: json_stringify({merged: true, message: "Pull Request successfully merged"}),
+      body: json_stringify(
+        {
+          merged: true,
+          sha: "dddddddddddddddddddddddddddddddddddddddd",
+          message: "Pull Request successfully merged",
+        },
+      ),
       headers: {"x-ratelimit-remaining": "2"},
     },
   )
@@ -238,24 +244,54 @@ pipeline test_merge_captain_methods(harness: Harness, task: any) {
   const merged = unwrap(
     pulls_merge_safe(
       harness,
-      auth + {merge_method: "squash", admin_override: true, delete_branch: true}
+      auth
+        + {
+          method: "squash",
+          expected_head_oid: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          delete_branch: true,
+        }
         + {owner: "octo-org", repo: "octo-repo", pull_number: 101},
     ),
   )
   assert(merged.protected, "merge_safe detected protected branch")
   assert(merged.merge.merged, "merge_safe merge response")
-  assert(merged.merge.admin_override_requested, "merge_safe admin override annotation")
+  assert(
+    !harness.testing.http_mock_calls()[10].body.contains("admin_override"),
+    "normal protected merge never claims an override",
+  )
   assert_eq(merged.delete_branch.status, 204, "merge_safe deleted branch")
+  harness.testing.http_mock(
+    "GET",
+    base + "/repos/octo-org/octo-repo/pulls/102",
+    {
+      status: 200,
+      headers: {},
+      body: json_stringify(
+        {number: 102, base: {ref: "main"}, head: {sha: "cccccccccccccccccccccccccccccccccccccccc"}},
+      ),
+    },
+  )
   harness.testing.http_mock(
     "PUT",
     base + "/repos/octo-org/octo-repo/pulls/102/merge",
-    {status: 200, body: json_stringify({merged: true}), headers: {"x-ratelimit-remaining": "2"}},
+    {
+      status: 200,
+      body: json_stringify({merged: true, sha: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}),
+      headers: {"x-ratelimit-remaining": "2"},
+    },
   )
   const direct_merge = unwrap(
     call(
       harness,
       "pulls.merge",
-      auth + {owner: "octo-org", repo: "octo-repo", pull_number: 102, merge_method: "merge"},
+      auth
+        + {
+          owner: "octo-org",
+          repo: "octo-repo",
+          pull_number: 102,
+          method: "merge",
+          expected_head_oid: "cccccccccccccccccccccccccccccccccccccccc",
+        },
     ),
   )
   assert(direct_merge.merged, "pulls.merge response")
@@ -264,7 +300,13 @@ pipeline test_merge_captain_methods(harness: Harness, task: any) {
   const conflict_body: {title: string, body: string} = json_parse(calls[2].body)
   const labels_body: {labels: list<string>} = json_parse(calls[4].body)
   const safe_merge_body: {merge_method: string, sha: string} = json_parse(calls[10].body)
-  const direct_merge_body: {merge_method: string} = json_parse(calls[12].body)
+  const direct_request = calls.find(
+    { request ->
+      request.method == "PUT" && request.url == base + "/repos/octo-org/octo-repo/pulls/102/merge"
+    },
+  )
+  assert(direct_request != nil)
+  const direct_merge_body: {merge_method: string} = json_parse(direct_request.body)
   assert_eq(calls[0].url, base + "/graphql", "list_with_checks uses GraphQL")
   assert_eq(list_body.variables.limit, 2, "GraphQL limit variable")
   assert(contains(list_body.query, "mergeStateStatus"), "GraphQL query includes merge state")

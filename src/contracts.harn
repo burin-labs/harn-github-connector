@@ -39,6 +39,8 @@ pub type GithubConnectorError = {
   compensation_message?: string,
   expected_commit_count?: int,
   observed_commit_count?: int,
+  expected_queue_entry_count?: int,
+  observed_queue_entry_count?: int,
   expected_release_id?: int,
   observed_release_id?: int,
   expected_tag_ref_oid?: string,
@@ -277,10 +279,12 @@ pub type GithubPullRequestsWithChecks = list<GithubPullRequestWithChecks>
 pub type GithubPullRequestEditRequest = GithubPullRequestRequest \
   & {edits: GithubPullRequestEditInput}
 
-/** Request for a protected-branch-aware pull-request merge. */
+/**
+ * Request for a pull-request merge pinned to the caller's verified head. GitHub enforces branch policy.
+ */
 pub type GithubPullRequestMergeRequest = GithubPullRequestRequest \
   & {
-  admin_override?: bool,
+  expected_head_oid: string,
   delete_branch?: bool,
   method?: "merge" | "squash" | "rebase",
   commit_title?: string,
@@ -305,12 +309,15 @@ pub type GithubAutoMergeDisableRequest = GithubPullRequestRequest \
   restore_merge_method: "merge" | "squash" | "rebase",
 }
 
-/** Protected-branch-aware merge evidence. Raw provider documents stay nested. */
+/** GitHub's confirmed merge outcome and integrated commit. */
+pub type GithubPullRequestMergeResult = {merged: bool, sha: string, message?: string}
+
+/** Merge evidence retains the original head and the source GitHub actually integrated. */
 pub type GithubPullRequestMergeReceipt = {
   pull_request: dict,
   protected: bool,
   branch_protection: dict?,
-  merge: dict,
+  merge: GithubPullRequestMergeResult,
   delete_branch?: dict,
 }
 
@@ -539,10 +546,18 @@ pub type GithubMergeQueueMembership = {
 }
 
 /** Ordered merge-queue entries for one repository branch. */
+pub type GithubMergeQueueEntriesRequest = GithubRepositoryRequest & {branch: string, limit?: int}
+
+/** Enqueue one pull request only at the head the caller verified. */
+pub type GithubMergeQueueEnqueueRequest = GithubPullRequestRequest \
+  & {expected_head_oid: string, jump?: bool}
+
+/** Ordered merge-queue entries for one repository branch. */
 pub type GithubMergeQueueEntries = {
   repo: string,
   branch: string,
   configured: bool,
+  total_count: int,
   url: string?,
   entries: list<GithubMergeQueueEntry>,
 }

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Breaking: every pull-request merge requires the caller's verified
+  `expected_head_oid`. All merge aliases share that guard and pin GitHub's
+  `sha`; a changed head receives `stale_head`. Normal protected merges rely on
+  GitHub's effective policy, and the misleading `admin_override` flag is removed.
+- Require a confirmed merge result and integrated commit before reporting success.
+- Add typed `github_merge_queue_entries` and `github_merge_queue_enqueue` APIs.
+  Queue reads include `total_count` and refuse absent or partial census evidence.
+- Classify GitHub's clean-status auto-merge refusal as `auto_merge_not_needed`.
+
 - Pace every REST call against a per-credential budget fed from GitHub's
   `x-ratelimit-*` response headers. Requests carry `priority`: `critical`
   (merges, queue entry, releases) is never refused locally, `normal` (the

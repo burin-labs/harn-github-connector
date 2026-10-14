@@ -338,25 +338,11 @@ pub fn __call_raw(harness: Harness, method: any, args: any = {}) {
     return __pulls_create(harness, args, cfg)
   }
   if method == "pulls.merge" {
-    const merged = __github_json(
-      harness,
-      "PUT",
-      __github_api_url(
-        cfg.api_base_url,
-        "/repos/" + args.owner + "/" + args.repo + "/pulls/" + to_string(args.pull_number)
-          + "/merge",
-      ),
-      __body_without(
-        args,
-        __request_context_keys()
-          + ["owner", "repo", "pull_number", "admin_override", "delete_branch"],
-      ),
-      cfg,
-    )
+    const merged = __pulls_merge_safe(harness, args, cfg)
     if is_err(merged) {
       return merged
     }
-    return __merge_annotation(merged, args)
+    return merged.merge
   }
   if method == "pulls.merge_safe" {
     return __pulls_merge_safe(harness, args, cfg)

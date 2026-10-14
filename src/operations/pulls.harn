@@ -425,11 +425,6 @@ pub fn __github_pr_merge(harness: Harness, args: any, cfg: any) {
     cfg,
   )
   if is_err(merged) {
-    const err = unwrap_err(merged)
-    if err?.category == "branch_protection"
-      || err?.code == "protected_branch_requires_admin_override" {
-      return __err("branch_protection", err?.message ?? "branch protection blocked merge")
-    }
     return merged
   }
   return merged
@@ -506,24 +501,30 @@ pub fn __github_merge_queue_entries(harness: Harness, args: any, cfg: any) {
   if response?.errors != nil && len(response.errors) > 0 {
     return __graphql_err("github merge queue query", response.errors)
   }
-  const repository = response?.data?.repository
-  if type_of(repository) != "dict" {
-    return __err("invalid_response", "github merge queue response omitted repository evidence")
+  const document = __merge_queue_document(response)
+  if is_err(document) {
+    return document
   }
-  const queue = repository?.mergeQueue
+  const queue = unwrap(document).data.repository.mergeQueue
   if queue == nil {
     const absent: GithubMergeQueueEntries = {
       repo: r.full_name,
       branch: to_string(branch),
       configured: false,
+      total_count: 0,
       url: nil,
       entries: [],
     }
     return absent
   }
-  const nodes = queue?.entries?.nodes
-  if type_of(nodes) != "list" {
-    return __err("invalid_response", "github merge queue response omitted entries.nodes")
+  const nodes = queue.entries.nodes
+  const total = queue.entries.totalCount
+  if total < 0 || queue.entries.pageInfo.hasNextPage || total != len(nodes) {
+    return __err(
+      "incomplete_queue",
+      "github merge queue exceeds the requested complete census",
+      {expected_queue_entry_count: total, observed_queue_entry_count: len(nodes)},
+    )
   }
   let entries: list<GithubMergeQueueEntry> = []
   for entry in nodes {
@@ -533,11 +534,16 @@ pub fn __github_merge_queue_entries(harness: Harness, args: any, cfg: any) {
     }
     entries = entries + [unwrap(typed)]
   }
+  if len(entries.map({ entry -> entry.id }).unique()) != len(entries)
+    || len(entries.map({ entry -> entry.pull_number }).unique()) != len(entries) {
+    return __err("invalid_response", "github merge queue contains duplicate entries")
+  }
   const result: GithubMergeQueueEntries = {
     repo: r.full_name,
     branch: to_string(branch),
     configured: true,
-    url: to_string(queue?.url ?? ""),
+    total_count: total,
+    url: queue.url,
     entries: entries,
   }
   return result
@@ -876,6 +882,17 @@ pub fn __pulls_list_with_checks(harness: Harness, args: any, cfg: any) {
 }
 
 pub fn __pulls_merge_safe(harness: Harness, args: any, cfg: any) {
+  const expected = trim(to_string(args?.expected_head_oid ?? ""))
+  if regex_match("^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$", expected) == nil {
+    return __err(
+      "schema_drift",
+      "pulls.merge_safe requires the caller's verified expected_head_oid",
+    )
+  }
+  const method = args?.method ?? args?.merge_method ?? "merge"
+  if !["merge", "squash", "rebase"].contains(method) {
+    return __err("schema_drift", "pulls.merge_safe merge method is invalid")
+  }
   const pull = __github_json(
     harness,
     "GET",
@@ -889,6 +906,14 @@ pub fn __pulls_merge_safe(harness: Harness, args: any, cfg: any) {
   if is_err(pull) {
     return pull
   }
+  const valid = __validate_pull_identity(pull, "pulls.merge_safe")
+  if is_err(valid) {
+    return valid
+  }
+  const observed = trim(to_string(pull?.head?.sha ?? ""))
+  if observed != expected {
+    return __stale_pr_head(expected, observed)
+  }
   const base_branch = pull?.base?.ref ?? args?.base_branch
   const protection_result = __github_branch_protection_raw(
     harness,
@@ -901,13 +926,6 @@ pub fn __pulls_merge_safe(harness: Harness, args: any, cfg: any) {
   }
   const protection = unwrap(protection_result)
   const protected = protection != nil
-  if protected && !(args?.admin_override ?? false) {
-    return __err(
-      "protected_branch_requires_admin_override",
-      "base branch `" + to_string(base_branch)
-        + "` is protected; pass admin_override to merge through it",
-    )
-  }
   const merged = __github_json(
     harness,
     "PUT",
@@ -915,17 +933,28 @@ pub fn __pulls_merge_safe(harness: Harness, args: any, cfg: any) {
       cfg.api_base_url,
       "/repos/" + args.owner + "/" + args.repo + "/pulls/" + to_string(args.pull_number) + "/merge",
     ),
-    __merge_body(args, pull),
+    __merge_body(args + {expected_head_oid: expected}),
     cfg,
   )
   if is_err(merged) {
+    if unwrap_err(merged)?.http_status == 409 {
+      return __err(
+        "stale_head",
+        "GitHub refused the merge because the verified head changed",
+        {expected_head_oid: expected},
+      )
+    }
     return merged
+  }
+  if merged?.merged != true || !schema_is(merged, schema_of(GithubPullRequestMergeResult))
+    || regex_match("^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$", to_string(merged?.sha ?? "")) == nil {
+    return __err("invalid_response", "GitHub merge response did not confirm an integrated commit")
   }
   let result = {
     pull_request: pull,
     protected: protected,
     branch_protection: protection,
-    merge: __merge_annotation(merged, args),
+    merge: merged,
   }
   if args?.delete_branch ?? false {
     const deleted = __delete_pull_head_branch(harness, args, pull, cfg)
@@ -1014,6 +1043,20 @@ fn __pulls_enable_auto_merge(harness: Harness, args: any, cfg: any) {
       return __err(
         "stale_head",
         "GitHub rejected auto-merge because the pull request head changed",
+        {expected_head_oid: expected_head_oid, observed_head_oid: observed_head_oid},
+      )
+    }
+    // GitHub provides this refusal as a GraphQL semantic error. Keep the
+    // provider's exact spelling here; callers consume a stable typed code.
+    if graph.errors.all(
+      { error ->
+        error?.type == "UNPROCESSABLE"
+          && error?.message == "Pull request is in clean status"
+      },
+    ) {
+      return __err(
+        "auto_merge_not_needed",
+        "pull request is already mergeable at the expected head",
         {expected_head_oid: expected_head_oid, observed_head_oid: observed_head_oid},
       )
     }

@@ -96,6 +96,8 @@ query HarnGithubConnectorMergeQueueEntries($owner: String!, $repo: String!, $bra
     mergeQueue(branch: $branch) {
       url
       entries(first: $limit) {
+        totalCount
+        pageInfo { hasNextPage }
         nodes {
           id position state enqueuedAt jump solo estimatedTimeToMerge
           headCommit { oid }
