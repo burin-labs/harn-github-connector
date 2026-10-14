@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.10.0 - 2026-10-14
+
 - Add `github_pr_review_census` with bounded complete review and thread inventories,
   exact-head confirmation, original review commit and actor identity, and explicit
   counts. Missing, partial, repeated, changing, and over-limit evidence is refused.
