@@ -2,7 +2,6 @@ import "../client"
 import { GithubConnectorResult, GithubRelease } from "../contracts"
 import { __err } from "../errors"
 import { __validate_pull_response } from "../pulls/normalization"
-import { __request_context_keys } from "../request_options"
 
 pub fn __repo_parts(args: any) {
   if args?.owner != nil && args?.repo != nil && !contains(to_string(args.repo), "/") {
