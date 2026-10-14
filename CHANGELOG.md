@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add `github_pr_review_census` with bounded complete review and thread inventories,
+  exact-head confirmation, original review commit and actor identity, and explicit
+  counts. Missing, partial, repeated, changing, and over-limit evidence is refused.
+- Preserve unknown or deleted review actors without assigning approval authority.
+- Replace removed collection methods with `std/json` projections and list
+  concatenation so connector operations run on the newer Harn runtime.
+
 ## 0.9.0 - 2026-10-14
 
 - Breaking: every pull-request merge requires the caller's verified

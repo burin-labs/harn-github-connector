@@ -40,9 +40,8 @@ pub fn source_length_violations(
     source_count = source_count + 1
     const lines = logical_line_count(fs.read_text(entry.path))
     if lines > policy.max_lines {
-      violations = violations.appending(
-        {path: entry.path, actual_lines: lines, max_lines: policy.max_lines},
-      )
+      violations = violations
+        + [{path: entry.path, actual_lines: lines, max_lines: policy.max_lines}]
     }
   }
   if source_count == 0 {

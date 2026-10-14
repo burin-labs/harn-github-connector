@@ -1,3 +1,4 @@
+import { omit } from "std/json"
 import { call_typed } from "../api"
 import {
   GithubAutoMergeDisableReceipt,
@@ -19,6 +20,8 @@ import {
   GithubPullRequestFileCensusRequest,
   GithubPullRequestMergeReceipt,
   GithubPullRequestMergeRequest,
+  GithubPullRequestReviewCensus,
+  GithubPullRequestReviewCensusRequest,
   GithubPullRequestUpsertReceipt,
   GithubPullRequestUpsertRequest,
   GithubPullRequestsWithChecks,
@@ -26,6 +29,21 @@ import {
 } from "../contracts"
 import { pr_edit_body } from "../pr_edit"
 import { __request_args } from "../request_options"
+
+/**
+ * Read complete review and thread inventories tied to one expected head, without admission policy.
+ */
+pub fn github_pr_review_census(
+  harness: Harness,
+  request: GithubPullRequestReviewCensusRequest,
+) -> GithubConnectorResult<GithubPullRequestReviewCensus> {
+  return call_typed(
+    harness,
+    "github.pr.review_census",
+    __request_args(request),
+    GithubPullRequestReviewCensus,
+  )
+}
 
 /** List pull requests with normalized merge state and CI contexts. */
 pub fn pulls_list_with_checks(
@@ -62,7 +80,7 @@ pub fn pulls_update(
   if is_err(body) {
     return Err(unwrap_err(body))
   }
-  const args = __request_args(request).removing("edits") + unwrap(body)
+  const args = omit(__request_args(request), ["edits"]) + unwrap(body)
   return call_typed(harness, "github.pr.edit", args, GithubPullRequestEditReceipt)
 }
 

@@ -121,7 +121,7 @@ fn storage_inventory<T>(
         return __err("incomplete_page", "Storage inventory repeated an object identity")
       }
       seen[key] = true
-      items = items.appending(record)
+      items = items + [record]
     }
     if len(items) == total {
       return Ok({items: items, total_count: total, pages_fetched: page})

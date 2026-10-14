@@ -3,6 +3,7 @@ import {
   connector_http_rate_limit,
   connector_http_request,
 } from "std/connectors/shared"
+import { omit } from "std/json"
 import { __budget_admit, __budget_observe, __budget_record_refusal } from "./budget"
 import { __err } from "./errors"
 import { __gh_auth_token } from "./gh_auth"
@@ -105,14 +106,14 @@ pub fn invalidate_installation_token(runtime: HarnessRuntime, installation_id: a
   let cache = __token_cache(runtime)
   for cached_key in cache.keys() {
     if cached_key == key || cached_key.starts_with(key + ":") {
-      cache = cache.removing(cached_key)
+      cache = omit(cache, [cached_key])
     }
   }
   runtime.store_set(TOKEN_CACHE_KEY, cache)
 }
 
 fn __invalidate_token_config(runtime: HarnessRuntime, config: dict) {
-  const cache = __token_cache(runtime).removing(__installation_token_cache_key(config))
+  const cache = omit(__token_cache(runtime), [__installation_token_cache_key(config)])
   runtime.store_set(TOKEN_CACHE_KEY, cache)
 }
 
@@ -258,11 +259,7 @@ pub fn __allow_gh_auth_fallback(env: HarnessEnv, args: any) {
 }
 
 pub fn __body_without(args: any, keys: any) {
-  let body = (args ?? {}) + {}
-  for key in keys {
-    body = body.removing(key)
-  }
-  return body
+  return omit(args ?? {}, keys)
 }
 
 pub fn __github_api_url(api_base_url: any, path: any) {
@@ -605,7 +602,7 @@ pub fn __commit_write_body(args: any, strip_keys: any, cfg: any) {
         "author_mode=bot must omit custom author and committer fields so GitHub uses the App [bot] identity",
       )
     }
-    body = body.removing("author").removing("committer")
+    body = omit(body, ["author", "committer"])
     return Ok(body)
   }
   const author = __human_commit_author(args)

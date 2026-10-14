@@ -1066,6 +1066,48 @@ Named pull-request identity used instead of a positional repository/number tuple
 pub type GithubPullRequestRequest = GithubRepositoryRequest & {pull_number: int}
 ```
 
+### type `GithubPullRequestReview`
+
+Review state retains its exact commit and actor rather than implying a current-head approval.
+
+```harn
+pub type GithubPullRequestReview = {
+  id: string,
+  state: GithubReviewState,
+  commit_oid: string?,
+  author: GithubReviewActor?,
+  updated_at: string,
+}
+```
+
+### type `GithubPullRequestReviewCensus`
+
+Declared and observed inventories must agree for both connections before this record exists.
+
+```harn
+pub type GithubPullRequestReviewCensus = {
+  repository: string,
+  number: int,
+  head_oid: string,
+  base_oid: string,
+  review_decision: GithubReviewDecision?,
+  total_reviews: int,
+  total_threads: int,
+  reviews: list<GithubPullRequestReview>,
+  threads: list<GithubReviewThread>,
+  pages_fetched: int,
+}
+```
+
+### type `GithubPullRequestReviewCensusRequest`
+
+Complete review evidence is read for the caller's exact pull-request head.
+
+```harn
+pub type GithubPullRequestReviewCensusRequest = GithubPullRequestRequest \
+  & {expected_head_oid: string, per_page?: int, max_pages?: int, maximum_count?: int}
+```
+
 ### type `GithubPullRequestSummary`
 
 Stable pull-request state shared by summary and detail operations.
@@ -1498,6 +1540,42 @@ pub type GithubRetryPolicy = {
   retry_on?: list<int>,
   respect_retry_after?: bool,
 }
+```
+
+### type `GithubReviewActor`
+
+A missing or deleted actor stays unknown; consumers decide who may approve.
+
+```harn
+pub type GithubReviewActor = {id: string, login: string, type: string}
+```
+
+### type `GithubReviewDecision`
+
+GitHub's aggregate decision may be absent when no applicable rule supplies it.
+
+```harn
+pub type GithubReviewDecision = "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED"
+```
+
+### type `GithubReviewState`
+
+GitHub's closed review lifecycle, without deriving admission from its wording.
+
+```harn
+pub type GithubReviewState = "APPROVED" \
+  | "CHANGES_REQUESTED" \
+  | "COMMENTED" \
+  | "DISMISSED" \
+  | "PENDING"
+```
+
+### type `GithubReviewThread`
+
+Resolution and outdated-source status remain separate observable facts.
+
+```harn
+pub type GithubReviewThread = {id: string, resolved: bool, outdated: bool}
 ```
 
 ### type `GithubRunnerJitConfigRequest`
@@ -2499,6 +2577,18 @@ pub fn github_pr_file_census(
   harness: Harness,
   request: GithubPullRequestFileCensusRequest,
 ) -> GithubConnectorResult<GithubPullRequestFileCensus> {
+}
+```
+
+### fn `github_pr_review_census`
+
+Read complete review and thread inventories tied to one expected head, without admission policy.
+
+```harn
+pub fn github_pr_review_census(
+  harness: Harness,
+  request: GithubPullRequestReviewCensusRequest,
+) -> GithubConnectorResult<GithubPullRequestReviewCensus> {
 }
 ```
 

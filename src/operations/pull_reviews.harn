@@ -1,0 +1,265 @@
+import { __github_api_url, __github_json } from "../client"
+import {
+  GithubPullRequestReview,
+  GithubPullRequestReviewCensus,
+  GithubReviewActor,
+  GithubReviewDecision,
+  GithubReviewState,
+} from "../contracts"
+import { __err, __graphql_err } from "../errors"
+import { __repo_parts } from "./shared"
+
+type Identity = {
+  number: int,
+  headRefOid: string,
+  baseRefOid: string,
+  reviewDecision: GithubReviewDecision?,
+}
+
+type Connection<T> = {
+  totalCount: int,
+  nodes: list<T>,
+  pageInfo: {hasNextPage: bool, endCursor: string?},
+}
+
+type Page<T> = Identity & {inventory: Connection<T>}
+
+type Read<T> = {identity: Identity, total: int, nodes: list<T>, pages: int}
+
+type ReviewNode = {
+  id: string,
+  state: GithubReviewState,
+  commit: {oid: string}?,
+  author: GithubReviewActor?,
+  updatedAt: string,
+}
+
+type ThreadNode = {id: string, isResolved: bool, isOutdated: bool}
+
+type ReviewsPage = Page<ReviewNode>
+
+type ThreadsPage = Page<ThreadNode>
+
+type Final = Identity & {reviews: {totalCount: int}, reviewThreads: {totalCount: int}}
+
+const IDENTITY_FIELDS = "number headRefOid baseRefOid reviewDecision"
+
+fn git_id(value: string) -> bool {
+  return regex_match("^[0-9a-f]{40}([0-9a-f]{24})?$", value) != nil
+}
+
+fn graph(harness: Harness, cfg: any, query: string, variables: dict) {
+  const response = __github_json(
+    harness,
+    "POST",
+    __github_api_url(cfg.api_base_url, "/graphql"),
+    {query: query, variables: variables},
+    cfg,
+  )
+  if is_err(response) {
+    return response
+  }
+  if response?.errors != nil && len(response.errors) > 0 {
+    return __graphql_err("github.pr.review_census", response.errors)
+  }
+  return response?.data?.repository?.pullRequest
+}
+
+/** Each refusal is intrinsic to the complete, stable, bounded page contract. */
+@complexity(allow)
+fn read_connection<T>(
+  harness: Harness,
+  cfg: any,
+  variables: dict,
+  kind: string,
+  fields: string,
+  page_schema: Schema<T>,
+  expected: string,
+  maximum: int,
+  max_pages: int,
+) {
+  const query = "query($owner:String!,$name:String!,$number:Int!,$first:Int!,$after:String) { "
+    + "repository(owner:$owner,name:$name) { pullRequest(number:$number) { "
+    + IDENTITY_FIELDS
+    + " inventory:"
+    + kind
+    + "(first:$first,after:$after) { "
+    + "totalCount nodes { "
+    + fields
+    + " } pageInfo { hasNextPage endCursor } } } } }"
+  let after: string? = nil
+  let cursors: list<string> = []
+  let nodes: list<any> = []
+  let ids: list<string> = []
+  let identity: Identity? = nil
+  let declared: int? = nil
+  let page = 1
+  while page <= max_pages {
+    const raw = graph(harness, cfg, query, variables + {after: after})
+    if is_err(raw) {
+      return raw
+    }
+    if !schema_is(raw, page_schema) {
+      return __err("invalid_response", "review inventory page is missing or malformed")
+    }
+    const decoded: any = schema_expect(raw, page_schema)
+    const current: Identity = {
+      number: decoded.number,
+      headRefOid: decoded.headRefOid,
+      baseRefOid: decoded.baseRefOid,
+      reviewDecision: decoded.reviewDecision,
+    }
+    if current.number != variables.number || current.headRefOid != expected
+      || !git_id(current.baseRefOid)
+      || (identity != nil && current != identity) {
+      return __err("stale_head", "pull-request identity changed during review pagination")
+    }
+    identity = current
+    const inventory = decoded.inventory
+    if inventory.totalCount < 0 || inventory.totalCount > maximum
+      || (declared != nil && declared != inventory.totalCount)
+      || len(inventory.nodes) > variables.first {
+      return __err("invalid_response", "review inventory count is invalid or changed")
+    }
+    declared = inventory.totalCount
+    for node in inventory.nodes {
+      const id = to_string(node?.id ?? "")
+      if trim(id) == "" || ids.contains(id) {
+        return __err("invalid_response", "review inventory has a missing or duplicate identity")
+      }
+      ids = ids + [id]
+      nodes = nodes + [node]
+    }
+    if len(nodes) > inventory.totalCount {
+      return __err("invalid_response", "review inventory exceeds its declared count")
+    }
+    if !inventory.pageInfo.hasNextPage {
+      if len(nodes) != inventory.totalCount {
+        return __err("invalid_response", "review inventory ended before its declared count")
+      }
+      const result: Read<any> = {
+        identity: current,
+        total: inventory.totalCount,
+        nodes: nodes,
+        pages: page,
+      }
+      return result
+    }
+    const cursor = inventory.pageInfo.endCursor
+    if len(inventory.nodes) != variables.first || len(nodes) >= inventory.totalCount
+      || cursor == nil
+      || trim(cursor) == ""
+      || cursors.contains(cursor)
+      || cursor == after {
+      return __err("invalid_response", "review inventory has incomplete or repeated pagination")
+    }
+    cursors = cursors + [cursor]
+    after = cursor
+    page += 1
+  }
+  return __err("invalid_response", "review inventory exceeds the bounded page limit")
+}
+
+fn valid_bound(value: any, minimum: int, maximum: int) -> bool {
+  return type_of(value) == "int" && value >= minimum && value <= maximum
+}
+
+pub fn __github_pr_review_census(harness: Harness, args: any, cfg: any) {
+  const repo = __repo_parts(args)
+  if is_err(repo) {
+    return repo
+  }
+  const expected = args?.expected_head_oid ?? ""
+  const first = args?.per_page ?? 100
+  const max_pages = args?.max_pages ?? 10
+  const maximum = args?.maximum_count ?? 1000
+  const number = args?.pull_number ?? args?.number
+  if type_of(expected) != "string" || !git_id(expected)
+    || !valid_bound(number, 1, 2147483647)
+    || !valid_bound(first, 1, 100)
+    || !valid_bound(max_pages, 1, 20)
+    || !valid_bound(maximum, 0, 2000) {
+    return __err("schema_drift", "review census requires an exact head and finite inventory bounds")
+  }
+  const r = unwrap(repo)
+  const variables = {owner: r.owner, name: r.name, number: number, first: first}
+  const reviews = read_connection(
+    harness,
+    cfg,
+    variables,
+    "reviews",
+    "id state commit { oid } author { login type:__typename ... on Node { id } } updatedAt",
+    schema_of(ReviewsPage),
+    expected,
+    maximum,
+    max_pages,
+  )
+  if is_err(reviews) {
+    return reviews
+  }
+  const threads = read_connection(
+    harness,
+    cfg,
+    variables,
+    "reviewThreads",
+    "id isResolved isOutdated",
+    schema_of(ThreadsPage),
+    expected,
+    maximum,
+    max_pages,
+  )
+  if is_err(threads) {
+    return threads
+  }
+  const final = graph(
+    harness,
+    cfg,
+    "query($owner:String!,$name:String!,$number:Int!) { repository(owner:$owner,name:$name) { "
+      + "pullRequest(number:$number) { "
+      + IDENTITY_FIELDS
+      + " reviews { totalCount } reviewThreads { totalCount } } } }",
+    pick(variables, ["owner", "name", "number"]),
+  )
+  if is_err(final) {
+    return final
+  }
+  if !schema_is(final, schema_of(Final))
+    || pick(final, ["number", "headRefOid", "baseRefOid", "reviewDecision"]) != reviews.identity
+    || threads.identity != reviews.identity
+    || final.reviews.totalCount != reviews.total
+    || final.reviewThreads.totalCount != threads.total {
+    return __err("stale_head", "review census identity or count changed before confirmation")
+  }
+  let normalized: list<GithubPullRequestReview> = []
+  for row in reviews.nodes {
+    if trim(row.updatedAt) == "" || (row.commit != nil && !git_id(row.commit.oid))
+      || (row.author != nil && (trim(row.author.id) == "" || trim(row.author.login) == "")) {
+      return __err("invalid_response", "review has incomplete commit, timestamp, or actor identity")
+    }
+    normalized = normalized
+      + [
+        {
+          id: row.id,
+          state: row.state,
+          commit_oid: row.commit?.oid,
+          author: row.author,
+          updated_at: row.updatedAt,
+        },
+      ]
+  }
+  const result: GithubPullRequestReviewCensus = {
+    repository: r.owner + "/" + r.name,
+    number: number,
+    head_oid: expected,
+    base_oid: reviews.identity.baseRefOid,
+    review_decision: reviews.identity.reviewDecision,
+    total_reviews: reviews.total,
+    total_threads: threads.total,
+    reviews: normalized,
+    threads: threads.nodes.map(
+      { row -> {id: row.id, resolved: row.isResolved, outdated: row.isOutdated} },
+    ),
+    pages_fetched: reviews.pages + threads.pages,
+  }
+  return result
+}
