@@ -31,14 +31,14 @@ reports observations; the caller owns review trust and admission policy.
 Install a compatible Harn CLI, then add the connector:
 
 ```sh
-cargo install harn-cli --version 0.10.135 --locked
-harn add github.com/burin-labs/harn-github-connector@v0.11.0
+cargo install harn-cli --version 0.10.166 --locked
+harn add github.com/burin-labs/harn-github-connector@v0.11.1
 ```
 
 Add the released connector:
 
 ```sh
-harn add github.com/burin-labs/harn-github-connector@v0.11.0
+harn add github.com/burin-labs/harn-github-connector@v0.11.1
 ```
 
 For local multi-repo development, use a path dependency:
