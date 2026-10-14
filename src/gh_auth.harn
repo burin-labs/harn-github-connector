@@ -1,4 +1,3 @@
-import { process_run } from "std/runtime"
 import { __err } from "./errors"
 
 /**
@@ -14,7 +13,7 @@ import { __err } from "./errors"
  */
 pub fn __gh_auth_token(
   env: HarnessEnv,
-  process: HarnessProcess,
+  secrets: HarnessSecrets,
   args: any,
   api_base_url: any = nil,
 ) {
@@ -29,40 +28,18 @@ pub fn __gh_auth_token(
       return Ok({token: to_string(env_token), user: nil})
     }
   }
-  let argv = ["gh", "auth", "token", "--hostname", __gh_hostname(api_base_url)]
-  let options = {stdin: "", timeout_ms: 10000}
-  if user != "" {
-    argv = argv + ["--user", user]
-    options["env"] = {
-      GH_TOKEN: "",
-      GITHUB_TOKEN: "",
-      GH_ENTERPRISE_TOKEN: "",
-      GITHUB_ENTERPRISE_TOKEN: "",
-    }
-  }
   const account = if user == "" {
     "the active account"
   } else {
     "account `" + user + "`"
   }
   const output = try {
-    process_run(process, argv, options)
+    secrets.read_cli("github", {hostname: __gh_hostname(api_base_url), user: user})
   }
   if is_err(output) {
-    return __err(
-      "auth",
-      "gh auth fallback could not read a token for " + account + ": "
-        + to_string(unwrap_err(output)),
-    )
+    return __err("auth", "gh auth fallback could not read a token for " + account)
   }
-  const result = unwrap(output)
-  if !(result?.success ?? false) {
-    return __err(
-      "auth",
-      "gh auth fallback has no token for " + account + " (`gh auth token` failed)",
-    )
-  }
-  const token = trim(to_string(result?.stdout ?? ""))
+  const token = trim(to_string(unwrap(output)))
   if token == "" {
     return __err("auth", "gh auth fallback returned an empty token for " + account)
   }

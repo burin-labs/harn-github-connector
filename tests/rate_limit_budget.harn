@@ -238,8 +238,11 @@ fn gh_read(harness: Harness) {
   )
 }
 
-fn process_runs(testing: HarnessTesting) -> list {
-  return testing.calls().filter({ entry -> entry.capability == "process" }).to_list()
+fn credential_reads(testing: HarnessTesting) -> list {
+  return testing.calls().filter(
+    { entry -> entry.capability == "secrets" && entry.method == "read_cli" },
+  )
+    .to_list()
 }
 
 /**
@@ -250,27 +253,29 @@ fn process_runs(testing: HarnessTesting) -> list {
 pipeline test_gh_fallback_asks_for_the_requested_account_only(harness: Harness) {
   start(pick(harness, ["runtime", "testing"]))
   harness.testing.clear()
-  harness.testing.respond("process", "run", {success: true, status: 0, stdout: "gho_fixture\n"})
+  harness.testing.respond("secrets", "read_cli", "gho_fixture")
   mock_ok(harness.testing, "first", 4000)
   assert(!is_err(gh_read(harness)), "the pinned account's token reaches the API")
-  const runs = process_runs(harness.testing)
+  const runs = credential_reads(harness.testing)
   assert_eq(len(runs), 1)
-  const params = runs[0].params
-  assert_eq(params.program, "gh")
-  assert_eq(params.args, ["auth", "token", "--hostname", "budget.test", "--user", "octo-bot"])
-  assert_eq(params.env.GH_TOKEN, "", "an ambient GH_TOKEN cannot substitute another account")
-  assert_eq(params.env.GITHUB_TOKEN, "")
+  const params = runs[0].args
+  assert_eq(params[0], "github")
+  assert_eq(params[1], {hostname: "budget.test", user: "octo-bot"})
 }
 
 /** A pinned login gh cannot produce is an auth error, never the active account. */
 pipeline test_gh_fallback_does_not_switch_accounts_when_the_login_is_missing(harness: Harness) {
   start(pick(harness, ["runtime", "testing"]))
   harness.testing.clear()
-  harness.testing.respond("process", "run", {success: false, status: 1, stdout: ""})
+  harness.testing.respond_error("secrets", "read_cli", "credential unavailable")
   const refused = gh_read(harness)
   const error = unwrap_err(refused)
   assert_eq(error.code, "auth")
   assert(contains(error.message, "octo-bot"), "the error names the requested account")
-  assert_eq(len(process_runs(harness.testing)), 1, "no second attempt against the active account")
+  assert_eq(
+    len(credential_reads(harness.testing)),
+    1,
+    "no second attempt against the active account",
+  )
   assert_eq(requests(harness.testing), 0)
 }

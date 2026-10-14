@@ -164,7 +164,7 @@ pub fn __outbound_config(harness: Harness, args: any) {
     || trim(to_string(installation_id))
       == "" {
     if args?.installation_scope == nil && __allow_gh_auth_fallback(harness.env, args) {
-      const gh_token = __gh_auth_token(harness.env, harness.process, args, api_base_url)
+      const gh_token = __gh_auth_token(harness.env, harness.secrets, args, api_base_url)
       if is_err(gh_token) {
         return gh_token
       }

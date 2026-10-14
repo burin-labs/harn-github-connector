@@ -30,6 +30,9 @@
 - Add typed `github_merge_queue_entries` and `github_merge_queue_enqueue` APIs.
   Queue reads include `total_count` and refuse absent or partial census evidence.
 - Classify GitHub's clean-status auto-merge refusal as `auto_merge_not_needed`.
+- Read GitHub CLI credentials through Harn's private secret capability. The
+  fallback works without `process.exec` and writes no command stdout artifact.
+  Requires Harn 0.10.166 or newer.
 
 - Pace every REST call against a per-credential budget fed from GitHub's
   `x-ratelimit-*` response headers. Requests carry `priority`: `critical`
