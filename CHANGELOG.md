@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.12.0 - 2026-10-15
+
 - Breaking: `GithubPullRequestReviewCensus` now requires `base_branch`. Every
   review page and final confirmation binds the destination branch name as well
   as its commit. Retargeting to a branch at the same commit refuses the census;
