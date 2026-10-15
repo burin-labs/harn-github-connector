@@ -21,8 +21,8 @@ REST and GraphQL normalization, mutation leases, and provider errors.
 
 `github_pr_review_census` reads bounded complete review and thread inventories
 for an exact head. It retains author identity, open/closed state, draft status,
-source repository identities, and review submission time separately from edit
-time. Source facts must remain stable across pages and final confirmation;
+source repository identities, source branch name, and review submission time
+separately from edit time. Source facts must remain stable across pages and final confirmation;
 missing actors and deleted source repositories remain unknown. The connector
 reports observations; the caller owns review trust and admission policy.
 

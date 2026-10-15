@@ -1092,6 +1092,7 @@ pub type GithubPullRequestReviewCensus = {
   repository: string,
   number: int,
   head_oid: string,
+  head_branch: string,
   base_oid: string,
   base_branch: string,
   author: GithubReviewActor?,
