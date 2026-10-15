@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.14.0 - 2026-10-15
+
 - Breaking: `GithubPullRequestReviewCensus` now requires `head_branch`. Every
   review page and final confirmation binds the source branch name as well as
   its commit. A branch change at equal commits or an unmeasured source branch

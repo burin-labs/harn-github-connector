@@ -32,13 +32,13 @@ Install a compatible Harn CLI, then add the connector:
 
 ```sh
 cargo install harn-cli --version 0.10.166 --locked
-harn add github.com/burin-labs/harn-github-connector@v0.11.1
+harn add github.com/burin-labs/harn-github-connector@v0.14.0
 ```
 
 Add the released connector:
 
 ```sh
-harn add github.com/burin-labs/harn-github-connector@v0.11.1
+harn add github.com/burin-labs/harn-github-connector@v0.14.0
 ```
 
 For local multi-repo development, use a path dependency:
