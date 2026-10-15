@@ -15,6 +15,7 @@ type RepositoryNode = {id: string, nameWithOwner: string}
 type Identity = {
   number: int,
   headRefOid: string,
+  headRefName: string,
   baseRefOid: string,
   baseRefName: string,
   reviewDecision: GithubReviewDecision?,
@@ -52,26 +53,13 @@ type ThreadsPage = Page<ThreadNode>
 
 type Final = Identity & {reviews: {totalCount: int}, reviewThreads: {totalCount: int}}
 
-const IDENTITY_FIELDS = "number headRefOid baseRefOid baseRefName reviewDecision state isDraft "
+const IDENTITY_FIELDS =
+  "number headRefOid headRefName baseRefOid baseRefName reviewDecision state isDraft "
   + "author { login type:__typename ... on Node { id } } "
   + "headRepository { id nameWithOwner } baseRepository { id nameWithOwner }"
 
 fn source_identity(value: Identity) -> Identity {
-  return pick(
-    value,
-    [
-      "number",
-      "headRefOid",
-      "baseRefOid",
-      "baseRefName",
-      "reviewDecision",
-      "author",
-      "state",
-      "isDraft",
-      "headRepository",
-      "baseRepository",
-    ],
-  )
+  return schema_expect(pick(value, schema_of(Identity).properties.keys()), schema_of(Identity))
 }
 
 fn valid_actor(value: GithubReviewActor?) -> bool {
@@ -79,7 +67,7 @@ fn valid_actor(value: GithubReviewActor?) -> bool {
 }
 
 fn valid_source(value: Identity) -> bool {
-  return trim(value.baseRefName) != "" && valid_actor(value.author)
+  return trim(value.headRefName) != "" && trim(value.baseRefName) != "" && valid_actor(value.author)
     && (value.headRepository == nil
       || (trim(value.headRepository.id) != ""
         && trim(value.headRepository.nameWithOwner) != ""))
@@ -305,6 +293,7 @@ pub fn __github_pr_review_census(harness: Harness, args: any, cfg: any) {
     repository: r.owner + "/" + r.name,
     number: number,
     head_oid: expected,
+    head_branch: reviews.identity.headRefName,
     base_oid: reviews.identity.baseRefOid,
     base_branch: reviews.identity.baseRefName,
     author: reviews.identity.author,

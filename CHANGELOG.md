@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Breaking: `GithubPullRequestReviewCensus` now requires `head_branch`. Every
+  review page and final confirmation binds the source branch name as well as
+  its commit. A branch change at equal commits or an unmeasured source branch
+  refuses the census without adding provider reads.
+
 ## 0.13.0 - 2026-10-15
 
 - Add `github_update_refs` for one atomic transaction over exact expected Git
