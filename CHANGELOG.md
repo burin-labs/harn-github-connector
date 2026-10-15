@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.13.0 - 2026-10-15
+
 - Add `github_update_refs` for one atomic transaction over exact expected Git
   objects, including creation, updates, no-op guards and deletion. Unknown
   outcomes require reconciliation and never enable unsafe mutation retries.
