@@ -314,6 +314,7 @@ pub type GithubPullRequestReviewCensus = {
   number: int,
   head_oid: string,
   base_oid: string,
+  base_branch: string,
   author: GithubReviewActor?,
   state: "OPEN" | "CLOSED" | "MERGED",
   is_draft: bool,
