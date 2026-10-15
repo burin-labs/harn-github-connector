@@ -9,6 +9,7 @@ import "./operations/pull_files"
 import "./operations/pull_reviews"
 import "./operations/pull_upsert"
 import "./operations/pulls"
+import { __github_refs_update } from "./operations/ref_updates"
 import "./operations/refs"
 import "./operations/releases"
 import "./operations/shared"
@@ -52,6 +53,7 @@ const GITHUB_OUTBOUND_METHODS = [
   "github.branch.create_signed_commit",
   "github.ref.claim",
   "github.ref.release",
+  "github.refs.update",
   "github.commit.signature",
   "github.file.view",
   "github.app.installation_token",
@@ -453,6 +455,9 @@ pub fn __call_raw(harness: Harness, method: any, args: any = {}) {
   }
   if method == "github.ref.release" {
     return __github_ref_release(harness, args, cfg)
+  }
+  if method == "github.refs.update" {
+    return __github_refs_update(harness, args, cfg)
   }
   if method == "git.create_commit" {
     return __git_create_commit(harness, args, cfg)

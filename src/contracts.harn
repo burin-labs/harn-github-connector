@@ -31,6 +31,8 @@ pub type GithubConnectorError = {
   rate_limit_priority?: GithubRequestPriority,
   rate_limit_source?: GithubRateLimitSource,
   graphql_error_kind?: GithubGraphqlErrorKind,
+  /** Whether an atomic ref mutation definitely refused or needs reconciliation. */
+  mutation_outcome?: "refused" | "unknown",
   expected_head_oid?: string,
   observed_head_oid?: string,
   expected_base_oid?: string,
@@ -494,13 +496,25 @@ pub type GithubRefClaimRequest = GithubRepositoryRequest \
  */
 pub type GithubRefClaimPayload = {message: string, base_ref: string}
 
+/** Every member carries an exact old object; forty zeroes mean absent/deleted. */
+pub type GithubRefUpdate = {ref: string, before_oid: string, after_oid: string, force?: bool}
+
+/** One atomic transaction over at most 32 unique refs in one repository. */
+pub type GithubRefUpdatesRequest = GithubRepositoryRequest & {updates: list<GithubRefUpdate>}
+
+/** Provider acknowledgement of the entire transaction, not a later current-ref read. */
+pub type GithubRefUpdatesReceipt = {
+  repo: string,
+  transaction_id: string,
+  updates: list<GithubRefUpdate>,
+  applied: bool,
+}
+
 /**
  * Request to release one ref this caller still holds.
  *
- * `expected_oid` is not optional and not a convenience: GitHub's ref delete has
- * no compare-and-swap, so the only thing separating "release my lock" from
- * "delete whatever is there now" is reading the ref first and refusing when it
- * has moved. A payload minted per run makes that check exact.
+ * `expected_oid` is checked atomically by GitHub at deletion. A prior read
+ * provides diagnostics but cannot authorize deleting a replacement holder.
  */
 pub type GithubRefReleaseRequest = GithubRepositoryRequest & {ref: string, expected_oid: string}
 

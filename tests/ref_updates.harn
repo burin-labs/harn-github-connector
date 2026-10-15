@@ -1,0 +1,206 @@
+import { GithubClientOptions, GithubRefUpdate, call, github_update_refs } from "../src/facade"
+
+const BASE = "https://api.github.test"
+
+const REPO = "octo-org/octo-repo"
+
+const OLD = "1111111111111111111111111111111111111111"
+
+const NEW = "2222222222222222222222222222222222222222"
+
+const ZERO = "0000000000000000000000000000000000000000"
+
+type MutationPayload = {
+  variables: {
+    input: {
+      repositoryId: string,
+      refUpdates: list<{name: string, beforeOid: string, afterOid: string, force: bool}>,
+    },
+  },
+}
+
+fn auth() -> GithubClientOptions {
+  return {
+    api_base_url: BASE,
+    installation_token: "fixture-token",
+    retry_unsafe: true,
+    retry: {max_attempts: 3},
+  }
+}
+
+fn transaction(updates: list<GithubRefUpdate>) -> string {
+  return "refs-"
+    + sha256_hex(
+      json_stringify(
+        {repo: REPO, updates: updates.map({ row -> row + {force: row.force ?? false} })},
+      ),
+    )
+}
+
+fn fixture(testing: HarnessTesting, body: unknown, status: int = 200) {
+  testing.http_mock_clear()
+  testing.http_mock(
+    "GET",
+    BASE + "/repos/" + REPO,
+    {status: 200, body: json_stringify({node_id: "R_fixture"})},
+  )
+  testing.http_mock("POST", BASE + "/graphql", {status: status, body: json_stringify(body)})
+}
+
+fn mutations(testing: HarnessTesting) -> int {
+  return len(testing.http_mock_calls().filter({ row -> row.method == "POST" }).to_list())
+}
+
+pipeline test_atomic_updates_bind_the_whole_set_in_one_mutation(harness: Harness) {
+  const updates: list<GithubRefUpdate> = [
+    {ref: "refs/heads/main", before_oid: OLD, after_oid: NEW},
+    {ref: "refs/heads/ship-control", before_oid: OLD, after_oid: OLD},
+  ]
+  fixture(harness.testing, {data: {updateRefs: {clientMutationId: transaction(updates)}}})
+  const receipt = unwrap(
+    github_update_refs(
+      harness,
+      {owner: "octo-org", repo: "octo-repo", updates: updates, options: auth()},
+    ),
+  )
+  assert_eq(receipt.applied, true)
+  assert_eq(receipt.repo, REPO)
+  assert_eq(receipt.updates, updates.map({ row -> row + {force: false} }))
+  const calls = harness.testing.http_mock_calls()
+  assert_eq(len(calls), 2)
+  const payload = schema_expect(json_parse(calls[1].body), schema_of(MutationPayload))
+  assert_eq(payload.variables.input.repositoryId, "R_fixture")
+  assert_eq(
+    payload.variables.input.refUpdates,
+    [
+      {name: "refs/heads/main", beforeOid: OLD, afterOid: NEW, force: false},
+      {name: "refs/heads/ship-control", beforeOid: OLD, afterOid: OLD, force: false},
+    ],
+  )
+  assert_eq(mutations(harness.testing), 1)
+}
+
+pipeline test_expected_absence_and_deletion_remain_explicit(harness: Harness) {
+  const updates: list<GithubRefUpdate> = [
+    {ref: "refs/heads/new", before_oid: ZERO, after_oid: NEW},
+    {ref: "refs/heads/retired", before_oid: OLD, after_oid: ZERO},
+  ]
+  fixture(harness.testing, {data: {updateRefs: {clientMutationId: transaction(updates)}}})
+  const result = unwrap(
+    github_update_refs(
+      harness,
+      {owner: "octo-org", repo: "octo-repo", updates: updates, options: auth()},
+    ),
+  )
+  assert_eq(result.updates[0].before_oid, ZERO)
+  assert_eq(result.updates[1].after_oid, ZERO)
+  assert_eq(mutations(harness.testing), 1)
+}
+
+pipeline test_stale_member_is_a_definite_atomic_refusal(harness: Harness) {
+  fixture(
+    harness.testing,
+    {
+      data: {updateRefs: nil},
+      errors: [{type: "UNPROCESSABLE", message: "expected object mismatch"}],
+    },
+  )
+  const error = unwrap_err(
+    github_update_refs(
+      harness,
+      {
+        owner: "octo-org",
+        repo: "octo-repo",
+        updates: [
+          {ref: "refs/heads/main", before_oid: OLD, after_oid: NEW},
+          {ref: "refs/heads/ship-control", before_oid: OLD, after_oid: OLD},
+        ],
+        options: auth(),
+      },
+    ),
+  )
+  assert_eq(error.code, "ref_update_refused")
+  assert_eq(error.mutation_outcome, "refused")
+  assert_eq(error.retryable, false)
+  assert_eq(mutations(harness.testing), 1)
+}
+
+pipeline test_lost_or_malformed_acknowledgements_remain_unknown(harness: Harness) {
+  for body in [
+    {},
+    {data: {updateRefs: {clientMutationId: "foreign"}}},
+    {errors: [{type: "INTERNAL"}]},
+    {data: {updateRefs: nil}, errors: "malformed"},
+  ] {
+    fixture(harness.testing, body)
+    const error = unwrap_err(
+      github_update_refs(
+        harness,
+        {
+          owner: "octo-org",
+          repo: "octo-repo",
+          updates: [{ref: "refs/heads/main", before_oid: OLD, after_oid: NEW}],
+          options: auth(),
+        },
+      ),
+    )
+    assert_eq(error.mutation_outcome, "unknown")
+    assert_eq(error.retryable, false)
+    assert_eq(mutations(harness.testing), 1)
+  }
+}
+
+pipeline test_server_failure_cannot_enable_unsafe_mutation_retries(harness: Harness) {
+  fixture(harness.testing, {message: "unavailable after dispatch"}, 500)
+  const error = unwrap_err(
+    github_update_refs(
+      harness,
+      {
+        owner: "octo-org",
+        repo: "octo-repo",
+        updates: [{ref: "refs/heads/main", before_oid: OLD, after_oid: NEW}],
+        options: auth(),
+      },
+    ),
+  )
+  assert_eq(error.mutation_outcome, "unknown")
+  assert_eq(error.retryable, false)
+  assert_eq(mutations(harness.testing), 1)
+}
+
+pipeline test_malformed_or_ambiguous_transactions_make_no_request(harness: Harness) {
+  const good = {ref: "refs/heads/main", before_oid: OLD, after_oid: NEW}
+  let invalid: list<unknown> = [
+    [],
+    [good, good],
+    [{ref: "refs/heads/main", after_oid: NEW}],
+    [good + {before_oid: ""}],
+    [good + {after_oid: "HEAD"}],
+    [good + {force: "true"}],
+    [good + {before_oid: ZERO, after_oid: ZERO}],
+  ]
+  for ref in [
+    "main",
+    "refs/heads/../main",
+    "refs/heads/a.lock",
+    "refs/heads/a b",
+    "refs/heads/a\\b",
+    "refs/heads/a[",
+    "refs/heads/@{a",
+    "refs//main",
+  ] {
+    invalid = invalid + [[good + {ref: ref}]]
+  }
+  for updates in invalid {
+    harness.testing.http_mock_clear()
+    const error = unwrap_err(
+      call(
+        harness,
+        "github.refs.update",
+        auth() + {owner: "octo-org", repo: "octo-repo", updates: updates},
+      ),
+    )
+    assert_eq(error.code, "schema_drift")
+    assert_eq(len(harness.testing.http_mock_calls()), 0)
+  }
+}

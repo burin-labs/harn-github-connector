@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add `github_update_refs` for one atomic transaction over exact expected Git
+  objects, including creation, updates, no-op guards and deletion. Unknown
+  outcomes require reconciliation and never enable unsafe mutation retries.
+- Release refs with an atomic expected-object check so a replacement holder
+  cannot be deleted between the diagnostic read and deletion.
+
 ## 0.12.0 - 2026-10-15
 
 - Breaking: `GithubPullRequestReviewCensus` now requires `base_branch`. Every

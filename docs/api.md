@@ -490,6 +490,8 @@ pub type GithubConnectorError = {
   rate_limit_priority?: GithubRequestPriority,
   rate_limit_source?: GithubRateLimitSource,
   graphql_error_kind?: GithubGraphqlErrorKind,
+  /** Whether an atomic ref mutation definitely refused or needs reconciliation. */
+  mutation_outcome?: "refused" | "unknown",
   expected_head_oid?: string,
   observed_head_oid?: string,
   expected_base_oid?: string,
@@ -1307,13 +1309,40 @@ pub type GithubRefRelease = {
 ### type `GithubRefReleaseRequest`
 
 Request to release one ref this caller still holds.
-`expected_oid` is not optional and not a convenience: GitHub's ref delete has
-no compare-and-swap, so the only thing separating "release my lock" from
-"delete whatever is there now" is reading the ref first and refusing when it
-has moved. A payload minted per run makes that check exact.
+`expected_oid` is checked atomically by GitHub at deletion. A prior read
+provides diagnostics but cannot authorize deleting a replacement holder.
 
 ```harn
 pub type GithubRefReleaseRequest = GithubRepositoryRequest & {ref: string, expected_oid: string}
+```
+
+### type `GithubRefUpdate`
+
+Every member carries an exact old object; forty zeroes mean absent/deleted.
+
+```harn
+pub type GithubRefUpdate = {ref: string, before_oid: string, after_oid: string, force?: bool}
+```
+
+### type `GithubRefUpdatesReceipt`
+
+Provider acknowledgement of the entire transaction, not a later current-ref read.
+
+```harn
+pub type GithubRefUpdatesReceipt = {
+  repo: string,
+  transaction_id: string,
+  updates: list<GithubRefUpdate>,
+  applied: bool,
+}
+```
+
+### type `GithubRefUpdatesRequest`
+
+One atomic transaction over at most 32 unique refs in one repository.
+
+```harn
+pub type GithubRefUpdatesRequest = GithubRepositoryRequest & {updates: list<GithubRefUpdate>}
 ```
 
 ### type `GithubRelease`
@@ -2682,6 +2711,18 @@ pub fn github_resolve_pr_for_sha(
 }
 ```
 
+### fn `github_update_refs`
+
+Atomically update every ref only if all exact expected objects still match.
+
+```harn
+pub fn github_update_refs(
+  harness: Harness,
+  request: GithubRefUpdatesRequest,
+) -> GithubConnectorResult<GithubRefUpdatesReceipt> {
+}
+```
+
 ### fn `github_upsert_pull_request`
 
 Create or refresh the sole open pull request for one exact head/base pair.
@@ -3177,6 +3218,8 @@ pub type GithubConnectorError = {
   rate_limit_priority?: GithubRequestPriority,
   rate_limit_source?: GithubRateLimitSource,
   graphql_error_kind?: GithubGraphqlErrorKind,
+  /** Whether an atomic ref mutation definitely refused or needs reconciliation. */
+  mutation_outcome?: "refused" | "unknown",
   expected_head_oid?: string,
   observed_head_oid?: string,
   expected_base_oid?: string,
