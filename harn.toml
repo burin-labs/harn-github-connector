@@ -1,11 +1,11 @@
 [package]
 name = "harn-github-connector"
-version = "0.11.0"
+version = "0.11.1"
 description = "Pure-Harn GitHub App connector: webhooks, installation token rotation, REST/GraphQL dispatch."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/burin-labs/harn-github-connector"
 docs_url = "https://github.com/burin-labs/harn-github-connector/blob/main/docs/api.md"
-harn = ">=0.10.135,<0.11"
+harn = ">=0.10.166,<0.11"
 
 [exports]
 default = "src/facade.harn"

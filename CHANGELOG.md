@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.11.1 - 2026-10-15
+
+- Read GitHub CLI credentials through Harn's private secret capability. The
+  fallback works without `process.exec` and writes no command stdout artifact.
+  Requires Harn 0.10.166 or newer.
+
 ## 0.11.0 - 2026-10-15
 
 - Retain pull-request author, state, draft status, and stable source repository
