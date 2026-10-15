@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Breaking: `GithubPullRequestReviewCensus` now requires `base_branch`. Every
+  review page and final confirmation binds the destination branch name as well
+  as its commit. Retargeting to a branch at the same commit refuses the census;
+  missing or empty destination facts cannot qualify.
+
 ## 0.11.1 - 2026-10-15
 
 - Read GitHub CLI credentials through Harn's private secret capability. The

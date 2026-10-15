@@ -16,6 +16,7 @@ type Identity = {
   number: int,
   headRefOid: string,
   baseRefOid: string,
+  baseRefName: string,
   reviewDecision: GithubReviewDecision?,
   author: GithubReviewActor?,
   state: "OPEN" | "CLOSED" | "MERGED",
@@ -51,7 +52,7 @@ type ThreadsPage = Page<ThreadNode>
 
 type Final = Identity & {reviews: {totalCount: int}, reviewThreads: {totalCount: int}}
 
-const IDENTITY_FIELDS = "number headRefOid baseRefOid reviewDecision state isDraft "
+const IDENTITY_FIELDS = "number headRefOid baseRefOid baseRefName reviewDecision state isDraft "
   + "author { login type:__typename ... on Node { id } } "
   + "headRepository { id nameWithOwner } baseRepository { id nameWithOwner }"
 
@@ -62,6 +63,7 @@ fn source_identity(value: Identity) -> Identity {
       "number",
       "headRefOid",
       "baseRefOid",
+      "baseRefName",
       "reviewDecision",
       "author",
       "state",
@@ -77,7 +79,7 @@ fn valid_actor(value: GithubReviewActor?) -> bool {
 }
 
 fn valid_source(value: Identity) -> bool {
-  return valid_actor(value.author)
+  return trim(value.baseRefName) != "" && valid_actor(value.author)
     && (value.headRepository == nil
       || (trim(value.headRepository.id) != ""
         && trim(value.headRepository.nameWithOwner) != ""))
@@ -154,7 +156,10 @@ fn read_connection<T>(
     const decoded: any = schema_expect(raw, page_schema)
     const current = source_identity(decoded)
     if !valid_source(current) {
-      return __err("invalid_response", "pull-request actor or repository identity is malformed")
+      return __err(
+        "invalid_response",
+        "pull-request target, actor or repository identity is malformed",
+      )
     }
     if current.number != variables.number || current.headRefOid != expected
       || !git_id(current.baseRefOid)
@@ -301,6 +306,7 @@ pub fn __github_pr_review_census(harness: Harness, args: any, cfg: any) {
     number: number,
     head_oid: expected,
     base_oid: reviews.identity.baseRefOid,
+    base_branch: reviews.identity.baseRefName,
     author: reviews.identity.author,
     state: reviews.identity.state,
     is_draft: reviews.identity.isDraft,
