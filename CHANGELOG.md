@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.11.0 - 2026-10-15
+
 - Retain pull-request author, state, draft status, and stable source repository
   identities across every review census page and final confirmation. Changes
   during the read refuse the census; deleted actors and repositories remain
