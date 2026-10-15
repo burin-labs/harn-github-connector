@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Retain pull-request author, state, draft status, and stable source repository
+  identities across every review census page and final confirmation. Changes
+  during the read refuse the census; deleted actors and repositories remain
+  unknown.
+- Preserve review submission time separately from edit time so consumers can
+  order submitted decisions without treating an edited approval as a new vote.
+
 ## 0.10.0 - 2026-10-14
 
 - Add `github_pr_review_census` with bounded complete review and thread inventories,
