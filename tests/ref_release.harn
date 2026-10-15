@@ -1,11 +1,8 @@
 import { GithubClientOptions, GithubRefReleaseRequest, github_release_ref } from "../src/facade"
 
 /**
- * Releasing a lock is a delete, and GitHub's ref delete takes no lease.
- *
- * The only thing separating "release my lock" from "delete whoever holds it
- * now" is reading the ref first and refusing when it has moved. Every test here
- * is about that read.
+ * Release diagnostics may read first, but deletion checks its exact object
+ * atomically. A replacement between the read and mutation must survive.
  */
 const BASE = "https://api.github.test"
 
@@ -14,6 +11,52 @@ const OURS = "2222222222222222222222222222222222222222"
 const THEIRS = "1111111111111111111111111111111111111111"
 
 const REF = "refs/release-lock/v1.2.3"
+
+type DeletePayload = {
+  variables: {
+    input: {refUpdates: list<{name: string, beforeOid: string, afterOid: string, force: bool}>},
+  },
+}
+
+pipeline test_a_ref_replaced_after_the_read_is_never_deleted(harness: Harness) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo",
+    {status: 200, body: json_stringify({node_id: "R_fixture"})},
+  )
+  harness.testing.http_mock(
+    "GET",
+    read_url(),
+    {
+      responses: [
+        {status: 200, body: json_stringify({ref: REF, object: {sha: OURS, type: "commit"}})},
+        {status: 200, body: json_stringify({ref: REF, object: {sha: THEIRS, type: "commit"}})},
+      ],
+    },
+  )
+  // GitHub checks the old object at the mutation, after the read has become stale.
+  harness.testing.http_mock(
+    "POST",
+    BASE + "/graphql",
+    {
+      status: 200,
+      body: json_stringify(
+        {
+          data: {updateRefs: nil},
+          errors: [{type: "UNPROCESSABLE", message: "beforeOid does not match"}],
+        },
+      ),
+    },
+  )
+  // This endpoint would delete the replacement unconditionally.
+  harness.testing.http_mock("DELETE", delete_url(), {status: 204, body: ""})
+  const result = unwrap(github_release_ref(harness, request()))
+  assert_eq(result.released, false)
+  assert_eq(result.reason, "held_by_another")
+  assert_eq(result.oid, THEIRS)
+  assert_eq(deletes(harness.testing), 0)
+}
 
 fn auth() -> GithubClientOptions {
   return {api_base_url: BASE, installation_token: "github-app-installation-token"}
@@ -42,12 +85,45 @@ pipeline test_a_ref_still_holding_our_object_is_released(harness: Harness, task:
     read_url(),
     {status: 200, body: json_stringify({ref: REF, object: {sha: OURS, type: "commit"}})},
   )
-  harness.testing.http_mock("DELETE", delete_url(), {status: 204, body: ""})
+  const updates = [
+    {
+      ref: REF,
+      before_oid: OURS,
+      after_oid: "0000000000000000000000000000000000000000",
+      force: false,
+    },
+  ]
+  const transaction = "refs-"
+    + sha256_hex(json_stringify({repo: "octo-org/octo-repo", updates: updates}))
+  harness.testing.http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo",
+    {status: 200, body: json_stringify({node_id: "R_fixture"})},
+  )
+  harness.testing.http_mock(
+    "POST",
+    BASE + "/graphql",
+    {status: 200, body: json_stringify({data: {updateRefs: {clientMutationId: transaction}}})},
+  )
   const released = unwrap(github_release_ref(harness, request()))
   assert_eq(released.released, true)
   assert_eq(released.reason, "released")
   assert_eq(released.oid, OURS)
-  assert_eq(deletes(harness.testing), 1)
+  assert_eq(deletes(harness.testing), 0)
+  const calls =
+    harness.testing.http_mock_calls().filter({ call -> call.method == "POST" }).to_list()
+  assert_eq(len(calls), 1)
+  assert_eq(
+    schema_expect(json_parse(calls[0].body), schema_of(DeletePayload)).variables.input.refUpdates,
+    [
+      {
+        name: REF,
+        beforeOid: OURS,
+        afterOid: "0000000000000000000000000000000000000000",
+        force: false,
+      },
+    ],
+  )
 }
 
 pipeline test_a_ref_that_moved_on_is_left_alone(harness: Harness, task: any) {

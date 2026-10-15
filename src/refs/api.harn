@@ -5,8 +5,18 @@ import {
   GithubRefClaimRequest,
   GithubRefRelease,
   GithubRefReleaseRequest,
+  GithubRefUpdatesReceipt,
+  GithubRefUpdatesRequest,
 } from "../contracts"
 import { __request_args } from "../request_options"
+
+/** Atomically update every ref only if all exact expected objects still match. */
+pub fn github_update_refs(
+  harness: Harness,
+  request: GithubRefUpdatesRequest,
+) -> GithubConnectorResult<GithubRefUpdatesReceipt> {
+  return call_typed(harness, "github.refs.update", __request_args(request), GithubRefUpdatesReceipt)
+}
 
 /**
  * Claim one ref for an exact object, and learn the holder when the claim is

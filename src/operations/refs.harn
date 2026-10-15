@@ -1,6 +1,7 @@
 import "../client"
 import "../contracts"
 import { __err } from "../errors"
+import { __github_refs_update } from "./ref_updates"
 import "./shared"
 
 /**
@@ -229,10 +230,8 @@ fn __github_commit_tree(harness: Harness, repo: any, oid: string, cfg: any) {
 /**
  * Release one ref, and only while it still holds the caller's exact object.
  *
- * GitHub's ref delete takes no lease, so this reads first and refuses when the
- * ref has moved. A ref that is already gone is the intended end state, not a
- * failure: a release that retries after a partial failure should be able to
- * finish.
+ * The read names an absent or foreign holder. GitHub checks the expected object
+ * again atomically at deletion, so a replacement after that read stays intact.
  */
 pub fn __github_ref_release(harness: Harness, args: any, cfg: any) {
   const repo = __repo_parts(args)
@@ -274,17 +273,36 @@ pub fn __github_ref_release(harness: Harness, args: any, cfg: any) {
     }
     return other
   }
-  const deleted = __github_json(
+  const deleted = __github_refs_update(
     harness,
-    "DELETE",
-    __github_api_url(
-      cfg.api_base_url,
-      "/repos/" + r.owner + "/" + r.name + "/git/refs/" + regex_replace("^refs/", "", ref),
-    ),
-    nil,
+    {
+      owner: r.owner,
+      repo: r.name,
+      updates: [
+        {ref: ref, before_oid: expected, after_oid: "0000000000000000000000000000000000000000"},
+      ],
+    },
     cfg,
   )
   if is_err(deleted) {
+    const failure = unwrap_err(deleted)
+    if failure.code == "ref_update_refused" {
+      // Observe contention once for diagnostics; never retry the mutation.
+      const current = __github_ref_object(harness, r, ref, cfg)
+      if is_err(current) {
+        if (unwrap_err(current)?.http_status ?? 0) == 404 {
+          return {repo: r.full_name, ref: ref, oid: "", released: false, reason: "already_absent"}
+        }
+      } else if unwrap(current).oid != expected {
+        return {
+          repo: r.full_name,
+          ref: ref,
+          oid: unwrap(current).oid,
+          released: false,
+          reason: "held_by_another",
+        }
+      }
+    }
     return deleted
   }
   const released: GithubRefRelease = {

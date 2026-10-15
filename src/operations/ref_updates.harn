@@ -1,0 +1,168 @@
+import { __github_api_url, __github_json } from "../client"
+import { GithubConnectorError, GithubRefUpdate, GithubRefUpdatesReceipt } from "../contracts"
+import { __err } from "../errors"
+import { __repo_parts } from "./shared"
+
+type UpdatesInput = {owner: string, repo: string, updates: list<GithubRefUpdate>}
+
+type RepositoryIdentity = {node_id: string}
+
+type UpdateEnvelope = {
+  data?: {updateRefs: {clientMutationId: string}?}?,
+  errors?: list<{type?: string, extensions?: {code?: string}}>,
+}
+
+const ZERO = "0000000000000000000000000000000000000000"
+
+const DEFINITE_REFUSALS = [
+  "UNPROCESSABLE",
+  "FORBIDDEN",
+  "NOT_FOUND",
+  "GRAPHQL_VALIDATION_FAILED",
+  "BAD_USER_INPUT",
+  "INSUFFICIENT_SCOPES",
+]
+
+fn valid_ref(value: string) -> bool {
+  if !starts_with(value, "refs/") || len(value) > 1024
+    || contains(value, "..")
+    || contains(value, "@{")
+    || regex_match("[\\x00-\\x20\\x7f~^:?*\\[\\\\]", value) {
+    return false
+  }
+  for part in split(value, "/") {
+    if part == "" || starts_with(part, ".") || ends_with(part, ".") || ends_with(part, ".lock") {
+      return false
+    }
+  }
+  return len(split(value, "/")) >= 3
+}
+
+fn normalized_updates(raw: unknown) {
+  if !schema_is(raw, UpdatesInput) {
+    return __err("schema_drift", "atomic ref updates require explicit before and after objects")
+  }
+  const input = schema_expect(raw, schema_of(UpdatesInput))
+  if !regex_match("^[A-Za-z0-9][A-Za-z0-9-]{0,38}$", input.owner)
+    || !regex_match("^[A-Za-z0-9_.-]{1,100}$", input.repo)
+    || [".", ".."].contains(input.repo) {
+    return __err("schema_drift", "atomic ref updates require one valid repository identity")
+  }
+  if len(input.updates) == 0 || len(input.updates) > 32 {
+    return __err("schema_drift", "atomic ref updates require between one and 32 members")
+  }
+  let seen = {}
+  let updates: list<GithubRefUpdate> = []
+  for update in input.updates {
+    if !valid_ref(update.ref) || !regex_match("^[0-9a-f]{40}$", update.before_oid)
+      || !regex_match("^[0-9a-f]{40}$", update.after_oid)
+      || (update.before_oid == ZERO && update.after_oid == ZERO)
+      || (seen.get(update.ref) ?? false) {
+      return __err("schema_drift", "atomic ref updates contain an invalid or duplicate member")
+    }
+    seen[update.ref] = true
+    updates = updates + [update + {force: update.force ?? false}]
+  }
+  return Ok(updates)
+}
+
+/** One provider transaction; uncertain replies must never be automatically redispatched. */
+pub fn __github_refs_update(harness: Harness, args: unknown, cfg: any) {
+  const parsed = normalized_updates(args)
+  if is_err(parsed) {
+    return parsed
+  }
+  const updates: list<GithubRefUpdate> = unwrap(parsed)
+  const repository = __repo_parts(args)
+  if is_err(repository) {
+    return repository
+  }
+  const repo = unwrap(repository)
+  const identity = __github_json(
+    harness,
+    "GET",
+    __github_api_url(cfg.api_base_url, "/repos/" + repo.owner + "/" + repo.name),
+    nil,
+    cfg,
+  )
+  if is_err(identity) {
+    return Err(unwrap_err(identity) + {mutation_outcome: "refused"})
+  }
+  if !schema_is(identity, RepositoryIdentity) || trim(identity.node_id) == "" {
+    return __err(
+      "invalid_response",
+      "repository identity is unmeasured",
+      {mutation_outcome: "refused"},
+    )
+  }
+  const transaction = "refs-" + sha256_hex(json_stringify({repo: repo.full_name, updates: updates}))
+  const response = __github_json(
+    harness,
+    "POST",
+    __github_api_url(cfg.api_base_url, "/graphql"),
+    {
+      query:
+        "mutation AtomicRefUpdates($input: UpdateRefsInput!) { updateRefs(input: $input) { clientMutationId } }",
+      variables: {
+        input: {
+          repositoryId: identity.node_id,
+          clientMutationId: transaction,
+          refUpdates: updates.map(
+            { update ->
+              {
+                name: update.ref,
+                beforeOid: update.before_oid,
+                afterOid: update.after_oid,
+                force: update.force ?? false,
+              }
+            },
+          ),
+        },
+      },
+    },
+    cfg + {retry_unsafe: false, retry: {max_attempts: 1}, rate_limit_max_sleep_seconds: 0},
+  )
+  if is_err(response) {
+    const error: GithubConnectorError = unwrap_err(response)
+    const refused = [400, 401, 403, 404, 409, 422, 429].contains(error.http_status ?? 0)
+      || error.rate_limit_source == "local_budget"
+    return Err(error + {mutation_outcome: refused ? "refused" : "unknown", retryable: false})
+  }
+  if !schema_is(response, UpdateEnvelope) {
+    return __err(
+      "ref_update_unknown",
+      "atomic ref transaction acknowledgement is malformed",
+      {mutation_outcome: "unknown", retryable: false},
+    )
+  }
+  const envelope = schema_expect(response, schema_of(UpdateEnvelope))
+  const errors = envelope.errors ?? []
+  const acknowledgement = envelope.data?.updateRefs
+  if len(errors) > 0 {
+    const refused = acknowledgement == nil
+      && errors.all(
+        { error -> DEFINITE_REFUSALS.contains(error.type ?? error.extensions?.code ?? "") },
+      )
+    return __err(
+      refused ? "ref_update_refused" : "ref_update_unknown",
+      "GitHub did not acknowledge the atomic ref transaction ("
+        + join(errors.map({ error -> error.type ?? error.extensions?.code ?? "unreported" }), ",")
+        + ")",
+      {mutation_outcome: refused ? "refused" : "unknown", retryable: false},
+    )
+  }
+  if acknowledgement?.clientMutationId != transaction {
+    return __err(
+      "ref_update_unknown",
+      "atomic ref transaction acknowledgement is unmeasured",
+      {mutation_outcome: "unknown", retryable: false},
+    )
+  }
+  const receipt: GithubRefUpdatesReceipt = {
+    repo: repo.full_name,
+    transaction_id: transaction,
+    updates: updates,
+    applied: true,
+  }
+  return receipt
+}
