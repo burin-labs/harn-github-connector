@@ -19,6 +19,13 @@ Use `std/git` for local repository operations and `std/gh` only as an explicit
 GitHub CLI escape hatch. This connector owns remote GitHub authentication,
 REST and GraphQL normalization, mutation leases, and provider errors.
 
+`github_pr_review_census` reads bounded complete review and thread inventories
+for an exact head. It retains author identity, open/closed state, draft status,
+source repository identities, and review submission time separately from edit
+time. Source facts must remain stable across pages and final confirmation;
+missing actors and deleted source repositories remain unknown. The connector
+reports observations; the caller owns review trust and admission policy.
+
 ## Install
 
 Install a compatible Harn CLI, then add the connector:

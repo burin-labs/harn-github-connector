@@ -282,6 +282,9 @@ pub type GithubPullRequestReviewCensusRequest = GithubPullRequestRequest \
 /** A missing or deleted actor stays unknown; consumers decide who may approve. */
 pub type GithubReviewActor = {id: string, login: string, type: string}
 
+/** Stable repository identity remains separate from its current owner/name spelling. */
+pub type GithubReviewRepository = {id: string, full_name: string}
+
 /** GitHub's closed review lifecycle, without deriving admission from its wording. */
 pub type GithubReviewState = "APPROVED" \
   | "CHANGES_REQUESTED" \
@@ -298,6 +301,7 @@ pub type GithubPullRequestReview = {
   state: GithubReviewState,
   commit_oid: string?,
   author: GithubReviewActor?,
+  submitted_at: string?,
   updated_at: string,
 }
 
@@ -310,6 +314,11 @@ pub type GithubPullRequestReviewCensus = {
   number: int,
   head_oid: string,
   base_oid: string,
+  author: GithubReviewActor?,
+  state: "OPEN" | "CLOSED" | "MERGED",
+  is_draft: bool,
+  head_repository: GithubReviewRepository?,
+  base_repository: GithubReviewRepository?,
   review_decision: GithubReviewDecision?,
   total_reviews: int,
   total_threads: int,

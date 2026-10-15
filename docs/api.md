@@ -1076,6 +1076,7 @@ pub type GithubPullRequestReview = {
   state: GithubReviewState,
   commit_oid: string?,
   author: GithubReviewActor?,
+  submitted_at: string?,
   updated_at: string,
 }
 ```
@@ -1090,6 +1091,11 @@ pub type GithubPullRequestReviewCensus = {
   number: int,
   head_oid: string,
   base_oid: string,
+  author: GithubReviewActor?,
+  state: "OPEN" | "CLOSED" | "MERGED",
+  is_draft: bool,
+  head_repository: GithubReviewRepository?,
+  base_repository: GithubReviewRepository?,
   review_decision: GithubReviewDecision?,
   total_reviews: int,
   total_threads: int,
@@ -1556,6 +1562,14 @@ GitHub's aggregate decision may be absent when no applicable rule supplies it.
 
 ```harn
 pub type GithubReviewDecision = "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED"
+```
+
+### type `GithubReviewRepository`
+
+Stable repository identity remains separate from its current owner/name spelling.
+
+```harn
+pub type GithubReviewRepository = {id: string, full_name: string}
 ```
 
 ### type `GithubReviewState`

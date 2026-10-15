@@ -4,16 +4,24 @@ import {
   GithubPullRequestReviewCensus,
   GithubReviewActor,
   GithubReviewDecision,
+  GithubReviewRepository,
   GithubReviewState,
 } from "../contracts"
 import { __err, __graphql_err } from "../errors"
 import { __repo_parts } from "./shared"
+
+type RepositoryNode = {id: string, nameWithOwner: string}
 
 type Identity = {
   number: int,
   headRefOid: string,
   baseRefOid: string,
   reviewDecision: GithubReviewDecision?,
+  author: GithubReviewActor?,
+  state: "OPEN" | "CLOSED" | "MERGED",
+  isDraft: bool,
+  headRepository: RepositoryNode?,
+  baseRepository: RepositoryNode?,
 }
 
 type Connection<T> = {
@@ -32,6 +40,7 @@ type ReviewNode = {
   commit: {oid: string}?,
   author: GithubReviewActor?,
   updatedAt: string,
+  submittedAt: string?,
 }
 
 type ThreadNode = {id: string, isResolved: bool, isOutdated: bool}
@@ -42,7 +51,47 @@ type ThreadsPage = Page<ThreadNode>
 
 type Final = Identity & {reviews: {totalCount: int}, reviewThreads: {totalCount: int}}
 
-const IDENTITY_FIELDS = "number headRefOid baseRefOid reviewDecision"
+const IDENTITY_FIELDS = "number headRefOid baseRefOid reviewDecision state isDraft "
+  + "author { login type:__typename ... on Node { id } } "
+  + "headRepository { id nameWithOwner } baseRepository { id nameWithOwner }"
+
+fn source_identity(value: Identity) -> Identity {
+  return pick(
+    value,
+    [
+      "number",
+      "headRefOid",
+      "baseRefOid",
+      "reviewDecision",
+      "author",
+      "state",
+      "isDraft",
+      "headRepository",
+      "baseRepository",
+    ],
+  )
+}
+
+fn valid_actor(value: GithubReviewActor?) -> bool {
+  return value == nil || (trim(value.id) != "" && trim(value.login) != "" && trim(value.type) != "")
+}
+
+fn valid_source(value: Identity) -> bool {
+  return valid_actor(value.author)
+    && (value.headRepository == nil
+      || (trim(value.headRepository.id) != ""
+        && trim(value.headRepository.nameWithOwner) != ""))
+    && (value.baseRepository == nil
+      || (trim(value.baseRepository.id) != ""
+        && trim(value.baseRepository.nameWithOwner) != ""))
+}
+
+fn repository_observation(value: RepositoryNode?) -> GithubReviewRepository? {
+  if value == nil {
+    return nil
+  }
+  return {id: value.id, full_name: value.nameWithOwner}
+}
 
 fn git_id(value: string) -> bool {
   return regex_match("^[0-9a-f]{40}([0-9a-f]{24})?$", value) != nil
@@ -103,11 +152,9 @@ fn read_connection<T>(
       return __err("invalid_response", "review inventory page is missing or malformed")
     }
     const decoded: any = schema_expect(raw, page_schema)
-    const current: Identity = {
-      number: decoded.number,
-      headRefOid: decoded.headRefOid,
-      baseRefOid: decoded.baseRefOid,
-      reviewDecision: decoded.reviewDecision,
+    const current = source_identity(decoded)
+    if !valid_source(current) {
+      return __err("invalid_response", "pull-request actor or repository identity is malformed")
     }
     if current.number != variables.number || current.headRefOid != expected
       || !git_id(current.baseRefOid)
@@ -188,7 +235,7 @@ pub fn __github_pr_review_census(harness: Harness, args: any, cfg: any) {
     cfg,
     variables,
     "reviews",
-    "id state commit { oid } author { login type:__typename ... on Node { id } } updatedAt",
+    "id state commit { oid } author { login type:__typename ... on Node { id } } submittedAt updatedAt",
     schema_of(ReviewsPage),
     expected,
     maximum,
@@ -224,7 +271,7 @@ pub fn __github_pr_review_census(harness: Harness, args: any, cfg: any) {
     return final
   }
   if !schema_is(final, schema_of(Final))
-    || pick(final, ["number", "headRefOid", "baseRefOid", "reviewDecision"]) != reviews.identity
+    || source_identity(final) != reviews.identity
     || threads.identity != reviews.identity
     || final.reviews.totalCount != reviews.total
     || final.reviewThreads.totalCount != threads.total {
@@ -232,8 +279,9 @@ pub fn __github_pr_review_census(harness: Harness, args: any, cfg: any) {
   }
   let normalized: list<GithubPullRequestReview> = []
   for row in reviews.nodes {
-    if trim(row.updatedAt) == "" || (row.commit != nil && !git_id(row.commit.oid))
-      || (row.author != nil && (trim(row.author.id) == "" || trim(row.author.login) == "")) {
+    if trim(row.updatedAt) == "" || (row.submittedAt != nil && trim(row.submittedAt) == "")
+      || (row.commit != nil && !git_id(row.commit.oid))
+      || !valid_actor(row.author) {
       return __err("invalid_response", "review has incomplete commit, timestamp, or actor identity")
     }
     normalized = normalized
@@ -244,6 +292,7 @@ pub fn __github_pr_review_census(harness: Harness, args: any, cfg: any) {
           commit_oid: row.commit?.oid,
           author: row.author,
           updated_at: row.updatedAt,
+          submitted_at: row.submittedAt,
         },
       ]
   }
@@ -252,6 +301,11 @@ pub fn __github_pr_review_census(harness: Harness, args: any, cfg: any) {
     number: number,
     head_oid: expected,
     base_oid: reviews.identity.baseRefOid,
+    author: reviews.identity.author,
+    state: reviews.identity.state,
+    is_draft: reviews.identity.isDraft,
+    head_repository: repository_observation(reviews.identity.headRepository),
+    base_repository: repository_observation(reviews.identity.baseRepository),
     review_decision: reviews.identity.reviewDecision,
     total_reviews: reviews.total,
     total_threads: threads.total,
