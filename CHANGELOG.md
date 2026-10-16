@@ -2,9 +2,13 @@
 
 ## Unreleased
 
+## 0.15.0 - 2026-10-16
+
 - Add `github_read_signed_commit` to recover an exact GitHub-signed commit's
   tree and complete parent inventory without another mutation. Missing,
   partial, foreign and unverified observations remain refusals.
+- Decode the GraphQL envelope before reading signed commit results so malformed
+  errors are typed refusals and provider errors cannot be hidden by partial data.
 
 ## 0.14.0 - 2026-10-15
 
