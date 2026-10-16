@@ -55,6 +55,7 @@ const GITHUB_OUTBOUND_METHODS = [
   "github.ref.release",
   "github.refs.update",
   "github.commit.signature",
+  "github.commit.signed_identity",
   "github.file.view",
   "github.app.installation_token",
   "api_call",
@@ -254,6 +255,9 @@ pub fn __call_raw(harness: Harness, method: any, args: any = {}) {
   }
   if method == "github.commit.signature" {
     return __github_commit_signature(harness, args, cfg)
+  }
+  if method == "github.commit.signed_identity" {
+    return __github_read_signed_commit(harness, args, cfg)
   }
   if method == "github.file.view" {
     return __github_file_view(harness, args, cfg)

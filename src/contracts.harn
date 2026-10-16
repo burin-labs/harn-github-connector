@@ -1289,6 +1289,21 @@ pub type GithubSignedCommitReceipt = {
   signature_state: string,
 }
 
+/** Read one immutable commit object without creating or moving a branch. */
+pub type GithubSignedCommitReadRequest = GithubRepositoryRequest & {oid: string}
+
+/** Complete object identity and the same GitHub signature evidence required by creation. */
+pub type GithubSignedCommitObservation = {
+  repository: string,
+  oid: string,
+  tree_oid: string,
+  parent_oids: list<string>,
+  url: string,
+  signature_valid: bool,
+  signed_by_github: bool,
+  signature_state: string,
+}
+
 /**
  * One exact local Git state to derive a signed-commit payload from.
  *

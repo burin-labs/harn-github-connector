@@ -1661,6 +1661,31 @@ pub type GithubRunnerScope = {
 }
 ```
 
+### type `GithubSignedCommitObservation`
+
+Complete object identity and the same GitHub signature evidence required by creation.
+
+```harn
+pub type GithubSignedCommitObservation = {
+  repository: string,
+  oid: string,
+  tree_oid: string,
+  parent_oids: list<string>,
+  url: string,
+  signature_valid: bool,
+  signed_by_github: bool,
+  signature_state: string,
+}
+```
+
+### type `GithubSignedCommitReadRequest`
+
+Read one immutable commit object without creating or moving a branch.
+
+```harn
+pub type GithubSignedCommitReadRequest = GithubRepositoryRequest & {oid: string}
+```
+
 ### type `GithubSignedCommitReceipt`
 
 GitHub signature and branch evidence returned for a signed commit.
@@ -2634,6 +2659,18 @@ pub fn github_pr_review_census(
   harness: Harness,
   request: GithubPullRequestReviewCensusRequest,
 ) -> GithubConnectorResult<GithubPullRequestReviewCensus> {
+}
+```
+
+### fn `github_read_signed_commit`
+
+Observe exact signed content and complete parent lineage after a lost creation response.
+
+```harn
+pub fn github_read_signed_commit(
+  harness: Harness,
+  request: GithubSignedCommitReadRequest,
+) -> GithubConnectorResult<GithubSignedCommitObservation> {
 }
 ```
 

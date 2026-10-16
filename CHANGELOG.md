@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add `github_read_signed_commit` to recover an exact GitHub-signed commit's
+  tree and complete parent inventory without another mutation. Missing,
+  partial, foreign and unverified observations remain refusals.
+
 ## 0.14.0 - 2026-10-15
 
 - Breaking: `GithubPullRequestReviewCensus` now requires `head_branch`. Every

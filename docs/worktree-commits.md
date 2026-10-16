@@ -87,3 +87,25 @@ scratch index outside the checkout, and calls GitHub.
 
 Exit status `0` means a commit was published, `1` means publishing failed or
 the delta was empty, and `2` means the command arguments were invalid.
+
+## Inspect after a lost response
+
+Read a known commit object before deciding whether to resume publication:
+
+```harn,ignore
+import { github_read_signed_commit } from "harn-github-connector/default"
+
+const observed = github_read_signed_commit(harness, {
+  owner: "octo-org",
+  repo: "octo-repo",
+  oid: expected_commit,
+})
+```
+
+The receipt contains the exact commit, tree and complete parent list, plus the
+same valid GitHub-generated signature evidence required by creation. Compare
+the tree and parents with your frozen candidate before accepting it. This read
+never creates a commit or moves a ref. Missing objects, malformed identities,
+incomplete or more than 20 parents, and other signature states return a refusal;
+they do not authorize another write. A measured root commit has an empty parent
+list, while absent parent evidence is refused.

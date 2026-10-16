@@ -3,6 +3,118 @@ import "../contracts"
 import { __err, __graphql_err } from "../errors"
 import "./shared"
 
+type SignedObject = {
+  __typename: string,
+  oid: string,
+  url: string,
+  tree: {oid: string},
+  parents: {totalCount: int, nodes: list<{oid: string}>, pageInfo: {hasNextPage: bool}},
+  signature: {isValid: bool, wasSignedByGitHub: bool, state: string}?,
+}
+
+type SignedObjectEnvelope = {data: {repository: {nameWithOwner: string, object: SignedObject?}?}?}
+
+fn object_id(value: string) -> bool {
+  return regex_match("^[0-9a-f]{40}$", value) && value != "0".repeat(40)
+}
+
+fn verified_github_signature(commit: any, surface: string) {
+  const signature = commit?.signature
+  if signature?.isValid != true || signature?.wasSignedByGitHub != true
+    || signature?.state != "VALID" {
+    return __err(
+      "signature_invalid",
+      surface + " did not return a valid GitHub-generated signature",
+    )
+  }
+  return Ok(true)
+}
+
+/** One bounded read, with no mutation fallback when the exact object is unavailable. */
+pub fn __github_read_signed_commit(harness: Harness, args: any, cfg: any) {
+  const repository = __repo_parts(args)
+  if is_err(repository) {
+    return repository
+  }
+  const repo = unwrap(repository)
+  const oid = args?.oid
+  if type_of(oid) != "string" || !object_id(oid) {
+    return __err("schema_drift", "signed commit read requires one exact nonzero commit oid")
+  }
+  const payload = __github_json(
+    harness,
+    "POST",
+    __github_api_url(cfg.api_base_url, "/graphql"),
+    {
+      query: """
+query HarnGithubConnectorSignedCommit($owner: String!, $repo: String!, $oid: GitObjectID!) {
+  repository(owner: $owner, name: $repo) {
+    nameWithOwner
+    object(oid: $oid) {
+      __typename
+      ... on Commit {
+        oid
+        url
+        tree { oid }
+        parents(first: 20) {
+          totalCount
+          nodes { oid }
+          pageInfo { hasNextPage }
+        }
+        signature { isValid state wasSignedByGitHub }
+      }
+    }
+  }
+}
+""",
+      variables: {owner: repo.owner, repo: repo.name, oid: oid},
+    },
+    cfg,
+  )
+  if is_err(payload) {
+    return payload
+  }
+  if payload?.errors != nil && len(payload.errors) != 0 {
+    return __graphql_err("github signed commit read", payload.errors)
+  }
+  if !schema_is(payload, SignedObjectEnvelope) {
+    return __err("invalid_response", "signed commit read omitted complete object evidence")
+  }
+  const envelope: SignedObjectEnvelope = payload
+  const observed = envelope.data?.repository
+  const commit = observed?.object
+  if observed == nil || commit == nil {
+    return __err("not_found", "signed commit object is unavailable")
+  }
+  const parents = commit.parents.nodes.map({ parent -> parent.oid })
+  if observed.nameWithOwner != repo.owner + "/" + repo.name || commit.__typename != "Commit"
+    || commit.oid != oid
+    || !object_id(commit.tree.oid)
+    || commit.parents.totalCount < 0
+    || commit.parents.totalCount > 20
+    || commit.parents.pageInfo.hasNextPage
+    || len(parents) != commit.parents.totalCount
+    || len(set(parents)) != len(parents)
+    || !parents.all({ parent -> object_id(parent) }) {
+    return __err("invalid_response", "signed commit identity or complete parent inventory differs")
+  }
+  const signature = verified_github_signature(commit, "github signed commit read")
+  if is_err(signature) {
+    return signature
+  }
+  const result: GithubSignedCommitObservation = {
+    repository: observed.nameWithOwner,
+    oid: commit.oid,
+    tree_oid: commit.tree.oid,
+    parent_oids: parents,
+    url: commit.url,
+    signature_valid: true,
+    signed_by_github: true,
+    signature_state: commit.signature!.state,
+  }
+  return result
+}
+
 pub fn __typed_commit_signature(repo: any, commit: any, surface: any) {
   const verification = commit?.commit?.verification
   if type_of(commit) != "dict" || trim(to_string(commit?.sha ?? "")) == ""
@@ -113,16 +225,12 @@ pub fn __github_create_signed_commit(harness: Harness, args: any, cfg: any) {
   }
   const result = payload?.data?.createCommitOnBranch
   const commit = result?.commit
-  const signature = commit?.signature
   if commit?.oid == nil || trim(to_string(commit.oid)) == "" {
     return __err("schema_drift", "github createCommitOnBranch returned no commit oid")
   }
-  if signature?.isValid != true || signature?.wasSignedByGitHub != true
-    || signature?.state != "VALID" {
-    return __err(
-      "signature_invalid",
-      "github createCommitOnBranch did not return a valid GitHub-generated signature",
-    )
+  const verified = verified_github_signature(commit, "github createCommitOnBranch")
+  if is_err(verified) {
+    return verified
   }
   const receipt: GithubSignedCommitReceipt = {
     oid: to_string(commit.oid),
@@ -130,7 +238,7 @@ pub fn __github_create_signed_commit(harness: Harness, args: any, cfg: any) {
     branch: to_string(result?.ref?.name ?? branch),
     signature_valid: true,
     signed_by_github: true,
-    signature_state: to_string(signature.state),
+    signature_state: to_string(commit.signature.state),
   }
   return receipt
 }

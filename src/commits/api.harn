@@ -1,10 +1,25 @@
 import { call_typed } from "../api"
 import {
   GithubConnectorResult,
+  GithubSignedCommitObservation,
+  GithubSignedCommitReadRequest,
   GithubSignedCommitReceipt,
   GithubSignedCommitRequest,
 } from "../contracts"
 import { __request_args } from "../request_options"
+
+/** Observe exact signed content and complete parent lineage after a lost creation response. */
+pub fn github_read_signed_commit(
+  harness: Harness,
+  request: GithubSignedCommitReadRequest,
+) -> GithubConnectorResult<GithubSignedCommitObservation> {
+  return call_typed(
+    harness,
+    "github.commit.signed_identity",
+    __request_args(request),
+    GithubSignedCommitObservation,
+  )
+}
 
 /** Append one GitHub-signed commit under an exact branch-head lease. */
 pub fn github_create_signed_commit(
