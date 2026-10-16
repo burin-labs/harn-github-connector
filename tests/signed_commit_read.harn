@@ -97,6 +97,8 @@ pipeline test_read_signed_commit_refuses_foreign_partial_and_unverified_objects(
     {data: {repository: {nameWithOwner: "other/repository", object: original}}},
     {data: {repository: {object: original}}},
     {errors: [{message: "Not accessible"}]},
+    {errors: 42},
+    {errors: false},
   ] {
     response(harness.testing, unavailable)
     assert(is_err(read(harness)))
@@ -120,4 +122,21 @@ pipeline test_read_signed_commit_refuses_nonexact_requests_before_network(harnes
     assert_eq(unwrap_err(refused).code, "schema_drift")
   }
   assert_eq(len(harness.testing.http_mock_calls()), 0)
+}
+
+pipeline test_signed_commit_server_errors_preserve_retry_disposition_before_partial_data(
+  harness: Harness,
+) {
+  response(
+    harness.testing,
+    {
+      data: {repository: {object: {oid: OID}}},
+      errors: [{type: "INTERNAL", message: "provider unavailable"}],
+    },
+  )
+  const refused = read(harness)
+  assert(is_err(refused))
+  assert_eq(unwrap_err(refused).code, "graphql_server")
+  assert_eq(unwrap_err(refused).retryable, true)
+  assert_eq(len(harness.testing.http_mock_calls()), 1)
 }

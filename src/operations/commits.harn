@@ -12,7 +12,20 @@ type SignedObject = {
   signature: {isValid: bool, wasSignedByGitHub: bool, state: string}?,
 }
 
-type SignedObjectEnvelope = {data: {repository: {nameWithOwner: string, object: SignedObject?}?}?}
+type GraphqlEnvelope = {data?: unknown, errors?: list<unknown>}
+
+type SignedObjectData = {repository: {nameWithOwner: string, object: SignedObject?}?}
+
+fn graphql_data(payload: unknown, surface: string) {
+  if !schema_is(payload, GraphqlEnvelope) {
+    return __err("invalid_response", surface + " returned a malformed GraphQL envelope")
+  }
+  const envelope: GraphqlEnvelope = payload
+  if envelope.errors != nil && len(envelope.errors) != 0 {
+    return __graphql_err(surface, envelope.errors)
+  }
+  return Ok(envelope.data)
+}
 
 fn object_id(value: string) -> bool {
   return regex_match("^[0-9a-f]{40}$", value) && value != "0".repeat(40)
@@ -74,14 +87,16 @@ query HarnGithubConnectorSignedCommit($owner: String!, $repo: String!, $oid: Git
   if is_err(payload) {
     return payload
   }
-  if payload?.errors != nil && len(payload.errors) != 0 {
-    return __graphql_err("github signed commit read", payload.errors)
+  const graph = graphql_data(payload, "github signed commit read")
+  if is_err(graph) {
+    return graph
   }
-  if !schema_is(payload, SignedObjectEnvelope) {
+  const raw = unwrap(graph)
+  if !schema_is(raw, SignedObjectData) {
     return __err("invalid_response", "signed commit read omitted complete object evidence")
   }
-  const envelope: SignedObjectEnvelope = payload
-  const observed = envelope.data?.repository
+  const data: SignedObjectData = raw
+  const observed = data.repository
   const commit = observed?.object
   if observed == nil || commit == nil {
     return __err("not_found", "signed commit object is unavailable")
@@ -220,10 +235,12 @@ pub fn __github_create_signed_commit(harness: Harness, args: any, cfg: any) {
   if is_err(payload) {
     return payload
   }
-  if payload?.errors != nil && len(payload.errors) != 0 {
-    return __graphql_err("github createCommitOnBranch", payload.errors)
+  const graph = graphql_data(payload, "github createCommitOnBranch")
+  if is_err(graph) {
+    return graph
   }
-  const result = payload?.data?.createCommitOnBranch
+  const data = unwrap(graph)
+  const result = data?.createCommitOnBranch
   const commit = result?.commit
   if commit?.oid == nil || trim(to_string(commit.oid)) == "" {
     return __err("schema_drift", "github createCommitOnBranch returned no commit oid")
