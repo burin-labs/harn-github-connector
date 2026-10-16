@@ -1,0 +1,142 @@
+import { github_read_signed_commit } from "../src/facade"
+
+const OID = "b".repeat(40)
+
+const TREE = "c".repeat(40)
+
+const PARENT = "a".repeat(40)
+
+const API = "https://api.github.test"
+
+type ReadQuery = {query: string, variables: {owner: string, repo: string, oid: string}}
+
+fn object() -> dict {
+  return {
+    __typename: "Commit",
+    oid: OID,
+    url: "https://github.com/octo-org/octo-repo/commit/" + OID,
+    tree: {oid: TREE},
+    parents: {totalCount: 1, nodes: [{oid: PARENT}], pageInfo: {hasNextPage: false}},
+    signature: {isValid: true, wasSignedByGitHub: true, state: "VALID"},
+  }
+}
+
+fn read(harness: Harness) {
+  return github_read_signed_commit(
+    harness,
+    {
+      owner: "octo-org",
+      repo: "octo-repo",
+      oid: OID,
+      options: {api_base_url: API, installation_token: "fixture-installation-token"},
+    },
+  )
+}
+
+fn response(testing: HarnessTesting, value: dict) {
+  testing.http_mock_clear()
+  testing.http_mock("POST", API + "/graphql", {status: 200, body: json_stringify(value)})
+}
+
+fn envelope(commit: unknown) -> dict {
+  return {data: {repository: {nameWithOwner: "octo-org/octo-repo", object: commit}}}
+}
+
+pipeline test_read_signed_commit_observes_exact_content_and_lineage_without_a_mutation(
+  harness: Harness,
+) {
+  response(harness.testing, envelope(object()))
+  const actual = unwrap(read(harness))
+  assert_eq(actual.repository, "octo-org/octo-repo")
+  assert_eq(actual.oid, OID)
+  assert_eq(actual.tree_oid, TREE)
+  assert_eq(actual.parent_oids, [PARENT])
+  assert(actual.signature_valid && actual.signed_by_github)
+  assert_eq(actual.signature_state, "VALID")
+  const calls = harness.testing.http_mock_calls()
+  assert_eq(len(calls), 1)
+  const request = schema_expect(json_parse(calls[0].body), schema_of(ReadQuery))
+  assert_eq(request.variables, {owner: "octo-org", repo: "octo-repo", oid: OID})
+  assert(request.query.starts_with("query "))
+  assert(!request.query.contains("mutation"))
+  // A measured root is allowed; absent parent evidence is refused below.
+  response(
+    harness.testing,
+    envelope(object() + {parents: {totalCount: 0, nodes: [], pageInfo: {hasNextPage: false}}}),
+  )
+  assert_eq(unwrap(read(harness)).parent_oids, [])
+}
+
+pipeline test_read_signed_commit_refuses_foreign_partial_and_unverified_objects(harness: Harness) {
+  const original = object()
+  for broken in [
+    original + {oid: "d".repeat(40)},
+    original + {__typename: "Tree"},
+    original + {tree: {oid: "0".repeat(40)}},
+    original + {parents: nil},
+    original + {parents: original.parents + {totalCount: 2}},
+    original + {parents: original.parents + {totalCount: -1}},
+    original + {parents: original.parents + {totalCount: 21}},
+    original + {parents: original.parents + {pageInfo: {hasNextPage: true}}},
+    original + {parents: original.parents + {nodes: [{oid: "not-an-object"}]}},
+    original + {parents: original.parents + {totalCount: 2, nodes: [{oid: PARENT}, {oid: PARENT}]}},
+    original + {signature: nil},
+    original + {signature: original.signature + {isValid: false}},
+    original + {signature: original.signature + {wasSignedByGitHub: false}},
+    original + {signature: original.signature + {state: "UNKNOWN"}},
+  ] {
+    response(harness.testing, envelope(broken))
+    const refused = read(harness)
+    assert(is_err(refused), json_stringify(broken))
+    assert_eq(len(harness.testing.http_mock_calls()), 1, "one read, no creation fallback")
+  }
+  for unavailable in [
+    {data: nil},
+    {data: {repository: nil}},
+    envelope(nil),
+    {data: {repository: {nameWithOwner: "other/repository", object: original}}},
+    {data: {repository: {object: original}}},
+    {errors: [{message: "Not accessible"}]},
+    {errors: 42},
+    {errors: false},
+  ] {
+    response(harness.testing, unavailable)
+    assert(is_err(read(harness)))
+    assert_eq(len(harness.testing.http_mock_calls()), 1)
+  }
+}
+
+pipeline test_read_signed_commit_refuses_nonexact_requests_before_network(harness: Harness) {
+  harness.testing.http_mock_clear()
+  for oid in ["", "main", "b".repeat(39), "0".repeat(40), "g".repeat(40)] {
+    const refused = github_read_signed_commit(
+      harness,
+      {
+        owner: "octo-org",
+        repo: "octo-repo",
+        oid: oid,
+        options: {api_base_url: API, installation_token: "fixture-installation-token"},
+      },
+    )
+    assert(is_err(refused))
+    assert_eq(unwrap_err(refused).code, "schema_drift")
+  }
+  assert_eq(len(harness.testing.http_mock_calls()), 0)
+}
+
+pipeline test_signed_commit_server_errors_preserve_retry_disposition_before_partial_data(
+  harness: Harness,
+) {
+  response(
+    harness.testing,
+    {
+      data: {repository: {object: {oid: OID}}},
+      errors: [{type: "INTERNAL", message: "provider unavailable"}],
+    },
+  )
+  const refused = read(harness)
+  assert(is_err(refused))
+  assert_eq(unwrap_err(refused).code, "graphql_server")
+  assert_eq(unwrap_err(refused).retryable, true)
+  assert_eq(len(harness.testing.http_mock_calls()), 1)
+}

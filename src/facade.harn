@@ -34,7 +34,7 @@ pub import {
   mint_app_jwt,
   reset_token_cache,
 } from "./client"
-pub import { github_create_signed_commit } from "./commits/api"
+pub import { github_create_signed_commit, github_read_signed_commit } from "./commits/api"
 pub import "./contracts"
 pub import { issues_create_with_template } from "./issues/api"
 pub import {
