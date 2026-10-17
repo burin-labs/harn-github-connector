@@ -903,7 +903,7 @@ pub fn __github_request(
   while true {
     const allowed = __authorize_mutation(to_string(method), cfg?.authorize_mutation)
     if is_err(allowed) {
-      return allowed
+      return Err(unwrap_err(allowed) + {mutation_outcome: "refused", retryable: false})
     }
     const response = __github_policy_request(
       harness.clock,
