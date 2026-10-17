@@ -101,6 +101,9 @@ pub type GithubBudgetPolicy = {
 /** Canonical fallible boundary for every normalized GitHub operation. */
 pub type GithubConnectorResult<T> = Result<T, GithubConnectorError>
 
+/** Fresh caller authority at unsafe GitHub HTTP requests. */
+pub type GithubMutationAuthorization = fn() -> GithubConnectorResult<bool>
+
 /** GitHub accepts either a workflow file/name or its numeric database id. */
 pub type GithubWorkflowId = string | int
 
@@ -126,6 +129,7 @@ pub type GithubInstallationTokenScope = {
 
 /** Authentication, transport, and retry policy shared by typed requests. */
 pub type GithubClientOptions = {
+  authorize_mutation?: GithubMutationAuthorization?,
   api_base_url?: string,
   installation_token?: string,
   token?: string,

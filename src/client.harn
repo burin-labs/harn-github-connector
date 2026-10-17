@@ -12,6 +12,7 @@ import {
   __installation_token_cache_key,
   __normalize_installation_scope,
 } from "./installation_scope"
+import { __authorize_mutation } from "./mutation_authority"
 import { pr_edit_body } from "./pr_edit"
 import { __request_context_keys } from "./request_options"
 
@@ -234,6 +235,7 @@ pub fn __http_policy_config(args: any) {
     idempotency_key: args?.idempotency_key,
     priority: args?.priority,
     budget: args?.budget,
+    authorize_mutation: args?.authorize_mutation,
   }
 }
 
@@ -899,6 +901,10 @@ pub fn __github_request(
   let retried_rate_limit = false
   let retried_auth = false
   while true {
+    const allowed = __authorize_mutation(to_string(method), cfg?.authorize_mutation)
+    if is_err(allowed) {
+      return allowed
+    }
     const response = __github_policy_request(
       harness.clock,
       harness.net,
@@ -909,6 +915,7 @@ pub fn __github_request(
       current_token,
       accept,
       parse_json,
+      unwrap(allowed),
     )
     __budget_observe(harness, budget, response, __now_seconds(harness.clock, cfg))
     if response.status == 401 && cfg.token_mode == "jwt" && !retried_auth {
@@ -969,8 +976,10 @@ pub fn __github_policy_request(
   current_token: any,
   accept: any,
   parse_json: any,
+  guarded: bool = false,
 ) {
-  const options = __github_policy_request_options(body, cfg, current_token, accept)
+  const policy = guarded ? cfg + {retry_unsafe: false, retry: {max_attempts: 1}} : cfg
+  const options = __github_policy_request_options(body, policy, current_token, accept)
   if parse_json {
     return connector_http_json(clock, net, method, url, options)
   }

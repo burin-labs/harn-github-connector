@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.16.0 - 2026-10-17
+
+- Breaking: extend `GithubClientOptions` with optional `authorize_mutation`, a typed
+  `GithubMutationAuthorization` callback checked at unsafe HTTP dispatch and
+  each owner retry. Guarded writes cannot replay inside the HTTP transport.
+  Existing requests without the option retain their retry behavior.
+- Worktree rewrites now use the existing atomic expected-object ref owner, so
+  branch movement during authorization refuses the update. Staging cleanup
+  remains available after withdrawal. Final write refusals use the atomic
+  owner's `ref_update_refused` or `ref_update_unknown` outcomes.
+
 ## 0.15.0 - 2026-10-16
 
 - Add `github_read_signed_commit` to recover an exact GitHub-signed commit's

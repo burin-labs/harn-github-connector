@@ -6,8 +6,7 @@ this adapter is the package's only Git subprocess boundary.
 
 ## Publish from Harn
 
-Pass authentication inside the typed request rather than as a third positional
-argument:
+Pass authentication inside the typed request:
 
 ```harn,ignore
 import {
@@ -43,6 +42,33 @@ returns `stale_head` before content is published.
 
 An empty delta returns `committed: false` and
 `branch_action: "skipped"`, and performs no network call.
+
+## Recheck publication authority
+
+Set `request.options.authorize_mutation` to a `GithubMutationAuthorization`
+callback, `fn() -> Result<bool, GithubConnectorError>`. Read current authority
+inside that callback. The shared HTTP owner calls it after preparation and
+budget admission, immediately before each unsafe request. This includes POST
+GraphQL queries; GET, HEAD and OPTIONS do not consult mutation authority.
+
+Return `Ok(true)` only when the current operation is authorized. `Ok(false)`
+returns `authorization_denied`; an `Err` is preserved, and a thrown read returns
+`authorization_unmeasured`. Each refusal withholds the next mutation. Cleanup
+of a staging branch created by this operation still runs. An empty delta never
+calls the callback.
+
+Guarded writes use one HTTP attempt. Authentication and rate-limit retries at
+the client owner pass through the callback again. Without the option, existing
+retry policy is unchanged.
+
+The authority read and GitHub mutation are separate operations. Authority can
+change after the last read; this callback does not make an external control
+atomic with publication. The worktree adapter uses the existing atomic ref
+transaction for target movement, so a changed branch fails the expected-object
+lease even if it moves during authorization. An early observed mismatch remains
+`stale_head`; final atomic refusals are `ref_update_refused`, while uncertain
+outcomes are `ref_update_unknown` and require reconciliation. Signature checks
+still apply.
 
 ## Check supported Git modes
 

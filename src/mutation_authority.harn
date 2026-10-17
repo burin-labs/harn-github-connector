@@ -1,0 +1,26 @@
+import { GithubConnectorResult, GithubMutationAuthorization } from "./contracts"
+import { __err } from "./errors"
+
+/** Admit a guarded unsafe request; false means no guard applies to this request. */
+pub fn __authorize_mutation(
+  method: string,
+  authorize: GithubMutationAuthorization?,
+) -> GithubConnectorResult<bool> {
+  if authorize == nil || ["GET", "HEAD", "OPTIONS"].contains(uppercase(method)) {
+    return Ok(false)
+  }
+  const checked = try {
+    {decision: unwrap(authorize)()}
+  }
+  if is_err(checked) {
+    return __err("authorization_unmeasured", "publication authority could not be read")
+  }
+  const decision = unwrap(checked).decision
+  if is_err(decision) {
+    return decision
+  }
+  return unwrap(decision) ? Ok(true) : __err(
+    "authorization_denied",
+    "publication authority was withdrawn",
+  )
+}

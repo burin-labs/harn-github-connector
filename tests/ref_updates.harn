@@ -80,6 +80,39 @@ pipeline test_atomic_updates_bind_the_whole_set_in_one_mutation(harness: Harness
   assert_eq(mutations(harness.testing), 1)
 }
 
+pipeline test_atomic_authority_is_read_after_repository_preparation(harness: Harness) {
+  const updates: list<GithubRefUpdate> = [{ref: "refs/heads/main", before_oid: OLD, after_oid: NEW}]
+  for allowed in [true, false] {
+    fixture(harness.testing, {data: {updateRefs: {clientMutationId: transaction(updates)}}})
+    let reads = 0
+    const result = github_update_refs(
+      harness,
+      {
+        owner: "octo-org",
+        repo: "octo-repo",
+        updates: updates,
+        options: auth()
+          + {
+            authorize_mutation: { ->
+              reads = reads + 1
+              const calls = harness.testing.http_mock_calls()
+              assert_eq(len(calls), 1, "the repository identity read already completed")
+              assert_eq(calls[0].method, "GET")
+              assert_eq(calls[0].url, BASE + "/repos/" + REPO)
+              Ok(allowed)
+            },
+          },
+      },
+    )
+    assert_eq(reads, 1)
+    assert_eq(is_ok(result), allowed)
+    assert_eq(mutations(harness.testing), allowed ? 1 : 0)
+    if !allowed {
+      assert_eq(unwrap_err(result).code, "authorization_denied")
+    }
+  }
+}
+
 pipeline test_expected_absence_and_deletion_remain_explicit(harness: Harness) {
   const updates: list<GithubRefUpdate> = [
     {ref: "refs/heads/new", before_oid: ZERO, after_oid: NEW},
