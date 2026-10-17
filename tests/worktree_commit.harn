@@ -1,5 +1,6 @@
 import {
   GithubClientOptions,
+  GithubMutationAuthorization,
   GithubWorktreeCommitRequest,
   GithubWorktreeSelector,
   github_commit_worktree,
@@ -160,9 +161,9 @@ fn mock_ref_create(testing: HarnessTesting) {
 
 fn mock_ref_reset(testing: HarnessTesting) {
   testing.http_mock(
-    "PATCH",
-    ref_update_url(BRANCH),
-    {status: 200, body: json_stringify({ref: "refs/heads/" + BRANCH})},
+    "GET",
+    GITHUB_BASE + "/repos/" + OWNER + "/" + REPO,
+    {status: 200, body: json_stringify({node_id: "R_fixture"})},
   )
 }
 
@@ -189,6 +190,24 @@ fn commit_body(signed: bool) -> string {
   return json_stringify(
     {
       data: {
+        updateRefs: {
+          clientMutationId: "refs-"
+            + sha256_hex(
+              json_stringify(
+                {
+                  repo: OWNER + "/" + REPO,
+                  updates: [
+                    {
+                      ref: "refs/heads/" + BRANCH,
+                      before_oid: OTHER_OID,
+                      after_oid: COMMIT_OID,
+                      force: true,
+                    },
+                  ],
+                },
+              ),
+            ),
+        },
         createCommitOnBranch: {
           commit: {
             oid: COMMIT_OID,
@@ -257,14 +276,30 @@ fn selector(dir: string, source: string, base_oid: string?) -> GithubWorktreeSel
   return {repo_dir: dir, source: source, base_oid: base_oid}
 }
 
-fn graphql_calls(testing: HarnessTesting) -> list<dict> {
+fn graphql_operations(testing: HarnessTesting, input_key: string) -> list<dict> {
   let out = []
   for call in testing.http_mock_calls() {
     if to_string(call.method) == "POST" && ends_with(to_string(call.url), "/graphql") {
-      out = out + [call]
+      const payload: {variables: {input: dict}} = json_parse(to_string(call.body))
+      if payload.variables.input.keys().contains(input_key) {
+        out = out + [call]
+      }
     }
   }
   return out
+}
+
+fn graphql_calls(testing: HarnessTesting) -> list<dict> {
+  return graphql_operations(testing, "fileChanges")
+}
+
+fn guarded_request(
+  dir: string,
+  reset: bool,
+  authorize: GithubMutationAuthorization,
+) -> GithubWorktreeCommitRequest {
+  return request_for(dir, "worktree", reset)
+    + {options: options() + {authorize_mutation: authorize}}
 }
 
 fn graphql_input(testing: HarnessTesting) -> dict {
@@ -449,6 +484,195 @@ pipeline test_empty_delta_is_a_clean_outcome_with_no_network_call(harness: Harne
   assert_eq(receipt.changes, [], "no changes")
   assert_eq(receipt.signature.verified, false, "no signature evidence")
   assert_eq(len(harness.testing.http_mock_calls()), 0, "no network request at all")
+  drop_repo(harness.fs, harness.process, dir)
+  harness.testing.http_mock_clear()
+}
+
+pipeline test_worktree_authority_is_fresh_after_preparation_and_fails_closed(harness: Harness) {
+  const dir = new_repo(harness.fs, harness.process)
+  harness.fs.write_text(dir + "/keep.txt", "changed\n")
+  const base = head_oid(harness.process, dir)
+  const before = repo_state(harness.process, dir)
+  for mode in ["allow", "deny", "error", "throw"] {
+    harness.testing.http_mock_clear()
+    mock_ref_at(harness.testing, base)
+    mock_commit(harness.testing, true)
+    let reads = 0
+    const authorize: GithubMutationAuthorization = { ->
+      reads = reads + 1
+      assert_eq(len(calls_matching(harness.testing, "GET", ref_url(BRANCH))), 1)
+      assert_eq(len(graphql_calls(harness.testing)), 0)
+      if mode == "throw" {
+        throw "unavailable authority fixture"
+      }
+      if mode == "error" {
+        return Err({code: "fixture_unmeasured", category: "authorization", message: "unmeasured"})
+      }
+      Ok(mode == "allow")
+    }
+    const result = github_commit_worktree(harness, guarded_request(dir, false, authorize))
+    assert_eq(reads, 1, "authority was actually read after the branch response")
+    assert_eq(is_ok(result), mode == "allow", mode)
+    assert_eq(len(graphql_calls(harness.testing)), mode == "allow" ? 1 : 0, mode)
+    if is_err(result) {
+      assert_eq(
+        unwrap_err(result).code,
+        mode == "deny" ? "authorization_denied" : mode == "throw" ? "authorization_unmeasured" : "fixture_unmeasured",
+      )
+    }
+    assert_eq(repo_state(harness.process, dir), before)
+  }
+  drop_repo(harness.fs, harness.process, dir)
+  harness.testing.http_mock_clear()
+}
+
+pipeline test_worktree_authority_guards_missing_branch_creation(harness: Harness) {
+  harness.testing.http_mock_clear()
+  const dir = new_repo(harness.fs, harness.process)
+  harness.fs.write_text(dir + "/keep.txt", "changed\n")
+  mock_ref_missing(harness.testing)
+  mock_ref_create(harness.testing)
+  mock_commit(harness.testing, true)
+  let reads = 0
+  const result = github_commit_worktree(
+    harness,
+    guarded_request(
+      dir,
+      false,
+      { ->
+        reads = reads + 1
+        assert_eq(len(calls_matching(harness.testing, "GET", ref_url(BRANCH))), 1)
+        Ok(false)
+      },
+    ),
+  )
+  assert_eq(reads, 1)
+  assert_eq(unwrap_err(result).code, "authorization_denied")
+  assert_eq(len(calls_matching(harness.testing, "POST", refs_url())), 0)
+  assert_eq(len(graphql_calls(harness.testing)), 0)
+  drop_repo(harness.fs, harness.process, dir)
+  harness.testing.http_mock_clear()
+}
+
+pipeline test_worktree_authority_stops_rewrite_but_preserves_owned_cleanup(harness: Harness) {
+  const dir = new_repo(harness.fs, harness.process)
+  harness.fs.write_text(dir + "/keep.txt", "changed\n")
+  for denied in ["none", "create", "commit", "retarget"] {
+    harness.testing.http_mock_clear()
+    mock_ref_at(harness.testing, OTHER_OID)
+    mock_ref_create(harness.testing)
+    mock_ref_reset(harness.testing)
+    mock_staging_drop(harness.testing)
+    mock_commit(harness.testing, true)
+    let boundaries = []
+    const authorize: GithubMutationAuthorization = { ->
+      const boundary = if len(graphql_calls(harness.testing)) > 0 {
+        assert_eq(len(calls_matching(harness.testing, "GET", ref_url(BRANCH))), 2)
+        "retarget"
+      } else if len(calls_matching(harness.testing, "POST", refs_url())) > 0 {
+        "commit"
+      } else {
+        "create"
+      }
+      boundaries = boundaries + [boundary]
+      Ok(boundary != denied)
+    }
+    const result = github_commit_worktree(harness, guarded_request(dir, true, authorize))
+    assert_eq(is_ok(result), denied == "none", denied)
+    assert_eq(boundaries[0], "create", "nonempty authority control")
+    assert_eq(len(graphql_calls(harness.testing)), ["none", "retarget"].contains(denied) ? 1 : 0)
+    assert_eq(len(graphql_operations(harness.testing, "refUpdates")), denied == "none" ? 1 : 0)
+    const created = calls_matching(harness.testing, "POST", refs_url())
+    assert_eq(len(created), denied == "create" ? 0 : 1)
+    if len(created) == 1 {
+      const body: {ref: string, sha: string} = json_parse(to_string(created[0].body))
+      assert_eq(
+        len(calls_matching(harness.testing, "DELETE", ref_update_url(created_branch(body.ref)))),
+        1,
+      )
+    }
+  }
+  drop_repo(harness.fs, harness.process, dir)
+  harness.testing.http_mock_clear()
+}
+
+pipeline test_callback_cannot_overwrite_a_branch_that_moved_after_the_lease_read(harness: Harness) {
+  harness.testing.http_mock_clear()
+  const dir = new_repo(harness.fs, harness.process)
+  harness.fs.write_text(dir + "/keep.txt", "changed\n")
+  mock_ref_at(harness.testing, OTHER_OID)
+  mock_ref_create(harness.testing)
+  mock_ref_reset(harness.testing)
+  mock_staging_drop(harness.testing)
+  mock_commit(harness.testing, true)
+  let moved = false
+  const result = github_commit_worktree(
+    harness,
+    guarded_request(
+      dir,
+      true,
+      { ->
+        if len(graphql_calls(harness.testing)) == 1 {
+          assert_eq(len(calls_matching(harness.testing, "GET", ref_url(BRANCH))), 2)
+          assert_eq(
+            len(
+              calls_matching(harness.testing, "GET", GITHUB_BASE + "/repos/" + OWNER + "/" + REPO),
+            ),
+            1,
+          )
+          moved = true
+          harness.testing.http_mock(
+            "POST",
+            GITHUB_BASE + "/graphql",
+            {
+              status: 200,
+              body: json_stringify({data: {updateRefs: nil}, errors: [{type: "UNPROCESSABLE"}]}),
+            },
+          )
+        }
+        Ok(true)
+      },
+    ),
+  )
+  assert(moved, "the actual final-read boundary was reached")
+  assert_eq(unwrap_err(result).code, "ref_update_refused")
+  assert_eq(unwrap_err(result).mutation_outcome, "refused")
+  const updates = graphql_operations(harness.testing, "refUpdates")
+  assert_eq(len(updates), 1)
+  const payload: {variables: {input: {refUpdates: list<dict>}}} = json_parse(
+    to_string(updates[0].body),
+  )
+  assert_eq(payload.variables.input.refUpdates[0].beforeOid, OTHER_OID)
+  assert_eq(len(calls_matching(harness.testing, "PATCH", ref_update_url(BRANCH))), 0)
+  const created: {ref: string, sha: string} = json_parse(
+    to_string(calls_matching(harness.testing, "POST", refs_url())[0].body),
+  )
+  assert_eq(
+    len(calls_matching(harness.testing, "DELETE", ref_update_url(created_branch(created.ref)))),
+    1,
+  )
+  drop_repo(harness.fs, harness.process, dir)
+  harness.testing.http_mock_clear()
+}
+
+pipeline test_empty_worktree_never_consults_mutation_authority(harness: Harness) {
+  harness.testing.http_mock_clear()
+  const dir = new_repo(harness.fs, harness.process)
+  let reads = 0
+  const result = github_commit_worktree(
+    harness,
+    guarded_request(
+      dir,
+      false,
+      { ->
+        reads = reads + 1
+        throw "empty delta must not ask for mutation authority"
+      },
+    ),
+  )
+  assert_eq(reads, 0)
+  assert_eq(unwrap(result).committed, false)
+  assert_eq(len(harness.testing.http_mock_calls()), 0)
   drop_repo(harness.fs, harness.process, dir)
   harness.testing.http_mock_clear()
 }
@@ -732,12 +956,17 @@ pipeline test_a_rewrite_moves_the_target_once_and_never_through_the_base(
   const input = graphql_input(harness.testing)
   assert_eq(to_string(input.branch.branchName), replace(created.ref, "refs/heads/", ""))
   assert_eq(to_string(input.expectedHeadOid), base, "the commit is parented on the base")
-  const moves = calls_matching(harness.testing, "PATCH", ref_update_url(BRANCH))
+  const moves = graphql_operations(harness.testing, "refUpdates")
   assert_eq(len(moves), 1, "the target is written exactly once")
-  const body: {sha: string, force: bool} = json_parse(to_string(moves[0].body))
-  assert_eq(body.sha, COMMIT_OID, "and it goes straight to the finished commit")
-  assert(body.sha != base, "never to the base")
-  assert_eq(body.force, true, "the move is an explicit force")
+  const payload: {variables: {input: {refUpdates: list<dict>}}} = json_parse(
+    to_string(moves[0].body),
+  )
+  const update = unwrap(payload.variables.input.refUpdates[0])
+  assert_eq(update.beforeOid, OTHER_OID, "the provider enforces the original lease")
+  assert_eq(update.afterOid, COMMIT_OID, "and it goes straight to the finished commit")
+  assert(update.afterOid != base, "never to the base")
+  assert_eq(update.force, true, "the move is an explicit force")
+  assert_eq(len(calls_matching(harness.testing, "PATCH", ref_update_url(BRANCH))), 0)
   assert_eq(
     len(calls_matching(harness.testing, "DELETE", ref_update_url(created_branch(created.ref)))),
     1,

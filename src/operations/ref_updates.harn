@@ -124,7 +124,8 @@ pub fn __github_refs_update(harness: Harness, args: unknown, cfg: any) {
   )
   if is_err(response) {
     const error: GithubConnectorError = unwrap_err(response)
-    const refused = [400, 401, 403, 404, 409, 422, 429].contains(error.http_status ?? 0)
+    const refused = error.mutation_outcome == "refused"
+      || [400, 401, 403, 404, 409, 422, 429].contains(error.http_status ?? 0)
       || error.rate_limit_source == "local_budget"
     return Err(error + {mutation_outcome: refused ? "refused" : "unknown", retryable: false})
   }

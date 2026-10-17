@@ -1,0 +1,101 @@
+import { api_call } from "../src/api"
+import { reset_budget } from "../src/budget"
+import { GithubClientOptions } from "../src/contracts"
+
+const BASE = "https://mutation-authority.github.test"
+
+fn options() -> GithubClientOptions {
+  return {
+    api_base_url: BASE,
+    installation_token: "authority-fixture-token",
+    retry_unsafe: true,
+    retry: {max_attempts: 2, base_ms: 0, backoff_ms: 0, cap_ms: 0},
+    budget: {state_dir: ""},
+  }
+}
+
+pipeline test_guarded_requests_cannot_retry_without_another_authority_read(harness: Harness) {
+  for guarded in [false, true] {
+    reset_budget(harness.runtime)
+    harness.testing.http_mock_clear()
+    harness.testing.http_mock("POST", BASE + "/fixture", {status: 500, body: "{}"})
+    let reads = 0
+    let opts = options()
+    if guarded {
+      opts = opts
+        + {
+          authorize_mutation: { ->
+            reads = reads + 1
+            Ok(true)
+          },
+        }
+    }
+    const result = api_call(
+      harness,
+      {path: "/fixture", method: "POST", body: {title: "fixture"}, options: opts},
+    )
+    assert(is_err(result))
+    assert_eq(len(harness.testing.http_mock_calls()), guarded ? 1 : 2)
+    assert_eq(reads, guarded ? 1 : 0)
+    for call in harness.testing.http_mock_calls() {
+      assert_eq(
+        json_parse(call.body),
+        {title: "fixture"},
+        "authority never enters the provider payload",
+      )
+    }
+  }
+}
+
+pipeline test_owner_rate_limit_retry_rechecks_withdrawn_authority(harness: Harness) {
+  for withdraw in [false, true] {
+    reset_budget(harness.runtime)
+    harness.testing.http_mock_clear()
+    harness.testing.http_mock(
+      "POST",
+      BASE + "/limited",
+      {status: 429, headers: {"x-ratelimit-remaining": "0"}, body: "{}"},
+    )
+    let reads = 0
+    const result = api_call(
+      harness,
+      {
+        path: "/limited",
+        method: "POST",
+        options: options()
+          + {
+            authorize_mutation: { ->
+              reads = reads + 1
+              Ok(!withdraw || reads == 1)
+            },
+          },
+      },
+    )
+    assert(is_err(result))
+    assert_eq(reads, 2)
+    assert_eq(len(harness.testing.http_mock_calls()), withdraw ? 1 : 2)
+    assert_eq(unwrap_err(result).code, withdraw ? "authorization_denied" : "rate_limited")
+  }
+}
+
+pipeline test_read_requests_do_not_consult_mutation_authority(harness: Harness) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock("GET", BASE + "/read", {status: 200, body: "{\"measured\":true}"})
+  let reads = 0
+  const result = api_call(
+    harness,
+    {
+      path: "/read",
+      options: options()
+        + {
+          authorize_mutation: { ->
+            reads = reads + 1
+            Ok(false)
+          },
+        },
+    },
+  )
+  assert_eq(unwrap(result), {measured: true})
+  assert_eq(reads, 0)
+  assert_eq(len(harness.testing.http_mock_calls()), 1)
+}

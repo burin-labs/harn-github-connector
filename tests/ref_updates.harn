@@ -80,6 +80,52 @@ pipeline test_atomic_updates_bind_the_whole_set_in_one_mutation(harness: Harness
   assert_eq(mutations(harness.testing), 1)
 }
 
+pipeline test_atomic_authority_is_read_after_repository_preparation(harness: Harness) {
+  const updates: list<GithubRefUpdate> = [{ref: "refs/heads/main", before_oid: OLD, after_oid: NEW}]
+  for mode in ["allow", "deny", "error", "throw"] {
+    fixture(harness.testing, {data: {updateRefs: {clientMutationId: transaction(updates)}}})
+    let reads = 0
+    const result = github_update_refs(
+      harness,
+      {
+        owner: "octo-org",
+        repo: "octo-repo",
+        updates: updates,
+        options: auth()
+          + {
+            authorize_mutation: { ->
+              reads = reads + 1
+              const calls = harness.testing.http_mock_calls()
+              assert_eq(len(calls), 1, "the repository identity read already completed")
+              assert_eq(calls[0].method, "GET")
+              assert_eq(calls[0].url, BASE + "/repos/" + REPO)
+              if mode == "throw" {
+                throw "authority read unavailable"
+              }
+              if mode == "error" {
+                return Err(
+                  {code: "fixture_authority", category: "authorization", message: "unavailable"},
+                )
+              }
+              Ok(mode == "allow")
+            },
+          },
+      },
+    )
+    assert_eq(reads, 1)
+    assert_eq(is_ok(result), mode == "allow")
+    assert_eq(mutations(harness.testing), mode == "allow" ? 1 : 0)
+    if mode != "allow" {
+      assert_eq(
+        unwrap_err(result).code,
+        mode == "deny" ? "authorization_denied" : mode == "throw" ? "authorization_unmeasured" : "fixture_authority",
+      )
+      assert_eq(unwrap_err(result).mutation_outcome, "refused")
+      assert_eq(unwrap_err(result).retryable, false)
+    }
+  }
+}
+
 pipeline test_expected_absence_and_deletion_remain_explicit(harness: Harness) {
   const updates: list<GithubRefUpdate> = [
     {ref: "refs/heads/new", before_oid: ZERO, after_oid: NEW},

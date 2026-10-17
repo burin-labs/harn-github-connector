@@ -38,6 +38,7 @@ pub import {
   GithubCommitFileDeletion,
   GithubConnectorError,
   GithubConnectorResult,
+  GithubMutationAuthorization,
   GithubWorktreeChange,
   GithubWorktreeCommitReceipt,
   GithubWorktreeCommitRequest,
@@ -45,6 +46,7 @@ pub import {
   GithubWorktreeSelector,
   GithubWorktreeSignature,
 } from "./contracts"
+import { github_update_refs } from "./refs/api"
 
 /** Git tree entry modes this adapter reasons about. */
 const WORKTREE_ABSENT_MODE = "000000"
@@ -790,7 +792,7 @@ fn __wc_drop_branch(
     {
       path: __wc_repo_path(request, "/git/refs/heads/") + branch,
       method: "DELETE",
-      options: options,
+      options: options + {authorize_mutation: nil},
     },
   )
 }
@@ -798,11 +800,9 @@ fn __wc_drop_branch(
 /**
  * Move the target from the head the lease named to the finished commit.
  *
- * The lease is re-read immediately before the write because the commit was made
- * in between, and a force update carries no compare-and-swap of its own. This is
- * weaker than the git protocol's `--force-with-lease`, which the server checks
- * atomically; the window here is one round trip and it is the narrowest the REST
- * API allows.
+ * Retain the early stale-head diagnostic, then let the atomic ref owner enforce
+ * the same lease at the write. An authority callback can perform more reads;
+ * movement during those reads must not be overwritten.
  */
 fn __wc_retarget(
   harness: Harness,
@@ -829,12 +829,19 @@ fn __wc_retarget(
       {expected_head_oid: leased, observed_head_oid: observed},
     )
   }
-  return api_call(
+  return github_update_refs(
     harness,
     {
-      path: __wc_ref_path(request, "/git/refs/heads/"),
-      method: "PATCH",
-      body: {sha: commit_oid, force: true},
+      owner: request.owner,
+      repo: request.repo,
+      updates: [
+        {
+          ref: "refs/heads/" + request.branch,
+          before_oid: leased,
+          after_oid: commit_oid,
+          force: true,
+        },
+      ],
       options: options,
     },
   )
@@ -969,18 +976,13 @@ fn __wc_empty_receipt(
 
 /**
  * Publish one exact local Git state to `branch` as a GitHub-signed commit.
- *
- * The payload is derived first and entirely locally, so an unsupported file
- * mode fails before any network request. The branch is then created or reset
- * only to `base_oid` (which must equal the local `HEAD`), and the commit is
- * published through `github_create_signed_commit`, which rejects any response
- * without a valid GitHub-generated signature.
- *
- * An empty delta returns `committed: false` with `branch_action: "skipped"` and
- * performs no network call at all.
+ * Derive the payload locally, then check the branch lease and signature through
+ * the existing provider owners. Empty deltas perform no network or authority read.
+ * The optional `options.authorize_mutation` callback runs at each unsafe HTTP
+ * request, after preparation. Denial, failure or a thrown read stops publication;
+ * cleanup of this operation's staging branch still runs.
  */
 @complexity(allow)
-/** Derive and publish one leased worktree delta as a GitHub-signed commit. */
 pub fn github_commit_worktree(
   harness: Harness,
   request: GithubWorktreeCommitRequest,
