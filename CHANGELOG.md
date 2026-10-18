@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.17.0 - 2026-10-18
+
+- Add explicit `exact_member` selection for a named JSON file inside a bounded
+  workflow evidence bundle. Single-file validation remains the default; every
+  archive path, producer identity, digest, schema and decompression limit is
+  still checked.
+
 ## 0.16.0 - 2026-10-17
 
 - Breaking: extend `GithubClientOptions` with optional `authorize_mutation`, a typed

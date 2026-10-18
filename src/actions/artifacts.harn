@@ -6,6 +6,7 @@ import {
 } from "../client"
 import {
   GithubConnectorResult,
+  GithubWorkflowArtifactMemberSelection,
   GithubWorkflowJsonArtifactReceipt,
   GithubWorkflowJsonArtifactRequest,
 } from "../contracts"
@@ -25,6 +26,7 @@ pub type WorkflowJsonArtifactFileRequest = {
   scratch: string,
   archive_path: string,
   member_name: string,
+  member_selection?: GithubWorkflowArtifactMemberSelection,
   provider_archive_sha256: string,
   expected_archive_sha256: string?,
   expected_member_sha256: string?,
@@ -66,6 +68,7 @@ pub fn __decode_workflow_json_artifact<T>(
   expected_member_sha256: string? = nil,
   max_archive_bytes: int = DEFAULT_MAX_ARCHIVE_BYTES,
   max_member_bytes: int = DEFAULT_MAX_MEMBER_BYTES,
+  member_selection: GithubWorkflowArtifactMemberSelection = "single_file",
 ) {
   const archive_size = bytes_len(archive)
   if archive_size > max_archive_bytes {
@@ -114,21 +117,29 @@ pub fn __decode_workflow_json_artifact<T>(
       )
     }
   }
-  if len(entries) != 1 {
+  if member_selection == "single_file" && len(entries) != 1 {
     return __err(
       "ambiguous_archive_member",
       "GitHub workflow JSON artifact must contain exactly one file",
       {expected_count: 1, observed_count: len(entries), member_name: member_name},
     )
   }
-  const entry = entries[0]
-  if to_string(entry.path) != member_name {
+  const selected = entries.filter({ entry -> to_string(entry.path) == member_name }).to_list()
+  if len(selected) == 0 {
     return __err(
       "artifact_member_mismatch",
       "GitHub workflow artifact member name did not match exactly",
-      {member_name: to_string(entry.path)},
+      {member_name: member_name, observed_count: 0},
     )
   }
+  if len(selected) != 1 {
+    return __err(
+      "ambiguous_archive_member",
+      "GitHub workflow artifact must contain exactly one matching member",
+      {expected_count: 1, observed_count: len(selected), member_name: member_name},
+    )
+  }
+  const entry = selected[0]
   const member_size = bytes_len(entry.content)
   if member_size > max_member_bytes {
     return __err(
@@ -197,6 +208,7 @@ pub fn __decode_workflow_json_artifact_file<T>(
     request.expected_member_sha256,
     request.max_archive_bytes,
     request.max_member_bytes,
+    request.member_selection ?? "single_file",
   )
 }
 
@@ -409,6 +421,14 @@ pub fn actions_workflow_run_json_artifact<T>(
   const evidence_mode = request.evidence_mode ?? "terminal_success"
   const artifact_name = request.artifact_name
   const member_name = request.member_name
+  const selection = schema_parse(
+    request.member_selection ?? "single_file",
+    schema_of(GithubWorkflowArtifactMemberSelection),
+  )
+  if is_err(selection) {
+    return __err("schema_drift", "workflow JSON artifact member_selection was invalid")
+  }
+  const member_selection: GithubWorkflowArtifactMemberSelection = unwrap(selection)
   if trim(expected_run_name) == "" || trim(artifact_name) == "" || trim(member_name) == "" {
     return __err(
       "schema_drift",
@@ -539,6 +559,7 @@ pub fn actions_workflow_run_json_artifact<T>(
     scratch: scratch,
     archive_path: archive_path,
     member_name: member_name,
+    member_selection: member_selection,
     provider_archive_sha256: to_string(unwrap(provider_digest)),
     expected_archive_sha256: request.expected_archive_sha256,
     expected_member_sha256: request.expected_member_sha256,

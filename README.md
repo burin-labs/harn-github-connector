@@ -90,6 +90,13 @@ Use a named helper when one exists. Use `api_call(harness, request)` only for a
 GitHub REST operation that has no typed helper. The complete generated symbol
 reference is in [API reference](docs/api.md).
 
+`actions_workflow_run_json_artifact` expects a single-file archive by default.
+Set `member_selection: "exact_member"` to read the unique exact `member_name`
+from an evidence bundle containing other files. The archive-wide decompression
+limit and all member path checks still apply, including files not selected.
+Producer identity, archive and member digests, and the selected JSON schema
+retain the same checks.
+
 ## Choose the next guide
 
 - [Set up a GitHub App](docs/setup.md) — configure credentials, permissions,
