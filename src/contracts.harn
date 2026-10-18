@@ -895,6 +895,9 @@ pub type GithubWorkflowRunRequest = {
   options?: GithubClientOptions,
 }
 
+/** A strict single-file archive, or one unique exact member of a bounded evidence bundle. */
+pub type GithubWorkflowArtifactMemberSelection = "single_file" | "exact_member"
+
 /** Exact producer identity and bounded archive policy for one JSON workflow artifact. */
 pub type GithubWorkflowJsonArtifactRequest = GithubWorkflowRunRequest \
   & {
@@ -902,6 +905,7 @@ pub type GithubWorkflowJsonArtifactRequest = GithubWorkflowRunRequest \
   evidence_mode?: "terminal_success" | "diagnostic",
   artifact_name: string,
   member_name: string,
+  member_selection?: GithubWorkflowArtifactMemberSelection,
   expected_archive_sha256?: string,
   expected_member_sha256?: string,
   max_archive_bytes?: int,

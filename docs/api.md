@@ -1787,6 +1787,14 @@ pub type GithubStorageListRequest = {
 }
 ```
 
+### type `GithubWorkflowArtifactMemberSelection`
+
+A strict single-file archive, or one unique exact member of a bounded evidence bundle.
+
+```harn
+pub type GithubWorkflowArtifactMemberSelection = "single_file" | "exact_member"
+```
+
 ### type `GithubWorkflowAutomationRequest`
 
 Request for dispatching and optionally waiting for one workflow run.
@@ -1932,6 +1940,7 @@ pub type GithubWorkflowJsonArtifactRequest = GithubWorkflowRunRequest \
   evidence_mode?: "terminal_success" | "diagnostic",
   artifact_name: string,
   member_name: string,
+  member_selection?: GithubWorkflowArtifactMemberSelection,
   expected_archive_sha256?: string,
   expected_member_sha256?: string,
   max_archive_bytes?: int,

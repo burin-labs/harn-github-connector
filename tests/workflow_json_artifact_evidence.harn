@@ -28,7 +28,7 @@ fn archive(value: unknown, path: string = "evidence.json") {
 
 fn assert_code(result: any, code: string) {
   require is_err(result), "single-field mutation must fail"
-  require unwrap_err(result).code == code, "single-field mutation returned the wrong error code"
+  require unwrap_err(result).code == code, "expected ${code}, received ${unwrap_err(result).code}"
 }
 
 fn artifact_temp_count(fs: HarnessFs) {
@@ -39,6 +39,126 @@ fn artifact_temp_count(fs: HarnessFs) {
     }
   }
   return count
+}
+
+@serial(group: "workflow-artifact-temp")
+pipeline test_exact_member_selection_reads_one_typed_file_in_an_evidence_bundle(harness: Harness) {
+  const scratch = harness.fs.mkdtemp_in_workspace("github-workflow-artifact-")
+  const path = path_join(scratch, "artifact.zip")
+  const bundle = zip_create(
+    [
+      {path: "logs/run.txt", content: "producer log"},
+      {path: "evidence.json", content: json_stringify(fixture())},
+      {path: "other.json", content: "{}"},
+    ],
+  )
+  harness.fs.write_bytes(path, bundle)
+  const result = __decode_workflow_json_artifact_file(
+    harness.fs,
+    {
+      scratch: scratch,
+      archive_path: path,
+      member_name: "evidence.json",
+      member_selection: "exact_member",
+      provider_archive_sha256: sha256(bundle),
+      expected_archive_sha256: sha256(bundle),
+      expected_member_sha256: sha256(bytes_from_string(json_stringify(fixture()))),
+      max_archive_bytes: 16777216,
+      max_member_bytes: 8388608,
+    },
+    schema_of(Evidence),
+  )
+  assert(is_ok(result), "the exact named evidence must decode beside logs and other JSON")
+  assert_eq(unwrap(result).data, fixture())
+  assert_eq(unwrap(result).member_name, "evidence.json")
+  assert(!harness.fs.exists(scratch), "the complete downloaded bundle is removed")
+}
+
+pipeline test_exact_member_selection_keeps_archive_and_selected_content_refusals() {
+  const evidence = {path: "evidence.json", content: json_stringify(fixture())}
+  const bundle = zip_create([evidence, {path: "logs/run.txt", content: "producer log"}])
+  for mutation in [
+    {entries: [evidence], member: "missing.json", code: "artifact_member_mismatch"},
+    {
+      entries: [evidence, {path: "../logs.txt", content: "not selected"}],
+      member: "evidence.json",
+      code: "unsafe_archive_member",
+    },
+    {
+      entries: [{path: "evidence.json", content: "{"}, {path: "log.txt", content: "log"}],
+      member: "evidence.json",
+      code: "invalid_json",
+    },
+    {
+      entries: [{path: "evidence.json", content: "{}"}, {path: "log.txt", content: "log"}],
+      member: "evidence.json",
+      code: "schema_drift",
+    },
+  ] {
+    const bytes = zip_create(mutation.entries)
+    assert_code(
+      __decode_workflow_json_artifact(
+        bytes,
+        mutation.member,
+        schema_of(Evidence),
+        sha256(bytes),
+        nil,
+        nil,
+        16777216,
+        8388608,
+        "exact_member",
+      ),
+      mutation.code,
+    )
+  }
+  // zip_create refuses duplicate names, so retain a real duplicate-entry archive.
+  const duplicate = bytes_from_base64(
+    "UEsDBBQAAAAAAE15Ul1Dv6ajAgAAAAIAAAANAAAAZXZpZGVuY2UuanNvbnt9UEsDBBQAAAAAAE15Ul1Dv6ajAgAAAAIAAAANAAAAZXZpZGVuY2UuanNvbnt9UEsBAhQDFAAAAAAATXlSXUO/pqMCAAAAAgAAAA0AAAAAAAAAAAAAAIABAAAAAGV2aWRlbmNlLmpzb25QSwECFAMUAAAAAABNeVJdQ7+mowIAAAACAAAADQAAAAAAAAAAAAAAgAEtAAAAZXZpZGVuY2UuanNvblBLBQYAAAAAAgACAHYAAABaAAAAAAA=",
+  )
+  assert_code(
+    __decode_workflow_json_artifact(
+      duplicate,
+      "evidence.json",
+      schema_of(Evidence),
+      sha256(duplicate),
+      nil,
+      nil,
+      16777216,
+      8388608,
+      "exact_member",
+    ),
+    "invalid_archive",
+  )
+  for digest in ["provider", "archive", "member"] {
+    assert_code(
+      __decode_workflow_json_artifact(
+        bundle,
+        "evidence.json",
+        schema_of(Evidence),
+        digest == "provider" ? "0".repeat(64) : sha256(bundle),
+        digest == "archive" ? "0".repeat(64) : nil,
+        digest == "member" ? "0".repeat(64) : nil,
+        16777216,
+        8388608,
+        "exact_member",
+      ),
+      "digest_mismatch",
+    )
+  }
+  assert_code(
+    __decode_workflow_json_artifact(
+      bundle,
+      "evidence.json",
+      schema_of(Evidence),
+      sha256(bundle),
+      nil,
+      nil,
+      16777216,
+      1,
+      "exact_member",
+    ),
+    "artifact_oversized",
+  )
 }
 
 pipeline test_valid_artifact_then_single_field_mutations(harness: Harness, task: unknown) {
@@ -273,6 +393,19 @@ fn request() {
     member_name: "evidence.json",
     options: {api_base_url: BASE, installation_token: "fixture-token"},
   }
+}
+
+pipeline test_invalid_member_selection_refuses_before_provider_reads(harness: Harness) {
+  harness.testing.http_mock_clear()
+  assert_code(
+    actions_workflow_run_json_artifact(
+      harness,
+      request() + {member_selection: json_parse("\"unsupported\"")},
+      schema_of(Evidence),
+    ),
+    "schema_drift",
+  )
+  assert_eq(len(harness.testing.http_mock_calls()), 0)
 }
 
 pipeline test_exact_run_artifact_listing_fails_closed(harness: Harness, task: unknown) {
