@@ -1,0 +1,119 @@
+import { call } from "../src/facade"
+
+pipeline test_repository_dispatch_routes(harness: Harness) {
+  const base = "https://github-api.test"
+  const context = {
+    api_base_url: base,
+    installation_token: "fixture-token",
+    owner: "octo",
+    repo: "repo",
+  }
+  const cases = [
+    [
+      "issues.create_comment",
+      "POST",
+      "/issues/7/comments",
+      {issue_number: 7, body: "Kept"},
+      {body: "Kept"},
+    ],
+    ["issues.create", "POST", "/issues", {title: "Kept"}, {title: "Kept"}],
+    ["issues.update", "PATCH", "/issues/7", {issue_number: 7, state: "closed"}, {state: "closed"}],
+    [
+      "issues.add_labels",
+      "POST",
+      "/issues/7/labels",
+      {issue_number: 7, labels: ["ready"]},
+      {labels: ["ready"]},
+    ],
+    [
+      "pulls.list",
+      "GET",
+      "/pulls?state=open&per_page=2&page=1",
+      {state: "open", per_page: 2, page: 1},
+      nil,
+    ],
+    ["pulls.get", "GET", "/pulls/7", {pull_number: 7}, nil],
+    [
+      "pulls.create_review_comment",
+      "POST",
+      "/pulls/7/comments",
+      {pull_number: 7, body: "Kept"},
+      {body: "Kept"},
+    ],
+    [
+      "pulls.list_files",
+      "GET",
+      "/pulls/7/files?per_page=2&page=1",
+      {pull_number: 7, per_page: 2, page: 1},
+      nil,
+    ],
+    [
+      "pulls.list_reviews",
+      "GET",
+      "/pulls/7/reviews?per_page=2&page=1",
+      {pull_number: 7, per_page: 2, page: 1},
+      nil,
+    ],
+    [
+      "repos.get_content",
+      "GET",
+      "/contents/dir/file?ref=feature%2Fread",
+      {path: "/dir/file", ref: "feature/read"},
+      nil,
+    ],
+    [
+      "repos.get_branch_protection",
+      "GET",
+      "/branches/feature%2Fread/protection",
+      {branch: "feature/read"},
+      nil,
+    ],
+    ["git.delete_ref", "DELETE", "/git/refs/heads/topic", {ref: "/heads/topic"}, nil],
+    ["check_runs.create", "POST", "/check-runs", {name: "CI"}, {name: "CI"}],
+    [
+      "check_runs.update",
+      "PATCH",
+      "/check-runs/7",
+      {check_run_id: 7, status: "completed"},
+      {status: "completed"},
+    ],
+  ]
+  for item in cases {
+    const method = to_string(item[0])
+    harness.testing.http_mock_clear()
+    harness.testing.http_mock("*", base + "/*", {status: 200, body: "{\"reached\":true}"})
+    assert_eq(unwrap(call(harness, method, context + item[3]!)).reached, true, method + " response")
+    const requests = harness.testing.http_mock_calls()
+    assert_eq(len(requests), 1, method + " dispatches exactly once")
+    assert_eq(requests[0].method, item[1], method + " HTTP method")
+    assert_eq(requests[0].url, base + "/repos/octo/repo" + to_string(item[2]), method + " URL")
+    if item[4] != nil {
+      assert_eq(json_parse(requests[0].body), item[4], method + " body excludes request context")
+    }
+    harness.testing.http_mock_clear()
+    harness.testing.http_mock(
+      "*",
+      base + "/*",
+      {status: 404, body: "{\"message\":\"Fixture missing\"}"},
+    )
+    const failed = call(harness, method, context + item[3]!)
+    assert(is_err(failed), method + " returns provider failure")
+    assert_eq(unwrap_err(failed).http_status, 404, method + " status")
+    assert_eq(
+      unwrap_err(failed).message,
+      "github API request failed with status 404: Fixture missing",
+      method + " message",
+    )
+  }
+  harness.testing.http_mock_clear()
+  const missing = call(harness, "actions.workflow_run.get", context)
+  assert_eq(unwrap_err(missing).code, "schema_drift", "registered handler preserves validation")
+  for unsupported in ["actions.workflow_run.unknown", "github.pr.unknown", "pulls.GET"] {
+    assert_eq(
+      unwrap_err(call(harness, unsupported, {})).code,
+      "method_not_found",
+      "unknown methods reject before config",
+    )
+  }
+  assert_eq(len(harness.testing.http_mock_calls()), 0, "invalid calls do not dispatch")
+}
