@@ -1,0 +1,124 @@
+import { github_merge_signed_staging } from "../src/signed_merge"
+
+const BASE = "https://api.github.test"
+
+const BEFORE = "a".repeat(40)
+
+const OTHER = "b".repeat(40)
+
+const MERGED = "c".repeat(40)
+
+const TREE = "d".repeat(40)
+
+fn request() {
+  return {
+    owner: "octo-org",
+    repo: "octo-repo",
+    staging_branch: "harn-worktree-staging/case",
+    expected_head_oid: BEFORE,
+    base_oid: OTHER,
+    message: "Integrate the base",
+    options: {api_base_url: BASE, installation_token: "fixture"},
+  }
+}
+
+fn signed_object(parents: list<string>, valid: bool) {
+  return {
+    data: {
+      repository: {
+        nameWithOwner: "octo-org/octo-repo",
+        object: {
+          __typename: "Commit",
+          oid: MERGED,
+          url: "https://github.test/commit/" + MERGED,
+          tree: {oid: TREE},
+          parents: {
+            totalCount: len(parents),
+            nodes: parents.map({ oid -> {oid: oid} }).to_list(),
+            pageInfo: {hasNextPage: false},
+          },
+          signature: {isValid: valid, state: "VALID", wasSignedByGitHub: true},
+        },
+      },
+    },
+  }
+}
+
+pipeline test_signed_staging_merge_measures_the_actual_parents_and_signature(harness: Harness) {
+  harness.testing.http_mock_clear()
+  const branch_url = BASE + "/repos/octo-org/octo-repo/branches/harn-worktree-staging%2Fcase"
+  harness.testing.http_mock(
+    "GET",
+    branch_url,
+    {
+      responses: [
+        {status: 200, body: json_stringify({commit: {sha: BEFORE}})},
+        {status: 200, body: json_stringify({commit: {sha: MERGED}})},
+      ],
+    },
+  )
+  harness.testing.http_mock(
+    "POST",
+    BASE + "/repos/octo-org/octo-repo/merges",
+    {status: 201, body: json_stringify({sha: MERGED})},
+  )
+  harness.testing.http_mock(
+    "POST",
+    BASE + "/graphql",
+    {status: 200, body: json_stringify(signed_object([BEFORE, OTHER], true))},
+  )
+  const result = unwrap(github_merge_signed_staging(harness, request()))
+  assert_eq(result.oid, MERGED)
+  assert_eq(result.tree_oid, TREE)
+  assert_eq(result.parent_oids, [BEFORE, OTHER])
+  assert(result.signature_valid && result.signed_by_github)
+  assert_eq(len(harness.testing.http_mock_calls()), 4, "the write and both readbacks must fire")
+  harness.testing.http_mock_clear()
+}
+
+pipeline test_signed_staging_merge_refuses_stale_heads_and_unsigned_results(harness: Harness) {
+  for mode in ["stale-before", "wrong-parent", "unsigned", "stale-after"] {
+    harness.testing.http_mock_clear()
+    harness.testing.http_mock(
+      "GET",
+      BASE + "/repos/octo-org/octo-repo/branches/harn-worktree-staging%2Fcase",
+      {
+        responses: [
+          {
+            status: 200,
+            body: json_stringify({commit: {sha: mode == "stale-before" ? OTHER : BEFORE}}),
+          },
+          {
+            status: 200,
+            body: json_stringify({commit: {sha: mode == "stale-after" ? OTHER : MERGED}}),
+          },
+        ],
+      },
+    )
+    harness.testing.http_mock(
+      "POST",
+      BASE + "/repos/octo-org/octo-repo/merges",
+      {status: 201, body: json_stringify({sha: MERGED})},
+    )
+    harness.testing.http_mock(
+      "POST",
+      BASE + "/graphql",
+      {
+        status: 200,
+        body: json_stringify(
+          signed_object(
+            mode == "wrong-parent" ? [OTHER, BEFORE] : [BEFORE, OTHER],
+            mode != "unsigned",
+          ),
+        ),
+      },
+    )
+    const result = github_merge_signed_staging(harness, request())
+    assert(is_err(result), mode)
+    const calls = harness.testing.http_mock_calls()
+    assert_eq(len(calls), mode == "stale-before" ? 1 : mode == "stale-after" ? 4 : 3, mode)
+  }
+  harness.testing.http_mock_clear()
+  assert(is_err(github_merge_signed_staging(harness, request() + {staging_branch: "main"})))
+  assert_eq(len(harness.testing.http_mock_calls()), 0, "never merge into a real branch")
+}
