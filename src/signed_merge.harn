@@ -1,0 +1,101 @@
+import { api_call } from "./api"
+import { github_branch_head } from "./branches/api"
+import { github_read_signed_commit } from "./commits/api"
+import {
+  GithubClientOptions,
+  GithubConnectorResult,
+  GithubSignedCommitObservation,
+} from "./contracts"
+import { __err } from "./errors"
+
+/** A merge can mutate only a disposable staging branch, never the target branch. */
+pub type GithubSignedStagingMerge = {
+  owner: string,
+  repo: string,
+  staging_branch: string,
+  expected_head_oid: string,
+  base_oid: string,
+  message: string,
+  options?: GithubClientOptions,
+}
+
+type MergeResponse = {sha: string}
+
+/**
+ * Ask GitHub to create a merge on a disposable staging branch, then read its
+ * exact object, complete parents, GitHub signature, and branch head back.
+ * The REST merge endpoint has no atomic expected-head parameter. An isolated
+ * staging branch and the parent check keep an unexpected concurrent change
+ * from being admitted to a later target publication.
+ */
+pub fn github_merge_signed_staging(
+  harness: Harness,
+  request: GithubSignedStagingMerge,
+) -> GithubConnectorResult<GithubSignedCommitObservation> {
+  if regex_match("^[A-Za-z0-9_.-]+$", request.owner) == nil
+    || regex_match("^[A-Za-z0-9_.-]+$", request.repo) == nil
+    || [".", ".."].contains(request.owner)
+    || [".", ".."].contains(request.repo)
+    || regex_match("^harn-worktree-staging/[A-Za-z0-9._-]+$", request.staging_branch) == nil
+    || regex_match("^[0-9a-f]{40}$", request.expected_head_oid) == nil
+    || regex_match("^[0-9a-f]{40}$", request.base_oid) == nil
+    || request.expected_head_oid == "0".repeat(40)
+    || request.base_oid == "0".repeat(40)
+    || request.expected_head_oid == request.base_oid
+    || trim(request.message) == "" {
+    return __err(
+      "schema_drift",
+      "signed staging merge requires exact identities and a staging branch",
+    )
+  }
+  const options = (request.options ?? {}) + {retry_unsafe: false}
+  const branch_request = {
+    owner: request.owner,
+    repo: request.repo,
+    branch: request.staging_branch,
+    options: options,
+  }
+  const before = github_branch_head(harness, branch_request)
+  if is_err(before) {
+    return Err(unwrap_err(before))
+  }
+  if unwrap(before).oid != request.expected_head_oid {
+    return __err("stale_head", "signed staging branch moved before merge")
+  }
+  const result = api_call(
+    harness,
+    {
+      path: "/repos/" + request.owner + "/" + request.repo + "/merges",
+      method: "POST",
+      body: {base: request.staging_branch, head: request.base_oid, commit_message: request.message},
+      options: options,
+    },
+  )
+  if is_err(result) {
+    return Err(unwrap_err(result))
+  }
+  const value = unwrap(result)
+  if !schema_is(value, MergeResponse) || regex_match("^[0-9a-f]{40}$", value.sha) == nil
+    || value.sha == "0".repeat(40) {
+    return __err("invalid_response", "signed staging merge returned no exact commit")
+  }
+  const observed = github_read_signed_commit(
+    harness,
+    {owner: request.owner, repo: request.repo, oid: value.sha, options: options},
+  )
+  if is_err(observed) {
+    return Err(unwrap_err(observed))
+  }
+  const commit = unwrap(observed)
+  if commit.parent_oids != [request.expected_head_oid, request.base_oid] {
+    return __err("stale_head", "signed staging merge has unexpected parents")
+  }
+  const after = github_branch_head(harness, branch_request)
+  if is_err(after) {
+    return Err(unwrap_err(after))
+  }
+  if unwrap(after).oid != commit.oid {
+    return __err("stale_head", "signed staging branch moved after merge")
+  }
+  return Ok(commit)
+}

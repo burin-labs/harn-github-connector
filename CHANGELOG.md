@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.18.0 - 2026-10-27
+
+- Create a GitHub-signed merge only on a disposable staging branch, checking
+  the exact starting head, complete parent list, signature, and final head.
+
 ## 0.17.1 - 2026-10-26
 
 - Read GitHub's metadata-only repository files up to 8 MiB through their exact
