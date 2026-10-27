@@ -147,7 +147,7 @@ pub fn __typed_release(release: any) -> GithubConnectorResult<GithubRelease> {
   )
 }
 
-pub fn __typed_repository_file(content: any, ref: any) {
+pub fn __typed_repository_file(content: any, ref: any, decoded_text: string? = nil) {
   if type_of(content) != "dict" || content?.type != "file" || content?.encoding != "base64"
     || trim(to_string(content?.path ?? ""))
       == ""
@@ -155,8 +155,12 @@ pub fn __typed_repository_file(content: any, ref: any) {
     || content?.content == nil {
     return __err("invalid_response", "github.file.view expected one base64-encoded file")
   }
-  const decoded = try {
-    base64_decode(to_string(content.content).replace("\n", ""))
+  const decoded = if decoded_text == nil {
+    try {
+      base64_decode(to_string(content.content).replace("\n", ""))
+    }
+  } else {
+    Ok(decoded_text)
   }
   if is_err(decoded) {
     return __err("invalid_response", "github.file.view could not decode GitHub file content")

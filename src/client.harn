@@ -1004,6 +1004,9 @@ pub fn __github_policy_request_options(body: any, cfg: any, current_token: any, 
   if cfg?.timeout_ms != nil {
     options["timeout_ms"] = cfg.timeout_ms
   }
+  if cfg?.max_response_bytes != nil {
+    options["max_response_bytes"] = cfg.max_response_bytes
+  }
   if cfg?.idempotency_key != nil {
     options["idempotency_key"] = cfg.idempotency_key
   }

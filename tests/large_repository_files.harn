@@ -1,0 +1,133 @@
+import {
+  GithubClientOptions,
+  GithubFileLookupRequest,
+  GithubRepositoryTextRequest,
+  github_file_at_ref,
+  repos_get_text,
+} from "../src/facade"
+
+const BASE = "https://github-api.test"
+
+const SHA = "cf9d768aca0f142ee85e13e1d389f4e4a7106bfe"
+
+const CONTENT_URL = BASE + "/repos/octo-org/octo-repo/contents/catalog.json?ref=main"
+
+const BLOB_URL = BASE + "/repos/octo-org/octo-repo/git/blobs/" + SHA
+
+fn request() -> GithubFileLookupRequest {
+  const options: GithubClientOptions = {api_base_url: BASE, installation_token: "fixture-token"}
+  return {owner: "octo-org", repo: "octo-repo", path: "catalog.json", ref: "main", options: options}
+}
+
+fn mock_file(testing: HarnessTesting, contents: string, blob_sha: string, blob_size: int) -> nil {
+  testing.http_mock_clear()
+  testing.http_mock(
+    "GET",
+    CONTENT_URL,
+    {
+      status: 200,
+      body: json_stringify(
+        {
+          type: "file",
+          name: "catalog.json",
+          path: "catalog.json",
+          sha: SHA,
+          size: bytes_len(bytes_from_string(contents)),
+          encoding: "none",
+          content: "",
+        },
+      ),
+    },
+  )
+  testing.http_mock(
+    "GET",
+    BLOB_URL,
+    {
+      status: 200,
+      body: json_stringify(
+        {sha: blob_sha, size: blob_size, encoding: "base64", content: base64_encode(contents)},
+      ),
+    },
+  )
+}
+
+pipeline test_large_file_reaches_public_lookup_with_complete_unicode_text(harness: Harness) {
+  const contents = "x".repeat(1050000) + "é"
+  mock_file(harness.testing, contents, SHA, bytes_len(bytes_from_string(contents)))
+  const result = unwrap(github_file_at_ref(harness, request()))
+  assert_eq(result.state, "found")
+  assert_eq(result.file?.text, contents)
+  assert_eq(result.file?.sha, SHA)
+  assert_eq(result.file?.size, 1050002)
+  assert_eq(len(harness.testing.http_mock_calls()), 2)
+}
+
+pipeline test_large_file_rejects_mismatched_blob_metadata(harness: Harness) {
+  mock_file(harness.testing, "payload", "0000000000000000000000000000000000000000", 7)
+  const wrong_sha = github_file_at_ref(harness, request())
+  assert(is_err(wrong_sha), "a different blob must never satisfy the ref")
+  assert_eq(unwrap_err(wrong_sha).code, "invalid_response")
+  assert_eq(len(harness.testing.http_mock_calls()), 2)
+  mock_file(harness.testing, "payload", SHA, 6)
+  const wrong_size = github_file_at_ref(harness, request())
+  assert(is_err(wrong_size), "a truncated blob must never be accepted")
+  assert_eq(unwrap_err(wrong_size).code, "invalid_response")
+  assert_eq(len(harness.testing.http_mock_calls()), 2)
+}
+
+pipeline test_large_file_is_shared_by_the_repository_text_api(harness: Harness) {
+  const contents = "y".repeat(1050000) + "é"
+  mock_file(harness.testing, contents, SHA, bytes_len(bytes_from_string(contents)))
+  const req: GithubRepositoryTextRequest = {
+    owner: "octo-org",
+    repo: "octo-repo",
+    path: "catalog.json",
+    ref: "main",
+    options: {api_base_url: BASE, installation_token: "fixture-token"},
+  }
+  const file = unwrap(repos_get_text(harness, req))
+  assert_eq(file.text, contents)
+  assert_eq(file.sha, SHA)
+}
+
+pipeline test_large_file_rejects_short_body_with_matching_metadata(harness: Harness) {
+  mock_file(harness.testing, "original", SHA, 8)
+  harness.testing.http_mock(
+    "GET",
+    BLOB_URL,
+    {
+      status: 200,
+      body: json_stringify(
+        {sha: SHA, size: 8, encoding: "base64", content: base64_encode("short")},
+      ),
+    },
+  )
+  const result = github_file_at_ref(harness, request())
+  assert(is_err(result), "matching metadata cannot hide missing bytes")
+  assert_eq(unwrap_err(result).code, "invalid_response")
+  assert_eq(len(harness.testing.http_mock_calls()), 2)
+}
+
+pipeline test_oversized_file_refuses_before_fetching_the_blob(harness: Harness) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
+    "GET",
+    CONTENT_URL,
+    {
+      status: 200,
+      body: json_stringify(
+        {
+          type: "file",
+          name: "catalog.json",
+          path: "catalog.json",
+          sha: SHA,
+          size: 8388609,
+          encoding: "none",
+          content: "",
+        },
+      ),
+    },
+  )
+  assert(is_err(github_file_at_ref(harness, request())))
+  assert_eq(len(harness.testing.http_mock_calls()), 1)
+}

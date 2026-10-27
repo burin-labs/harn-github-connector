@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Read GitHub's metadata-only repository files up to 8 MiB through their exact
+  Git blob, with bounded responses and size and identity checks.
+
 ## 0.17.0 - 2026-10-18
 
 - Add explicit `exact_member` selection for a named JSON file inside a bounded

@@ -5,6 +5,47 @@ import "../pulls/normalization"
 import { __typed_commit_signature } from "./commits"
 import "./shared"
 
+const MAX_REPOSITORY_FILE_BYTES = 8388608
+
+/** Resolve GitHub's metadata-only large-file response through its immutable blob. */
+fn repository_file_content(harness: Harness, repo: dict, content: any, cfg: dict) -> any {
+  if type_of(content) != "dict" || content?.encoding != "none" {
+    return {content: content, decoded_text: nil}
+  }
+  const sha = to_string(content?.sha ?? "")
+  const size = to_int(content?.size)
+  if content?.type != "file" || content?.content != "" || size == nil || size <= 0
+    || size > MAX_REPOSITORY_FILE_BYTES
+    || regex_match("^[0-9a-f]{40}$", sha) == nil {
+    return __err("invalid_response", "GitHub returned invalid or oversized file metadata")
+  }
+  // Base64 and JSON framing fit within twice the source size plus header room.
+  const blob = __github_json(
+    harness,
+    "GET",
+    __github_api_url(cfg.api_base_url, "/repos/${repo.owner}/${repo.name}/git/blobs/${sha}"),
+    nil,
+    cfg + {max_response_bytes: size * 2 + 65536},
+  )
+  if is_err(blob) {
+    return blob
+  }
+  if blob?.sha != sha || to_int(blob?.size) != size || blob?.encoding != "base64"
+    || type_of(blob?.content) != "string" {
+    return __err("invalid_response", "GitHub blob metadata does not match the requested file")
+  }
+  const decoded = try {
+    base64_decode(blob.content.replace("\n", ""))
+  }
+  if is_err(decoded) || bytes_len(bytes_from_string(unwrap(decoded))) != size {
+    return __err("invalid_response", "GitHub blob content is invalid or incomplete")
+  }
+  return {
+    content: content + {encoding: "base64", content: blob.content},
+    decoded_text: unwrap(decoded),
+  }
+}
+
 pub fn __github_release_latest(harness: Harness, args: any, cfg: any) {
   const repo = __repo_parts(args)
   if is_err(repo) {
@@ -273,7 +314,11 @@ pub fn __github_file_view(harness: Harness, args: any, cfg: any) {
     }
     return content
   }
-  const file = __typed_repository_file(content, ref)
+  const resolved = repository_file_content(harness, r, content, cfg)
+  if is_err(resolved) {
+    return resolved
+  }
+  const file = __typed_repository_file(resolved.content, ref, resolved.decoded_text)
   if is_err(file) {
     return file
   }
@@ -357,16 +402,29 @@ pub fn __repos_get_text(harness: Harness, args: any, cfg: any) {
       "repos.get_text requires a file path, but GitHub returned a directory listing",
     )
   }
-  const encoding = lowercase(content?.encoding ?? "")
+  const resolved = repository_file_content(
+    harness,
+    {owner: args.owner, name: args.repo},
+    content,
+    cfg,
+  )
+  if is_err(resolved) {
+    return resolved
+  }
+  const encoding = lowercase(resolved.content?.encoding ?? "")
   if encoding != "base64" {
     return __err(
       "invalid_response",
       "repos.get_text only supports base64-encoded GitHub file content",
     )
   }
-  const encoded = (content?.content ?? "").replace("\n", "")
-  const decoded = try {
-    base64_decode(encoded)
+  const encoded = (resolved.content?.content ?? "").replace("\n", "")
+  const decoded = if resolved.decoded_text == nil {
+    try {
+      base64_decode(encoded)
+    }
+  } else {
+    Ok(resolved.decoded_text)
   }
   if is_err(decoded) {
     return __err("invalid_response", "repos.get_text could not decode base64 file content")
