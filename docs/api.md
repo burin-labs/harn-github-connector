@@ -2572,6 +2572,7 @@ pub fn github_extract_mentions(body: any) {
 ### fn `github_file_at_ref`
 
 Read and decode one repository file under an exact Git ref.
+GitHub metadata-only files are supported up to 8 MiB; larger files return `invalid_response`.
 
 ```harn
 pub fn github_file_at_ref(
@@ -3022,6 +3023,7 @@ pub fn repos_get_latest_release(
 ### fn `repos_get_text`
 
 Read one repository file as decoded UTF-8 text.
+GitHub metadata-only files are supported up to 8 MiB; larger files return `invalid_response`.
 
 ```harn
 pub fn repos_get_text(
