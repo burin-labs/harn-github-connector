@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.17.1 - 2026-10-26
+
 - Read GitHub's metadata-only repository files up to 8 MiB through their exact
   Git blob, with bounded responses and size and identity checks.
 
