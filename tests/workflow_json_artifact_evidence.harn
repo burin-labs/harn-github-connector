@@ -80,11 +80,6 @@ pipeline test_exact_member_selection_keeps_archive_and_selected_content_refusals
   for mutation in [
     {entries: [evidence], member: "missing.json", code: "artifact_member_mismatch"},
     {
-      entries: [evidence, {path: "../logs.txt", content: "not selected"}],
-      member: "evidence.json",
-      code: "unsafe_archive_member",
-    },
-    {
       entries: [{path: "evidence.json", content: "{"}, {path: "log.txt", content: "log"}],
       member: "evidence.json",
       code: "invalid_json",
@@ -111,6 +106,24 @@ pipeline test_exact_member_selection_keeps_archive_and_selected_content_refusals
       mutation.code,
     )
   }
+  // Retain a real traversal entry; zip_create correctly refuses to manufacture one.
+  const unsafe_bundle = bytes_from_base64(
+    "UEsDBBQAAAAAAOOsXV1Dv6ajAgAAAAIAAAANAAAAZXZpZGVuY2UuanNvbnt9UEsDBBQAAAAAAOOsXV0p3EL5DAAAAAwAAAALAAAALi4vbG9ncy50eHRub3Qgc2VsZWN0ZWRQSwECFAMUAAAAAADjrF1dQ7+mowIAAAACAAAADQAAAAAAAAAAAAAAgAEAAAAAZXZpZGVuY2UuanNvblBLAQIUAxQAAAAAAOOsXV0p3EL5DAAAAAwAAAALAAAAAAAAAAAAAACAAS0AAAAuLi9sb2dzLnR4dFBLBQYAAAAAAgACAHQAAABiAAAAAAA=",
+  )
+  assert_code(
+    __decode_workflow_json_artifact(
+      unsafe_bundle,
+      "evidence.json",
+      schema_of(Evidence),
+      sha256(unsafe_bundle),
+      nil,
+      nil,
+      16777216,
+      8388608,
+      "exact_member",
+    ),
+    "unsafe_archive_member",
+  )
   // zip_create refuses duplicate names, so retain a real duplicate-entry archive.
   const duplicate = bytes_from_base64(
     "UEsDBBQAAAAAAE15Ul1Dv6ajAgAAAAIAAAANAAAAZXZpZGVuY2UuanNvbnt9UEsDBBQAAAAAAE15Ul1Dv6ajAgAAAAIAAAANAAAAZXZpZGVuY2UuanNvbnt9UEsBAhQDFAAAAAAATXlSXUO/pqMCAAAAAgAAAA0AAAAAAAAAAAAAAIABAAAAAGV2aWRlbmNlLmpzb25QSwECFAMUAAAAAABNeVJdQ7+mowIAAAACAAAADQAAAAAAAAAAAAAAgAEtAAAAZXZpZGVuY2UuanNvblBLBQYAAAAAAgACAHYAAABaAAAAAAA=",
@@ -218,8 +231,8 @@ pipeline test_valid_artifact_then_single_field_mutations(harness: Harness, task:
     ),
     "artifact_oversized",
   )
-  const unsafe_archive = zip_create(
-    [{path: "../evidence.json", content: json_stringify(fixture())}],
+  const unsafe_archive = bytes_from_base64(
+    "UEsDBBQAAAAAAOOsXV1Dv6ajAgAAAAIAAAAQAAAALi4vZXZpZGVuY2UuanNvbnt9UEsBAhQDFAAAAAAA46xdXUO/pqMCAAAAAgAAABAAAAAAAAAAAAAAAIABAAAAAC4uL2V2aWRlbmNlLmpzb25QSwUGAAAAAAEAAQA+AAAAMAAAAAAA",
   )
   assert_code(
     __decode_workflow_json_artifact(
