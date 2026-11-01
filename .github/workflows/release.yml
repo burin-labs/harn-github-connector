@@ -77,7 +77,7 @@ jobs:
 
       - name: Upload verification receipt
         if: ${{ always() && hashFiles('.harn/receipts/package-verify.json') != '' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: release-package-verify-${{ steps.release.outputs.tag }}
           path: .harn/receipts/package-verify.json
