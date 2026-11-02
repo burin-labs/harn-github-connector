@@ -40,7 +40,7 @@ import {
   stamp_github_review_author_evidence,
 } from "harn-github-connector/review_evidence"
 
-fn main() {
+fn main(harness: Harness) {
   const source = {repository: "octo-org/octo-repo", pr: 42, head_sha: "a" * 40}
   const stamped = stamp_github_review_author_evidence("Approved.", source)
   assert(is_ok(stamped))
