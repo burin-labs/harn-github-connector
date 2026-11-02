@@ -1,0 +1,99 @@
+/** Reviewer-authored source identity, independent of GitHub's mutable review commit projection. */
+pub type GithubReviewSourceIdentity = {repository: string, pr: int, head_sha: string}
+
+pub type GithubReviewAuthorEvidenceReply = {fingerprint: string, digest: string}
+
+pub type GithubReviewAuthorEvidenceReceipt = {
+  schema: string,
+  repository_digest: string,
+  pr: int,
+  head_sha: string,
+  replies: list<GithubReviewAuthorEvidenceReply>,
+}
+
+pub const GITHUB_REVIEW_AUTHOR_EVIDENCE_SCHEMA: string = "review.author_evidence.v1"
+
+fn valid_prefix(prefix: string) -> bool {
+  return regex_match("^<!-- [a-z][a-z0-9_-]*-review-author-evidence: $", prefix) != nil
+}
+
+fn bind_receipt(
+  receipt: GithubReviewAuthorEvidenceReceipt,
+  source: GithubReviewSourceIdentity,
+) -> Result<GithubReviewAuthorEvidenceReceipt, string> {
+  const {repository, pr, head_sha} = source
+  if trim(repository) == "" || pr < 1 || trim(head_sha) == "" {
+    return Err("review source identity is unmeasured")
+  }
+  if receipt.schema != GITHUB_REVIEW_AUTHOR_EVIDENCE_SCHEMA
+    || receipt.repository_digest != sha256_hex(repository)
+    || receipt.pr != pr
+    || receipt.head_sha != head_sha {
+    return Err("consumed author evidence does not match this review identity")
+  }
+  let seen = {}
+  for reply in receipt.replies {
+    if regex_match("^[0-9a-f]{16}$", reply.fingerprint) == nil
+      || regex_match("^[0-9a-f]{64}$", reply.digest) == nil
+      || seen[reply.fingerprint] == true {
+      return Err("consumed author evidence has invalid or duplicate reply identities")
+    }
+    seen = seen + {[reply.fingerprint]: true}
+  }
+  return Ok(receipt)
+}
+
+/** Decode the final receipt and bind it to an independently supplied reviewed source. */
+pub fn read_github_review_author_evidence(
+  body: string,
+  source: GithubReviewSourceIdentity,
+  marker_prefix: string = "",
+) -> Result<GithubReviewAuthorEvidenceReceipt, string> {
+  const lines = body.trim_end().split("\n")
+  const line = lines[len(lines) - 1] ?? ""
+  const prefix = if marker_prefix != "" {
+    marker_prefix
+  } else {
+    const matches = regex_captures("^(<!-- [a-z][a-z0-9_-]*-review-author-evidence: )", line) ?? []
+    if len(matches) == 0 {
+      ""
+    } else {
+      to_string(matches[0].groups[0] ?? "")
+    }
+  }
+  if !valid_prefix(prefix) || !line.starts_with(prefix) || !line.ends_with(" -->") {
+    return Err("review author evidence is absent")
+  }
+  const decoded = json_decode(
+    line[len(prefix):len(line) - 4],
+    schema_of(GithubReviewAuthorEvidenceReceipt),
+  )
+  if !is_ok(decoded) {
+    return Err("review author evidence is malformed")
+  }
+  return bind_receipt(unwrap(decoded), source)
+}
+
+/** Stamp only the source actually reviewed; never derive it from a provider review commit field. */
+pub fn stamp_github_review_author_evidence(
+  body: string,
+  source: GithubReviewSourceIdentity,
+  replies: list<GithubReviewAuthorEvidenceReply> = [],
+  marker_prefix: string = "<!-- automated-review-author-evidence: ",
+) -> Result<string, string> {
+  if !valid_prefix(marker_prefix) {
+    return Err("review author evidence marker is malformed")
+  }
+  const receipt: GithubReviewAuthorEvidenceReceipt = {
+    schema: GITHUB_REVIEW_AUTHOR_EVIDENCE_SCHEMA,
+    repository_digest: sha256_hex(source.repository),
+    pr: source.pr,
+    head_sha: source.head_sha,
+    replies: replies.sorted_by({ reply -> reply.fingerprint }),
+  }
+  const checked = bind_receipt(receipt, source)
+  if !is_ok(checked) {
+    return Err(unwrap_err(checked))
+  }
+  return Ok("${body}\n${marker_prefix}${json_stringify(unwrap(checked))} -->")
+}

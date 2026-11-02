@@ -26,19 +26,18 @@ separately from edit time. Source facts must remain stable across pages and fina
 missing actors and deleted source repositories remain unknown. The connector
 reports observations; the caller owns review trust and admission policy.
 
+The separate `review_evidence` export reads and writes reviewer-authored source
+receipts. A receipt binds the repository, pull request, reviewed head and
+consumed author replies without treating GitHub's mutable review commit field
+as source proof; see the [receipt reference](docs/review-evidence.md).
+
 ## Install
 
 Install a compatible Harn CLI, then add the connector:
 
 ```sh
 cargo install harn-cli --version 0.10.166 --locked
-harn add github.com/burin-labs/harn-github-connector@v0.14.0
-```
-
-Add the released connector:
-
-```sh
-harn add github.com/burin-labs/harn-github-connector@v0.14.0
+harn add github.com/burin-labs/harn-github-connector@v0.19.0
 ```
 
 For local multi-repo development, use a path dependency:

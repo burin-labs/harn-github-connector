@@ -1,5 +1,5 @@
 version = 1
-include = ["README.md"]
+include = ["README.md", "docs/review-evidence.md"]
 
 [defaults]
 # These examples are fragments with imports and context supplied by the caller.
