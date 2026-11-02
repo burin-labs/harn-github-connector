@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.19.0 - 2026-11-02
+
+- Add the `review_evidence` export with one typed reader and writer for
+  reviewer-authored source receipts, independent of GitHub's mutable review
+  commit projection.
+- Bind receipt schema, repository, pull request, reviewed head and consumed
+  author-reply identities; missing or malformed evidence remains a refusal.
+
 ## 0.18.0 - 2026-10-27
 
 - Create a GitHub-signed merge only on a disposable staging branch, checking

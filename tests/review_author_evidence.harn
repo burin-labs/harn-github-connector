@@ -1,0 +1,107 @@
+import {
+  GITHUB_REVIEW_AUTHOR_EVIDENCE_SCHEMA,
+  GithubReviewSourceIdentity,
+  read_github_review_author_evidence,
+  stamp_github_review_author_evidence,
+} from "../src/review_evidence"
+
+const REPOSITORY = "octo-org/octo-repo"
+
+const HEAD = "a" * 40
+
+const SOURCE: GithubReviewSourceIdentity = {repository: REPOSITORY, pr: 42, head_sha: HEAD}
+
+fn receipt(head: string = HEAD) -> dict {
+  return {
+    schema: GITHUB_REVIEW_AUTHOR_EVIDENCE_SCHEMA,
+    repository_digest: sha256_hex(REPOSITORY),
+    pr: 42,
+    head_sha: head,
+    replies: [],
+  }
+}
+
+fn body(value: any) -> string {
+  return "Approved.\n<!-- automated-review-author-evidence: ${json_stringify(value)} -->"
+}
+
+pipeline test_review_source_receipt_round_trips_both_namespaces_without_provider_commit_identity() {
+  const replies = [
+    {fingerprint: "b" * 16, digest: "2" * 64},
+    {fingerprint: "a" * 16, digest: "1" * 64},
+  ]
+  for prefix in ["<!-- automated-review-author-evidence: ", "<!-- private-review-author-evidence: "] {
+    const stamped = stamp_github_review_author_evidence("Approved.", SOURCE, replies, prefix)
+    assert(is_ok(stamped))
+    const decoded = read_github_review_author_evidence(unwrap(stamped), SOURCE)
+    assert(is_ok(decoded), "a measured valid receipt is the positive control")
+    assert_eq(unwrap(decoded).head_sha, HEAD)
+    assert_eq(unwrap(decoded).replies[0].fingerprint, "a" * 16)
+    assert(is_ok(read_github_review_author_evidence(unwrap(stamped), SOURCE, prefix)))
+    assert(
+      is_err(
+        read_github_review_author_evidence(
+          unwrap(stamped),
+          SOURCE,
+          "<!-- other-review-author-evidence: ",
+        ),
+      ),
+    )
+  }
+}
+
+pipeline test_review_source_receipt_refuses_rebound_identity_and_unreported_evidence() {
+  for value in [
+    receipt("b" * 40),
+    receipt() + {repository_digest: sha256_hex("other/repo")},
+    receipt() + {pr: 43},
+    receipt() + {schema: "review.author_evidence.v0"},
+    receipt() + {replies: [{fingerprint: "invalid", digest: "1" * 64}]},
+    receipt() + {replies: [{fingerprint: "a" * 16, digest: "invalid"}]},
+    receipt()
+      + {
+        replies: [
+          {fingerprint: "a" * 16, digest: "1" * 64},
+          {fingerprint: "a" * 16, digest: "2" * 64},
+        ],
+      },
+  ] {
+    assert(is_err(read_github_review_author_evidence(body(value), SOURCE)))
+  }
+  for source in [
+    "",
+    "Approved.",
+    "<!-- automated-review-author-evidence: { -->",
+    "<!-- automated-review-author-evidence: null -->",
+    "<!-- automated-review-author-evidence: [] -->",
+    "${body(receipt())}\nUnowned trailing text.",
+  ] {
+    assert(is_err(read_github_review_author_evidence(source, SOURCE)))
+  }
+}
+
+pipeline test_review_source_writer_refuses_unmeasured_identity_and_invalid_replies() {
+  for unknown_source in [SOURCE + {repository: ""}, SOURCE + {pr: 0}, SOURCE + {head_sha: ""}] {
+    assert(is_err(stamp_github_review_author_evidence("Approved.", unknown_source)))
+    assert(is_err(read_github_review_author_evidence(body(receipt()), unknown_source)))
+  }
+  assert(
+    is_err(
+      stamp_github_review_author_evidence(
+        "Approved.",
+        SOURCE,
+        [{fingerprint: "invalid", digest: "1" * 64}],
+      ),
+    ),
+  )
+  assert(
+    is_err(
+      stamp_github_review_author_evidence(
+        "Approved.",
+        SOURCE,
+        [],
+        "<!-- malformed\nreview-author-evidence: ",
+      ),
+    ),
+  )
+}

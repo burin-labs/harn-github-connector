@@ -1,6 +1,6 @@
 [package]
 name = "harn-github-connector"
-version = "0.18.0"
+version = "0.19.0"
 description = "Pure-Harn GitHub App connector: webhooks, installation token rotation, REST/GraphQL dispatch."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/burin-labs/harn-github-connector"
@@ -12,6 +12,7 @@ default = "src/facade.harn"
 worktree = "src/worktree_commit.harn"
 publish = "src/publish_cli.harn"
 signed_merge = "src/signed_merge.harn"
+review_evidence = "src/review_evidence.harn"
 
 [[providers]]
 id = "github"
