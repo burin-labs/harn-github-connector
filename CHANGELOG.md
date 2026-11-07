@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Require Harn 0.10.190 and share its canonical URL host validation, including
+  alternate-form loopback addresses, while retaining connector error codes.
+
 ## 0.19.0 - 2026-11-02
 
 - Add the `review_evidence` export with one typed reader and writer for
