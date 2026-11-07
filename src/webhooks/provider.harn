@@ -1,3 +1,4 @@
+import { connector_http_header } from "std/connectors/http"
 import { __err } from "../errors"
 import { __normalize_github_payload } from "./normalization"
 import { __extract_mention_candidates } from "./projections"
@@ -221,13 +222,11 @@ fn __reject_err(err: any) {
 }
 
 fn __header(headers: any, name: any) {
-  const wanted = lowercase(name)
-  for entry in (headers ?? {}).entries() {
-    if lowercase(trim(to_string(entry.key))) == wanted {
-      return trim(to_string(entry.value))
-    }
-  }
-  return nil
+  // Reverse aliases so the original first matching field still wins.
+  const pairs = (headers ?? {}).entries().reversed().map(
+    { entry -> [lowercase(trim(to_string(entry.key))), trim(to_string(entry.value))] },
+  )
+  return connector_http_header(dict_from_pairs(pairs), name)
 }
 
 fn __event_kind(raw: any, headers: any) {

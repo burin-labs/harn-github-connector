@@ -1,3 +1,4 @@
+import { connector_http_validate_url_host } from "std/connectors/http"
 import {
   connector_http_json,
   connector_http_rate_limit,
@@ -5,6 +6,7 @@ import {
 } from "std/connectors/shared"
 import { omit } from "std/json"
 import { __budget_admit, __budget_observe, __budget_record_refusal } from "./budget"
+import { GithubConnectorError } from "./contracts"
 import { __err } from "./errors"
 import { __gh_auth_token } from "./gh_auth"
 import {
@@ -277,86 +279,12 @@ pub fn __github_api_url(api_base_url: any, path: any) {
   return prefix + "/" + path
 }
 
-@complexity(allow)
-pub fn __validate_api_base_url(api_base_url: any) {
-  if api_base_url == nil || trim(to_string(api_base_url)) == "" {
-    return __err("invalid_api_base_url", "api_base_url is required")
-  }
-  const url = trim(to_string(api_base_url))
-  if !starts_with(lowercase(url), "https://") {
-    return __err("invalid_api_base_url", "api_base_url must use https:// scheme")
-  }
-  const after_scheme = url[8:len(url)]
-  const slash_idx = after_scheme.index_of("/")
-  const host_port = if slash_idx >= 0 {
-    after_scheme[0:slash_idx]
-  } else {
-    after_scheme
-  }
-  const host = __strip_port(host_port)
-  if host == "" {
-    return __err("invalid_api_base_url", "api_base_url is missing a host")
-  }
-  const host_lc = lowercase(host)
-  if __is_disallowed_host(host_lc) {
-    return __err(
-      "invalid_api_base_url",
-      "api_base_url host `" + host
-        + "` is not allowed (loopback/private/link-local/.internal/.local are blocked)",
-    )
+pub fn __validate_api_base_url(api_base_url: any) -> Result<bool, GithubConnectorError> {
+  const checked = connector_http_validate_url_host(api_base_url, "api_base_url")
+  if is_err(checked) {
+    return __err("invalid_api_base_url", unwrap_err(checked))
   }
   return Ok(true)
-}
-
-pub fn __strip_port(host_port: any) {
-  if starts_with(host_port, "[") {
-    const close = host_port.index_of("]")
-    if close >= 0 {
-      return host_port[1:close]
-    }
-    return host_port
-  }
-  const colon = host_port.index_of(":")
-  if colon >= 0 {
-    return host_port[0:colon]
-  }
-  return host_port
-}
-
-@complexity(allow)
-pub fn __is_disallowed_host(host_lc: any) {
-  if host_lc == "localhost" {
-    return true
-  }
-  if ends_with(host_lc, ".localhost") || ends_with(host_lc, ".local")
-    || ends_with(host_lc, ".internal") {
-    return true
-  }
-  if host_lc == "::1" || host_lc == "0:0:0:0:0:0:0:1" {
-    return true
-  }
-  if starts_with(host_lc, "127.") || starts_with(host_lc, "10.")
-    || starts_with(host_lc, "169.254.")
-    || starts_with(host_lc, "192.168.") {
-    return true
-  }
-  if starts_with(host_lc, "172.") {
-    const rest = host_lc[4:len(host_lc)]
-    const dot = rest.index_of(".")
-    if dot > 0 {
-      const octet_str = rest[0:dot]
-      const parsed = try {
-        to_int(octet_str)
-      }
-      if !is_err(parsed) {
-        const octet = unwrap(parsed)
-        if octet >= 16 && octet <= 31 {
-          return true
-        }
-      }
-    }
-  }
-  return false
 }
 
 pub fn __trim_leading_slash(path: any) {
